@@ -16,31 +16,42 @@ export function initFeature7(ctx) {
     return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
   }
 
-  function renderExamHistory() {
-    const wrap = document.getElementById("examHistoryList");
-    if (!wrap) return;
-    const rows = Array.isArray(runtime.state.examHistory) ? runtime.state.examHistory.slice().reverse() : [];
-    if (!rows.length) {
-      wrap.innerHTML = '<div style="font-size:12px;color:var(--text3);">No exam history yet.</div>';
-      return;
-    }
+  function getUploadBySelected(selectId) {
+    const rows = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
+    if (!rows.length) return null;
+    const el = document.getElementById(selectId);
+    const idx = Number(el?.value ?? 0);
+    if (Number.isNaN(idx) || idx < 0 || idx >= rows.length) return rows[0];
+    return rows[idx];
+  }
 
-    wrap.innerHTML = rows
-      .slice(0, 12)
-      .map((item) => {
-        const score = Number(item.score || 0);
-        const grade = score >= 85 ? "A" : score >= 75 ? "B" : score >= 65 ? "C" : "D";
-        return `
-          <div class="exam-row">
-            <div class="exam-score score-${grade.toLowerCase()}">${grade}</div>
-            <div class="exam-info">
-              <div class="exam-name">${escapeHtml(item.name || "Exam")}</div>
-              <div class="exam-date">Score: ${score}% | ${escapeHtml(item.date || "") || "Date N/A"} | Studied ${Number(item.hours || 0)}h</div>
-            </div>
-          </div>
-        `;
-      })
-      .join("");
+  function getSourceTextFor(selectId) {
+    const item = getUploadBySelected(selectId);
+    if (!item) return "";
+    return String(item.sourceTextSnippet || item.analysis?.summary || "").trim();
+  }
+
+  function populateSourceSelectors() {
+    const rows = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
+    const selectors = ["quizSourceSelect", "flashcardSourceSelect"];
+    selectors.forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (!rows.length) {
+        el.innerHTML = '<option value="">No uploads available</option>';
+        return;
+      }
+      const currentVal = el.value;
+      el.innerHTML = rows
+        .map((item, idx) => `<option value="${idx}">${escapeHtml(item.name || "Uploaded file")} | ${escapeHtml(item.date || "")}</option>`)
+        .join("");
+      const currentIdx = Number(currentVal);
+      if (!Number.isNaN(currentIdx) && currentIdx >= 0 && currentIdx < rows.length) {
+        el.value = String(currentIdx);
+      } else {
+        el.value = "0";
+      }
+    });
   }
 
   function renderUploads() {
@@ -48,25 +59,29 @@ export function initFeature7(ctx) {
     if (!wrap) return;
     const rows = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
     if (!rows.length) {
-      wrap.innerHTML = '<div style="font-size:12px;color:var(--text3);">No uploads yet.</div>';
+      wrap.innerHTML = '<div style="font-size:13px;color:var(--text3);">No uploads yet.</div>';
       return;
     }
 
+    const activeQuizIndex = Number(document.getElementById("quizSourceSelect")?.value ?? 0);
     wrap.innerHTML = rows
       .slice(0, 20)
-      .map((item) => {
+      .map((item, idx) => {
         const hasUrl = Boolean(item.url);
         const action = hasUrl
-          ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost" style="padding:5px 10px;font-size:11px;">Open uploaded file</a>`
+          ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Open File</a>`
           : '<span class="chip" style="font-size:11px;">No file URL</span>';
+        const selectedClass = idx === activeQuizIndex ? " upload-card active" : " upload-card";
         return `
-          <div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;">
-            <div style="font-size:18px;">File</div>
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(item.name || "Uploaded file")}</div>
-              <div style="font-size:11px;color:var(--text3);">${escapeHtml(item.date || "")} | ${formatBytes(item.size)} | ${escapeHtml(item.type || "")}</div>
+          <div class="${selectedClass.trim()}">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="font-size:18px;">File</div>
+              <div style="flex:1;min-width:0;">
+                <div class="upload-card-title">${escapeHtml(item.name || "Uploaded file")}</div>
+                <div class="upload-card-meta">${escapeHtml(item.date || "")} | ${formatBytes(item.size)} | ${escapeHtml(item.type || "")}</div>
+              </div>
+              ${action}
             </div>
-            ${action}
           </div>
         `;
       })
@@ -113,6 +128,40 @@ export function initFeature7(ctx) {
     `;
   }
 
+  function renderQuiz(out) {
+    const wrap = document.getElementById("quizOutput");
+    if (!wrap) return;
+    const questions = out?.quiz?.questions || [];
+    if (!questions.length) {
+      wrap.textContent = "No quiz generated yet.";
+      return;
+    }
+    wrap.innerHTML = `
+      <div style="font-size:16px;font-weight:700;margin-bottom:10px;">${escapeHtml(out.quiz.title || "Generated Quiz")}</div>
+      ${questions
+        .map((q, idx) => {
+          const options = Array.isArray(q.options) && q.options.length
+            ? `<ul style="margin:8px 0 8px 20px;">${q.options.map((o) => `<li>${escapeHtml(o)}</li>`).join("")}</ul>`
+            : "";
+          return `<div style="margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:10px;"><strong>Q${idx + 1}:</strong> ${escapeHtml(q.question || "")}${options}<div style="font-size:12px;color:var(--text3);margin-top:6px;">Answer: ${escapeHtml(q.answer || "")}</div></div>`;
+        })
+        .join("")}
+    `;
+  }
+
+  function renderFlashcards(out) {
+    const wrap = document.getElementById("flashcardOutput");
+    if (!wrap) return;
+    const cards = out?.flashcards?.cards || [];
+    if (!cards.length) {
+      wrap.textContent = "No flashcards generated yet.";
+      return;
+    }
+    wrap.innerHTML = cards
+      .map((c, idx) => `<div style="padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;background:var(--surface2);"><div style="font-size:14px;font-weight:700;">${idx + 1}. ${escapeHtml(c.question || "")}</div><div style="margin-top:6px;color:var(--text2);font-size:14px;">${escapeHtml(c.answer || "")}</div></div>`)
+      .join("");
+  }
+
   async function refreshUserState() {
     try {
       const out = await apiGet(API.userState);
@@ -122,8 +171,8 @@ export function initFeature7(ctx) {
     } catch {
       // Keep in-memory state.
     }
+    populateSourceSelectors();
     renderUploads();
-    renderExamHistory();
     renderInsights();
   }
 
@@ -164,7 +213,8 @@ export function initFeature7(ctx) {
         date: new Date().toISOString().slice(0, 10),
         url: fileMeta.url || "",
         storagePath: fileMeta.storagePath || "",
-        fileProvider: fileMeta.provider || ""
+        fileProvider: fileMeta.provider || "",
+        sourceTextSnippet: out.sourceTextSnippet || ""
       };
 
       runtime.state.practiceUploads = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
@@ -172,38 +222,65 @@ export function initFeature7(ctx) {
       runtime.state.practiceUploads = runtime.state.practiceUploads.slice(0, 30);
       logAudit(`Practice upload analyzed: ${item.name}`);
       scheduleSave();
-      renderUploads();
 
       await refreshUserState();
+      document.getElementById("quizSourceSelect").value = "0";
+      document.getElementById("flashcardSourceSelect").value = "0";
+      renderUploads();
     } catch (error) {
       if (statusEl) statusEl.textContent = error.message || "Upload/analysis failed.";
     }
   }
 
-  async function onAddExam() {
-    const statusEl = document.getElementById("examStatus");
-    const name = String(document.getElementById("examNameInput")?.value || "").trim();
-    const score = Number(document.getElementById("examScoreInput")?.value || 0);
-    const hours = Number(document.getElementById("examHoursInput")?.value || 0);
-    const confidence = Number(document.getElementById("examConfidenceInput")?.value || 0);
+  async function onGenerateQuiz() {
+    const status = document.getElementById("quizStatus");
+    const difficulty = String(document.getElementById("quizDifficulty")?.value || "medium");
+    const numQuestions = Math.max(1, Math.min(20, Number(document.getElementById("quizCount")?.value || 5)));
+    const questionType = String(document.getElementById("quizType")?.value || "mcq");
+    const sourceText = getSourceTextFor("quizSourceSelect");
 
-    if (!name || Number.isNaN(score) || Number.isNaN(hours) || Number.isNaN(confidence)) {
-      if (statusEl) statusEl.textContent = "Please fill all exam fields.";
+    if (!sourceText) {
+      if (status) status.textContent = "Select an uploaded source with extracted content first.";
       return;
     }
 
+    if (status) status.textContent = "Generating quiz...";
     try {
-      if (statusEl) statusEl.textContent = "Saving exam...";
-      const out = await apiPost(API.userExam, { name, score, hours, confidence });
-      if (out?.state) {
-        runtime.state = { ...runtime.state, ...out.state, student: { ...runtime.state.student, ...(out.state.student || {}) } };
-      }
-      renderExamHistory();
-      if (statusEl) statusEl.textContent = "Exam saved.";
-      logAudit(`Exam recorded: ${name}`);
-      scheduleSave();
+      const out = await apiPost(API.practiceGenerateQuiz, {
+        difficulty,
+        numQuestions,
+        questionType,
+        sourceText
+      });
+      renderQuiz(out);
+      if (status) status.textContent = "Quiz generated.";
+      logAudit("Practice quiz generated.");
     } catch (error) {
-      if (statusEl) statusEl.textContent = error.message || "Failed to save exam.";
+      if (status) status.textContent = error.message || "Failed to generate quiz.";
+    }
+  }
+
+  async function onGenerateFlashcards() {
+    const status = document.getElementById("flashcardStatus");
+    const count = Math.max(1, Math.min(30, Number(document.getElementById("flashcardCount")?.value || 8)));
+    const sourceText = getSourceTextFor("flashcardSourceSelect");
+
+    if (!sourceText) {
+      if (status) status.textContent = "Select an uploaded source with extracted content first.";
+      return;
+    }
+
+    if (status) status.textContent = "Generating flashcards...";
+    try {
+      const out = await apiPost(API.practiceGenerateFlashcards, {
+        count,
+        sourceText
+      });
+      renderFlashcards(out);
+      if (status) status.textContent = `Generated ${out?.flashcards?.cards?.length || count} flashcards.`;
+      logAudit("Practice flashcards generated.");
+    } catch (error) {
+      if (status) status.textContent = error.message || "Failed to generate flashcards.";
     }
   }
 
@@ -212,7 +289,10 @@ export function initFeature7(ctx) {
     initialized = true;
 
     document.getElementById("practiceAnalyzeBtn")?.addEventListener("click", onAnalyzePaper);
-    document.getElementById("addExamBtn")?.addEventListener("click", onAddExam);
+    document.getElementById("generateQuizBtn")?.addEventListener("click", onGenerateQuiz);
+    document.getElementById("generateFlashcardsBtn")?.addEventListener("click", onGenerateFlashcards);
+    document.getElementById("quizSourceSelect")?.addEventListener("change", renderUploads);
+    document.getElementById("flashcardSourceSelect")?.addEventListener("change", renderUploads);
 
     renderAnalysis(null, "");
     refreshUserState();
