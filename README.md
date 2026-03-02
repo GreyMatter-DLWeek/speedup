@@ -214,6 +214,14 @@ Expected:
 - Set required secrets in Render environment.
 - Verify: `https://<your-render-url>/api/health`
 
+## Grader Testbench
+For evaluator setup and verification, use:
+- [`testbench/README.md`](testbench/README.md)
+- [`testbench/01-setup-and-run.md`](testbench/01-setup-and-run.md)
+- [`testbench/02-functional-test-cases.md`](testbench/02-functional-test-cases.md)
+- [`testbench/03-api-test-cases.md`](testbench/03-api-test-cases.md)
+- [`testbench/04-submission-checklist.md`](testbench/04-submission-checklist.md)
+
 ## API Surface (Primary)
 - `GET /api/health`
 - `GET /api/user/state` (auth)
