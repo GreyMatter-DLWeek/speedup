@@ -1,4 +1,9 @@
-const admin = require("firebase-admin");
+let admin = null;
+try {
+  admin = require("firebase-admin");
+} catch {
+  admin = null;
+}
 
 let initialized = false;
 
@@ -7,6 +12,7 @@ function normalizePrivateKey(value) {
 }
 
 function initFirebaseAdmin() {
+  if (!admin) return null;
   if (initialized) return admin;
 
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || "";
