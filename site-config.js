@@ -1,6 +1,6 @@
 (function bootstrapSiteConfig() {
   // Optional: set this after backend deploy, e.g. "https://speedup-api.onrender.com"
-  var configuredApiBase = "";
+  var configuredApiBase = "https://speedup-api.onrender.com";
   var path = String(window.location.pathname || "/");
   var segments = path.split("/").filter(Boolean);
   var repoBase = "";
