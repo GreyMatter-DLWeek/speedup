@@ -490,7 +490,10 @@ registerTimeManagementRoutes(app, {
   callOpenAIChat,
   safeParseJson,
   isOpenAIConfigured,
-  normalizeStudentId
+  normalizeStudentId,
+  upload,
+  pdfParse,
+  mammoth
 });
 
 app.post("/api/live/event/:studentId", async (req, res) => {

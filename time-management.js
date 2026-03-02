@@ -3,7 +3,9 @@ const path = require("path");
 const sqlite3 = require("sqlite3").verbose();
 
 const DAYS = ["MON", "TUE", "WED", "THU", "FRI"];
-const HOURS = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "20:00", "21:00"];
+const HOURS = Array.from({ length: 24 }, (_v, hour) => `${String(hour).padStart(2, "0")}:00`);
+const MAX_CALENDAR_FETCH_BYTES = 5 * 1024 * 1024;
+const CALENDAR_FETCH_TIMEOUT_MS = 15000;
 
 const DEFAULT_PROFILE = {
   mode: "productive_hours",
@@ -158,7 +160,8 @@ function parseSchoolBlocksInput(rawBlocks, rawText) {
         const day = normalizeDay(block.day);
         const start = normalizeClockTime(block.start);
         const end = normalizeClockTime(block.end);
-        list.push({ day, start, end });
+        const subject = normalizeConceptLabel(block.subject || block.title || "");
+        list.push(subject ? { day, start, end, subject } : { day, start, end });
       } catch {
         // Ignore invalid block.
       }
@@ -172,13 +175,14 @@ function parseSchoolBlocksInput(rawBlocks, rawText) {
       .filter(Boolean);
 
     textItems.forEach((item) => {
-      const match = item.match(/^([A-Za-z]+)\s+(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})$/);
+      const match = item.match(/^([A-Za-z]+)\s+(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})(?:\s+(.+))?$/);
       if (!match) return;
       try {
         const day = normalizeDay(match[1]);
         const start = normalizeClockTime(match[2]);
         const end = normalizeClockTime(match[3]);
-        list.push({ day, start, end });
+        const subject = normalizeConceptLabel(match[4] || "");
+        list.push(subject ? { day, start, end, subject } : { day, start, end });
       } catch {
         // Ignore invalid block.
       }
@@ -198,6 +202,813 @@ function parseExamDates(rawList, rawText) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+const ICS_DAY_TO_INTERNAL = {
+  MO: "MON",
+  TU: "TUE",
+  WE: "WED",
+  TH: "THU",
+  FR: "FRI"
+};
+
+const DAY_NAME_TO_INTERNAL = {
+  mon: "MON",
+  monday: "MON",
+  tue: "TUE",
+  tues: "TUE",
+  tuesday: "TUE",
+  wed: "WED",
+  weds: "WED",
+  wednesday: "WED",
+  thu: "THU",
+  thur: "THU",
+  thurs: "THU",
+  thursday: "THU",
+  fri: "FRI",
+  friday: "FRI"
+};
+
+function normalizeDayName(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return DAY_NAME_TO_INTERNAL[key] || "";
+}
+
+function dayFromDateParts(year, month, day) {
+  const date = new Date(year, month - 1, day);
+  const jsDay = date.getDay();
+  const map = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+  const token = map[jsDay] || "";
+  return DAYS.includes(token) ? token : "";
+}
+
+function formatYmd(year, month, day) {
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function normalizeIanaTimezone(value) {
+  const raw = String(value || "").trim().replace(/^\/+/, "");
+  if (!raw) return "";
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: raw });
+    return raw;
+  } catch {
+    return "";
+  }
+}
+
+function getDefaultTimeZone() {
+  try {
+    return normalizeIanaTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone) || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function getDateTimePartsInZone(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  });
+
+  const partMap = {};
+  formatter.formatToParts(date).forEach((part) => {
+    if (part.type === "literal") return;
+    partMap[part.type] = part.value;
+  });
+
+  return {
+    year: Number(partMap.year || 0),
+    month: Number(partMap.month || 0),
+    day: Number(partMap.day || 0),
+    hour: Number(partMap.hour || 0),
+    minute: Number(partMap.minute || 0)
+  };
+}
+
+function parseIcsPropertyLine(line) {
+  const idx = String(line || "").indexOf(":");
+  if (idx < 0) return null;
+  const left = String(line).slice(0, idx).trim();
+  const value = String(line).slice(idx + 1).trim();
+  if (!left) return null;
+
+  const tokens = left.split(";").map((part) => String(part || "").trim()).filter(Boolean);
+  const key = String(tokens[0] || "").toUpperCase();
+  const params = {};
+
+  tokens.slice(1).forEach((token) => {
+    const sep = token.indexOf("=");
+    if (sep < 0) return;
+    const paramKey = token.slice(0, sep).trim().toUpperCase();
+    const paramVal = token.slice(sep + 1).trim().replace(/^"|"$/g, "");
+    if (!paramKey) return;
+    params[paramKey] = paramVal;
+  });
+
+  if (!key) return null;
+  return { key, value, params };
+}
+
+function getIcsDateTimeContext(event, key, calendarTimeZone) {
+  const params = event?.[`${key}__PARAMS`];
+  const tzid = normalizeIanaTimezone(params?.TZID || "");
+  const fallback = normalizeIanaTimezone(calendarTimeZone) || getDefaultTimeZone();
+  return {
+    timeZone: tzid || fallback
+  };
+}
+
+function parseIcsDateTime(value, context = {}) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?)?(Z)?$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hh = match[4] !== undefined ? Number(match[4]) : null;
+  const mm = match[5] !== undefined ? Number(match[5]) : null;
+  const ss = match[6] !== undefined ? Number(match[6]) : 0;
+  const isUtc = Boolean(match[7]);
+
+  let dayToken = dayFromDateParts(year, month, day);
+  if (hh === null || mm === null) {
+    return { day: dayToken, time: null, date: formatYmd(year, month, day), timeZone: context.timeZone || "" };
+  }
+
+  if (isUtc) {
+    const targetZone = normalizeIanaTimezone(context.timeZone) || getDefaultTimeZone();
+    const dateUtc = new Date(Date.UTC(year, month - 1, day, hh, mm, ss));
+    const parts = getDateTimePartsInZone(dateUtc, targetZone);
+    dayToken = dayFromDateParts(parts.year, parts.month, parts.day);
+    return {
+      day: dayToken,
+      time: normalizeClockTime(`${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`),
+      date: formatYmd(parts.year, parts.month, parts.day),
+      timeZone: targetZone
+    };
+  }
+
+  return {
+    day: dayToken,
+    time: normalizeClockTime(`${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`),
+    date: formatYmd(year, month, day),
+    timeZone: context.timeZone || ""
+  };
+}
+
+function extractByDayFromRrule(rrule) {
+  const raw = String(rrule || "");
+  const match = raw.match(/BYDAY=([^;]+)/i);
+  if (!match) return [];
+  return match[1]
+    .split(",")
+    .map((token) => ICS_DAY_TO_INTERNAL[String(token || "").trim().toUpperCase()])
+    .filter(Boolean);
+}
+
+function addMinutesToClock(clock, deltaMinutes) {
+  const base = hourToInt(normalizeClockTime(clock));
+  const total = Math.max(0, Math.min((24 * 60) - 1, base + Number(deltaMinutes || 0)));
+  const hh = String(Math.floor(total / 60)).padStart(2, "0");
+  const mm = String(total % 60).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function dedupeSchoolBlocks(blocks) {
+  const seen = new Set();
+  const deduped = [];
+  (blocks || []).forEach((block) => {
+    try {
+      const day = normalizeDay(block.day);
+      const start = normalizeClockTime(block.start);
+      const end = normalizeClockTime(block.end);
+      if (hourToInt(end) <= hourToInt(start)) return;
+      const subject = normalizeConceptLabel(block.subject || "School Block") || "School Block";
+      const key = `${day}|${start}|${end}|${subject.toLowerCase()}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      deduped.push({ day, start, end, subject });
+    } catch {
+      // ignore malformed block
+    }
+  });
+  return deduped;
+}
+
+function schoolBlockTypeRank(subject) {
+  const value = String(subject || "").toLowerCase();
+  if (value.includes("lecture")) return 100;
+  if (value.includes("tutorial")) return 85;
+  if (value.includes("laboratory") || value.includes(" lab")) return 75;
+  if (value.includes("workshop")) return 65;
+  if (value.includes("quiz")) return 40;
+  return 50;
+}
+
+function collapseSchoolBlocksByTimeslot(blocks) {
+  const slotMap = new Map();
+
+  (blocks || []).forEach((block) => {
+    try {
+      const day = normalizeDay(block.day);
+      const start = normalizeClockTime(block.start);
+      const end = normalizeClockTime(block.end);
+      if (hourToInt(end) <= hourToInt(start)) return;
+      const subject = normalizeConceptLabel(block.subject || "School Block") || "School Block";
+
+      const slotKey = `${day}|${start}|${end}`;
+      if (!slotMap.has(slotKey)) {
+        slotMap.set(slotKey, { day, start, end, subjects: new Map() });
+      }
+
+      const slot = slotMap.get(slotKey);
+      slot.subjects.set(subject, Number(slot.subjects.get(subject) || 0) + 1);
+    } catch {
+      // ignore malformed block
+    }
+  });
+
+  const collapsed = [];
+  slotMap.forEach((slot) => {
+    const candidates = [...slot.subjects.entries()].map(([subject, count]) => ({
+      subject,
+      count,
+      rank: schoolBlockTypeRank(subject)
+    }));
+
+    candidates.sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      if (b.rank !== a.rank) return b.rank - a.rank;
+      return a.subject.localeCompare(b.subject);
+    });
+
+    if (!candidates.length) return;
+    collapsed.push({
+      day: slot.day,
+      start: slot.start,
+      end: slot.end,
+      subject: candidates[0].subject
+    });
+  });
+
+  return dedupeSchoolBlocks(collapsed);
+}
+
+function parseIcsOccurrences(buffer) {
+  const text = String(buffer?.toString("utf8") || "");
+  if (!text.trim()) return [];
+
+  const unfolded = text.replace(/\r?\n[ \t]/g, "");
+  const lines = unfolded.split(/\r?\n/);
+  const events = [];
+  let current = null;
+  let calendarTimeZone = "";
+
+  lines.forEach((rawLine) => {
+    const line = String(rawLine || "").trim();
+    if (!line) return;
+    if (line.toUpperCase() === "BEGIN:VEVENT") {
+      current = {};
+      return;
+    }
+    if (line.toUpperCase() === "END:VEVENT") {
+      if (current) events.push(current);
+      current = null;
+      return;
+    }
+    const property = parseIcsPropertyLine(line);
+    if (!property) return;
+
+    if (!current) {
+      if (property.key === "X-WR-TIMEZONE") {
+        calendarTimeZone = normalizeIanaTimezone(property.value) || calendarTimeZone;
+      }
+      return;
+    }
+
+    current[property.key] = property.value;
+    if (property.params && Object.keys(property.params).length) {
+      current[`${property.key}__PARAMS`] = property.params;
+    }
+  });
+
+  if (!events.length) {
+    throw new Error(
+      "ICS file has no VEVENT entries. This file only has calendar headers, not class events. If this is a subscribed calendar, use its webcal/https feed URL."
+    );
+  }
+
+  const occurrences = [];
+  events.forEach((event) => {
+    const startInfo = parseIcsDateTime(event.DTSTART || "", getIcsDateTimeContext(event, "DTSTART", calendarTimeZone));
+    if (!startInfo?.time) return;
+    const endInfo = parseIcsDateTime(event.DTEND || "", getIcsDateTimeContext(event, "DTEND", calendarTimeZone));
+    const start = startInfo.time;
+    let end = endInfo?.time || addMinutesToClock(start, 60);
+    if (hourToInt(end) <= hourToInt(start)) {
+      end = addMinutesToClock(start, 60);
+    }
+
+    const summary = normalizeConceptLabel(event.SUMMARY || "School Block") || "School Block";
+    const days = extractByDayFromRrule(event.RRULE);
+    if (!days.length && startInfo.day) days.push(startInfo.day);
+
+    days.forEach((day) => {
+      if (!DAYS.includes(day)) return;
+      occurrences.push({
+        day,
+        start,
+        end,
+        subject: summary,
+        date: startInfo.date || ""
+      });
+    });
+  });
+
+  if (!occurrences.length) {
+    throw new Error("ICS contains events, but no weekday timed blocks were detected (MON-FRI with DTSTART/DTEND).");
+  }
+
+  return occurrences;
+}
+
+function parseIcsTimetableBuffer(buffer) {
+  const occurrences = parseIcsOccurrences(buffer);
+  return collapseSchoolBlocksByTimeslot(occurrences.map((item) => ({
+    day: item.day,
+    start: item.start,
+    end: item.end,
+    subject: item.subject
+  })));
+}
+
+function parseIcsWeeklyBlocks(buffer) {
+  const occurrences = parseIcsOccurrences(buffer);
+  const weekly = {};
+
+  occurrences.forEach((item) => {
+    const date = String(item.date || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const weekStart = normalizeWeekStart(date);
+    if (!weekly[weekStart]) weekly[weekStart] = [];
+    weekly[weekStart].push({
+      day: item.day,
+      start: item.start,
+      end: item.end,
+      subject: item.subject
+    });
+  });
+
+  Object.keys(weekly).forEach((weekStart) => {
+    weekly[weekStart] = collapseSchoolBlocksByTimeslot(weekly[weekStart]);
+  });
+
+  return weekly;
+}
+
+function parsePdfTimeToken(value) {
+  const raw = String(value || "").trim().replace(".", ":");
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return "";
+  return normalizeClockTime(`${String(Number(match[1])).padStart(2, "0")}:${match[2]}`);
+}
+
+async function parsePdfTimetableBuffer(buffer, pdfParseLib) {
+  if (!pdfParseLib) {
+    throw new Error("PDF parser unavailable on server.");
+  }
+  const parsed = await pdfParseLib(buffer);
+  const text = String(parsed?.text || "");
+  if (!text.trim()) return [];
+
+  const blocks = [];
+  const lines = text
+    .split(/\r?\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  lines.forEach((line) => {
+    let day = "";
+    let start = "";
+    let end = "";
+    let subject = "";
+
+    const dayFirst = line.match(/^(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?)\b.*?(\d{1,2}[:.]\d{2})\s*(?:-|–|to)\s*(\d{1,2}[:.]\d{2})(.*)$/i);
+    const timeFirst = line.match(/^(\d{1,2}[:.]\d{2})\s*(?:-|–|to)\s*(\d{1,2}[:.]\d{2}).*?\b(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?)\b(.*)$/i);
+
+    if (dayFirst) {
+      day = normalizeDayName(dayFirst[1]);
+      start = parsePdfTimeToken(dayFirst[2]);
+      end = parsePdfTimeToken(dayFirst[3]);
+      subject = normalizeConceptLabel(dayFirst[4] || "");
+    } else if (timeFirst) {
+      day = normalizeDayName(timeFirst[3]);
+      start = parsePdfTimeToken(timeFirst[1]);
+      end = parsePdfTimeToken(timeFirst[2]);
+      subject = normalizeConceptLabel(timeFirst[4] || "");
+    }
+
+    if (!day || !start || !end) return;
+    if (hourToInt(end) <= hourToInt(start)) return;
+    blocks.push({
+      day,
+      start,
+      end,
+      subject: subject || "School Block"
+    });
+  });
+
+  return dedupeSchoolBlocks(blocks);
+}
+
+function bytesToBestEffortText(buffer) {
+  if (!buffer || !Buffer.isBuffer(buffer)) return "";
+  const utf8 = buffer.toString("utf8");
+  return String(utf8 || "").replace(/\0/g, " ").trim();
+}
+
+async function extractDocxText(buffer, mammothLib) {
+  if (!mammothLib?.extractRawText) return "";
+  try {
+    const out = await mammothLib.extractRawText({ buffer });
+    return String(out?.value || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function normalizeCalendarUrl(raw) {
+  const value = String(raw || "").trim();
+  if (!value) throw new Error("Calendar URL is required.");
+  const normalized = value.replace(/^webcals?:\/\//i, "https://");
+  let parsed;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error("Invalid calendar URL.");
+  }
+  if (!["https:", "http:"].includes(parsed.protocol)) {
+    throw new Error("Calendar URL must use webcal/http/https.");
+  }
+  return parsed.toString();
+}
+
+async function fetchCalendarUrlBuffer(calendarUrl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CALENDAR_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(calendarUrl, {
+      method: "GET",
+      redirect: "follow",
+      signal: controller.signal
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch calendar URL (${res.status}).`);
+    }
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    if (!buffer.length) {
+      throw new Error("Calendar URL returned an empty file.");
+    }
+    if (buffer.length > MAX_CALENDAR_FETCH_BYTES) {
+      throw new Error("Calendar file is too large. Please use a smaller timetable export.");
+    }
+    return buffer;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Calendar URL request timed out.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function extractPdfText(buffer, pdfParseLib) {
+  if (!pdfParseLib) return "";
+  try {
+    const out = await pdfParseLib(buffer);
+    return String(out?.text || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function looksLikeStructuredText(ext, mime) {
+  if (ext === ".ics") return true;
+  if ([".txt", ".csv", ".md", ".json", ".xml", ".html", ".htm", ".tsv", ".yaml", ".yml"].includes(ext)) return true;
+  if (String(mime || "").startsWith("text/")) return true;
+  return false;
+}
+
+function normalizeAiBlock(block) {
+  const day = normalizeDay(block?.day || block?.weekday || "");
+  const start = normalizeClockTime(block?.start || block?.startTime || "");
+  const end = normalizeClockTime(block?.end || block?.endTime || "");
+  if (hourToInt(end) <= hourToInt(start)) throw new Error("Invalid time range");
+  const subject = normalizeConceptLabel(block?.subject || block?.title || "School Block") || "School Block";
+  return { day, start, end, subject };
+}
+
+async function inferSchoolBlocksWithAI({
+  fileName,
+  mimeType,
+  extractedText,
+  callOpenAIChat,
+  safeParseJson,
+  isOpenAIConfigured
+}) {
+  const text = String(extractedText || "").trim();
+  if (!text) {
+    throw new Error("File text could not be extracted. Try PDF, DOCX, TXT, CSV, or ICS.");
+  }
+
+  if (!isOpenAIConfigured?.()) {
+    throw new Error("OpenAI API is not configured, so AI extraction is unavailable for this file.");
+  }
+
+  const system = [
+    "You extract school timetable blocks from uploaded file text.",
+    "Return strict JSON with key: blocks.",
+    "blocks must be an array of objects: day, start, end, subject.",
+    "day must be one of MON,TUE,WED,THU,FRI.",
+    "start/end must be 24h HH:MM.",
+    "Include only explicit class blocks from the text; do not invent events."
+  ].join(" ");
+
+  const user = {
+    fileName: String(fileName || ""),
+    mimeType: String(mimeType || ""),
+    text: text.slice(0, 24000)
+  };
+
+  const raw = await callOpenAIChat(
+    [
+      { role: "system", content: system },
+      { role: "user", content: JSON.stringify(user) }
+    ],
+    0.1
+  );
+
+  const parsed = safeParseJson(raw);
+  if (!parsed || !Array.isArray(parsed.blocks)) {
+    throw new Error("AI could not parse timetable blocks from this file.");
+  }
+
+  const normalized = [];
+  parsed.blocks.forEach((block) => {
+    try {
+      normalized.push(normalizeAiBlock(block));
+    } catch {
+      // skip invalid block
+    }
+  });
+
+  return dedupeSchoolBlocks(normalized);
+}
+
+async function extractSchoolBlocksFromUpload(file, deps) {
+  const originalName = String(file?.originalname || "").toLowerCase();
+  const mime = String(file?.mimetype || "").toLowerCase();
+  const ext = path.extname(originalName);
+  const buffer = file?.buffer;
+  const {
+    pdfParse,
+    mammoth,
+    callOpenAIChat,
+    safeParseJson,
+    isOpenAIConfigured
+  } = deps || {};
+
+  if (!buffer || !Buffer.isBuffer(buffer)) {
+    throw new Error("Missing upload file buffer.");
+  }
+
+  let primaryParseError = "";
+
+  if (ext === ".ics" || mime.includes("text/calendar") || mime.includes("application/ics")) {
+    try {
+      const blocks = parseIcsTimetableBuffer(buffer);
+      const weeklyBlocks = parseIcsWeeklyBlocks(buffer);
+      return { fileType: "ics", provider: "ics-parser", blocks, weeklyBlocks };
+    } catch (error) {
+      primaryParseError = String(error?.message || "ICS parsing failed.");
+      // Continue with AI fallback from extracted text.
+    }
+  }
+
+  if (ext === ".pdf" || mime.includes("application/pdf")) {
+    const blocks = await parsePdfTimetableBuffer(buffer, pdfParse);
+    if (blocks.length) return { fileType: "pdf", provider: "pdf-parser", blocks, weeklyBlocks: {} };
+  }
+
+  let text = "";
+  if (looksLikeStructuredText(ext, mime)) {
+    text = bytesToBestEffortText(buffer);
+  } else if (ext === ".docx" || mime.includes("wordprocessingml")) {
+    text = await extractDocxText(buffer, mammoth);
+  } else if (ext === ".pdf" || mime.includes("application/pdf")) {
+    text = await extractPdfText(buffer, pdfParse);
+  } else {
+    // Best effort for unknown/binary types.
+    text = bytesToBestEffortText(buffer);
+  }
+
+  const aiBlocks = await inferSchoolBlocksWithAI({
+    fileName: file?.originalname || "",
+    mimeType: mime,
+    extractedText: text,
+    callOpenAIChat,
+    safeParseJson,
+    isOpenAIConfigured
+  });
+
+  if (!aiBlocks.length) {
+    if (primaryParseError) {
+      throw new Error(`${primaryParseError} AI fallback also could not find timetable blocks in this file.`);
+    }
+    throw new Error("AI could not find timetable blocks in uploaded file.");
+  }
+
+  return { fileType: ext.replace(".", "") || "unknown", provider: "ai", blocks: aiBlocks, weeklyBlocks: {} };
+}
+
+async function extractSchoolBlocksFromCalendarUrl(calendarUrlRaw, deps) {
+  const calendarUrl = normalizeCalendarUrl(calendarUrlRaw);
+  const buffer = await fetchCalendarUrlBuffer(calendarUrl);
+  const {
+    callOpenAIChat,
+    safeParseJson,
+    isOpenAIConfigured
+  } = deps || {};
+
+  let primaryParseError = "";
+  try {
+    const blocks = parseIcsTimetableBuffer(buffer);
+    const weeklyBlocks = parseIcsWeeklyBlocks(buffer);
+    return { fileType: "ics-url", provider: "ics-url-parser", blocks, weeklyBlocks, calendarUrl };
+  } catch (error) {
+    primaryParseError = String(error?.message || "Calendar URL parsing failed.");
+  }
+
+  const text = bytesToBestEffortText(buffer);
+  const aiBlocks = await inferSchoolBlocksWithAI({
+    fileName: "calendar-url.ics",
+    mimeType: "text/calendar",
+    extractedText: text,
+    callOpenAIChat,
+    safeParseJson,
+    isOpenAIConfigured
+  });
+
+  if (!aiBlocks.length) {
+    throw new Error(`${primaryParseError} AI fallback also could not find timetable blocks at this calendar URL.`);
+  }
+
+  return { fileType: "ics-url", provider: "ai", blocks: aiBlocks, weeklyBlocks: {}, calendarUrl };
+}
+
+function expandSchoolBlockHours(start, end) {
+  const startMin = hourToInt(start);
+  const endMin = hourToInt(end);
+  const hours = [];
+  if (endMin <= startMin) return hours;
+
+  for (let h = 0; h < 24; h += 1) {
+    const slotStart = h * 60;
+    const slotEnd = slotStart + 60;
+    const overlaps = slotStart < endMin && slotEnd > startMin;
+    if (overlaps) {
+      hours.push(`${String(h).padStart(2, "0")}:00`);
+    }
+  }
+  return hours;
+}
+
+async function syncSchoolTimetableForWeek(db, studentId, weekStart, profile, schoolBlocks = null) {
+  await run(
+    db,
+    `DELETE FROM timetable_slots WHERE student_id = ? AND week_start = ? AND source = 'school'`,
+    [studentId, weekStart]
+  );
+  await run(
+    db,
+    `DELETE FROM timetable_tasks WHERE student_id = ? AND week_start = ? AND source = 'school'`,
+    [studentId, weekStart]
+  );
+
+  if (String(profile?.mode || "") !== "school_blocks") return;
+  const blocks = dedupeSchoolBlocks(schoolBlocks || profile?.schoolBlocks || []);
+  if (!blocks.length) return;
+
+  const now = nowIso();
+
+  for (const block of blocks) {
+    const subject = normalizeConceptLabel(block.subject || "School Block") || "School Block";
+    const title = `${subject} class`;
+    const duration = clampInt(Math.max(60, hourToInt(block.end) - hourToInt(block.start)), 15, 240, 60);
+    const taskId = createId("school");
+
+    await run(
+      db,
+      `INSERT INTO timetable_tasks (
+        id, student_id, week_start, title, subject, topic, type, priority, estimated_minutes, status, source, notes, created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+      [
+        taskId,
+        studentId,
+        weekStart,
+        title,
+        subject,
+        subject,
+        "school-block",
+        100,
+        duration,
+        "planned",
+        "school",
+        "Imported from school timetable file",
+        now,
+        now
+      ]
+    );
+
+    let placed = 0;
+    const hours = expandSchoolBlockHours(block.start, block.end);
+    for (const hour of hours) {
+      const occupied = await get(
+        db,
+        `SELECT source FROM timetable_slots WHERE student_id = ? AND week_start = ? AND day = ? AND hour = ?`,
+        [studentId, weekStart, block.day, hour]
+      );
+
+      if (occupied?.source && String(occupied.source) !== "school") {
+        continue;
+      }
+
+      await run(
+        db,
+        `INSERT INTO timetable_slots (
+          student_id, week_start, day, hour, task_id, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(student_id, week_start, day, hour) DO UPDATE SET
+          task_id = excluded.task_id,
+          source = excluded.source,
+          updated_at = excluded.updated_at`,
+        [studentId, weekStart, block.day, hour, taskId, "school", now, now]
+      );
+      placed += 1;
+    }
+
+    if (!placed) {
+      await run(db, `DELETE FROM timetable_tasks WHERE id = ? AND student_id = ?`, [taskId, studentId]);
+    }
+  }
+}
+
+async function saveSchoolWeekBlocks(db, studentId, weeklyBlocks, sourceType = "ics") {
+  await run(db, `DELETE FROM timetable_school_week_blocks WHERE student_id = ?`, [studentId]);
+
+  const keys = Object.keys(weeklyBlocks || {});
+  if (!keys.length) return;
+
+  const now = nowIso();
+  for (const weekStartRaw of keys) {
+    const weekStart = normalizeWeekStart(weekStartRaw);
+    const blocks = dedupeSchoolBlocks(weeklyBlocks[weekStartRaw] || []);
+    await run(
+      db,
+      `INSERT INTO timetable_school_week_blocks (
+        student_id, week_start, blocks_json, source_type, updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(student_id, week_start) DO UPDATE SET
+        blocks_json = excluded.blocks_json,
+        source_type = excluded.source_type,
+        updated_at = excluded.updated_at`,
+      [studentId, weekStart, JSON.stringify(blocks), String(sourceType || "ics"), now]
+    );
+  }
+}
+
+async function loadSchoolWeekBlocks(db, studentId, weekStart) {
+  const row = await get(
+    db,
+    `SELECT blocks_json FROM timetable_school_week_blocks WHERE student_id = ? AND week_start = ?`,
+    [studentId, weekStart]
+  );
+  return row ? dedupeSchoolBlocks(safeJsonParse(row.blocks_json, [])) : [];
+}
+
+async function resolveSchoolBlocksForWeek(db, studentId, weekStart, profile) {
+  const weekSpecific = await loadSchoolWeekBlocks(db, studentId, weekStart);
+  if (weekSpecific.length) return weekSpecific;
+  return dedupeSchoolBlocks(profile?.schoolBlocks || []);
 }
 
 function nearestExamDays(examDates) {
@@ -238,16 +1049,32 @@ function isWithinSchoolBlock(day, hour, blocks) {
 }
 
 function inferSubject(topic) {
-  const t = String(topic || "").toLowerCase();
+  const cleanTopic = simplifySchoolSubjectLabel(topic) || normalizeConceptLabel(topic);
+  const t = String(cleanTopic || "").toLowerCase();
+  if (t.includes("machine learning")) return "Machine Learning";
+  if (t.includes("data structure") || t.includes("algorithm")) return "Data Structures & Algorithms";
+  if (t.includes("web system")) return "Web Systems";
+  if (t.includes("object oriented") || t === "oop") return "Object-Oriented Programming";
+  if (t.includes("math") || t.includes("calculus") || t.includes("probability")) return "Mathematics";
   if (t.includes("graph") || t.includes("discrete")) return "Discrete Math";
   if (t.includes("vector") || t.includes("algebra")) return "Linear Algebra";
   if (t.includes("algorithm") || t.includes("dp") || t.includes("dynamic")) return "Algorithms";
   if (t.includes("os") || t.includes("operating")) return "Operating Systems";
+  if (cleanTopic && !isGenericPlanningLabel(cleanTopic) && cleanTopic.length <= 80) return cleanTopic;
   return "Study";
 }
 
 function normalizeConceptLabel(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function simplifySchoolSubjectLabel(value) {
+  let label = normalizeConceptLabel(value);
+  if (!label) return "";
+  label = label.replace(/^[A-Z]{2,}\s*\d{3,5}[A-Z]?\s*-\s*/i, "");
+  label = label.replace(/\s*\((?:[^()]*(?:lecture|tutorial|laboratory|lab|workshop|quiz)[^()]*)\)\s*$/i, "");
+  label = normalizeConceptLabel(label);
+  return label;
 }
 
 function isGenericPlanningLabel(value) {
@@ -277,6 +1104,22 @@ function mergeUniqueConcepts(primary, extra, limit = 8) {
   return merged.slice(0, limit);
 }
 
+function extractSchoolSubjectSignals(profile) {
+  const counts = new Map();
+  const blocks = Array.isArray(profile?.schoolBlocks) ? profile.schoolBlocks : [];
+  blocks.forEach((block) => {
+    const raw = normalizeConceptLabel(block?.subject || "");
+    const simplified = simplifySchoolSubjectLabel(raw);
+    const label = simplified || raw;
+    if (!label || isGenericPlanningLabel(label)) return;
+    counts.set(label, Number(counts.get(label) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([label]) => label)
+    .slice(0, 6);
+}
+
 function extractExistingTaskSignals(existingTasks) {
   const conceptCounts = new Map();
   const subjectCounts = new Map();
@@ -289,7 +1132,8 @@ function extractExistingTaskSignals(existingTasks) {
 
   (existingTasks || []).forEach((task) => {
     const source = String(task?.source || "manual").toLowerCase();
-    if (source === "ai") return;
+    const type = String(task?.type || "").toLowerCase();
+    if (source === "ai" || source === "school" || type === "school-block") return;
 
     const title = normalizeConceptLabel(task?.title);
     const topic = normalizeConceptLabel(task?.topic);
@@ -430,7 +1274,7 @@ function buildHeuristicTasks(profile, weakConcepts, forgettingRiskTopics) {
 
   weak.forEach((topic, index) => {
     tasks.push({
-      title: `${topic} concept repair`,
+      title: `${topic} focused study`,
       subject: inferSubject(topic),
       topic,
       type: "weak-focus",
@@ -493,10 +1337,30 @@ function buildHeuristicTasks(profile, weakConcepts, forgettingRiskTopics) {
 }
 
 function normalizeGeneratedTask(task, fallback) {
+  const normalizePlanLabel = (value, fallbackValue = "") => {
+    let out = normalizeConceptLabel(value || fallbackValue || "");
+    if (!out) return "";
+    // Remove common course-code prefixes (e.g. INF 1004 - Topic Name).
+    out = out.replace(/^[A-Z]{2,}\s*\d{3,5}[A-Z]?\s*-\s*/i, "");
+    // Remove section suffixes (e.g. "(ALL Lecture)", "(P2 Lab)").
+    out = out.replace(/\s*\((?:[^()]|\([^)]*\))*\)\s*$/g, "").trim();
+    return out;
+  };
+
+  const fallbackTopic = normalizePlanLabel(fallback?.topic || fallback?.title || "");
+  const topic = normalizePlanLabel(task?.topic, fallbackTopic);
+  const fallbackSubject = normalizePlanLabel(
+    fallback?.subject || inferSubject(fallbackTopic || "Study"),
+    "Study"
+  );
+  const subject = normalizePlanLabel(task?.subject, fallbackSubject) || fallbackSubject || "Study";
+  const fallbackTitle = normalizePlanLabel(fallback?.title || fallbackTopic || "Study block") || "Study block";
+  const title = normalizePlanLabel(task?.title, fallbackTitle) || fallbackTitle;
+
   return {
-    title: String(task?.title || fallback?.title || "Study block").slice(0, 120),
-    subject: String(task?.subject || fallback?.subject || inferSubject(task?.topic || "Study")).slice(0, 80),
-    topic: String(task?.topic || fallback?.topic || "").slice(0, 120),
+    title: String(title).slice(0, 120),
+    subject: String(subject).slice(0, 80),
+    topic: String(topic).slice(0, 120),
     type: String(task?.type || fallback?.type || "study").slice(0, 40),
     priority: clampInt(task?.priority, 1, 100, clampInt(fallback?.priority, 1, 100, 60)),
     estimatedMinutes: clampInt(task?.estimatedMinutes, 15, 240, clampInt(fallback?.estimatedMinutes, 15, 240, 60)),
@@ -529,11 +1393,21 @@ async function refineTasksWithOpenAI({
     "Prioritize weak concepts first, include spaced review and mock tests.",
     "Use existingSessions (title/topic/subject/assignedSlot/status) as the primary personalization signal.",
     "When a student has existing manual sessions, generate related continuation blocks in the same subject taxonomy.",
-    "Consider existing timetable coverage and avoid duplicating already-heavy subjects."
+    "Consider existing timetable coverage and avoid duplicating already-heavy subjects.",
+    "Do not use raw school class event labels/codes as study titles (e.g. INF 1004 - ...).",
+    "Keep labels human-friendly and concise. Prefer baseline task wording when uncertain."
   ].join(" ");
 
+  const profileContext = {
+    mode: profile?.mode || "productive_hours",
+    productiveHours: Array.isArray(profile?.productiveHours) ? profile.productiveHours : [],
+    examDates: Array.isArray(profile?.examDates) ? profile.examDates : [],
+    weeklyGoalsHours: Number(profile?.weeklyGoalsHours || 14),
+    schoolBlockCount: Array.isArray(profile?.schoolBlocks) ? profile.schoolBlocks.length : 0
+  };
+
   const user = {
-    profile,
+    profile: profileContext,
     weakConcepts,
     forgettingRiskTopics,
     existingTaskSignals,
@@ -637,6 +1511,12 @@ function buildExistingSessionsContext(existingTasks, existingSlots) {
   });
 
   return (existingTasks || [])
+    .filter((task) => {
+      const source = String(task?.source || "manual").toLowerCase();
+      const type = String(task?.type || "").toLowerCase();
+      if (source === "ai" || source === "school" || type === "school-block") return false;
+      return true;
+    })
     .map((task) => ({
       id: task.id,
       title: String(task.title || "").trim(),
@@ -659,22 +1539,35 @@ function buildExistingSessionsContext(existingTasks, existingSlots) {
 function buildExistingTimetableSummary(tasks, slots) {
   const taskById = new Map((tasks || []).map((task) => [task.id, task]));
   const assigned = (slots || []).filter((slot) => slot.taskId);
+  const assignedStudyOnly = assigned.filter((slot) => {
+    const task = taskById.get(slot.taskId);
+    if (!task) return false;
+    const source = String(task.source || "").toLowerCase();
+    const type = String(task.type || "").toLowerCase();
+    return source !== "school" && type !== "school-block";
+  });
+  const schoolSlots = assigned.length - assignedStudyOnly.length;
   const subjectHours = {};
 
-  assigned.forEach((slot) => {
+  assignedStudyOnly.forEach((slot) => {
     const task = taskById.get(slot.taskId);
     if (!task) return;
     const subject = String(task.subject || "Study");
     subjectHours[subject] = Number(subjectHours[subject] || 0) + 1;
   });
 
-  const occupiedSlots = assigned.length;
+  const occupiedSlots = assignedStudyOnly.length;
   const occupiedByDay = {};
-  assigned.forEach((slot) => {
+  assignedStudyOnly.forEach((slot) => {
     occupiedByDay[slot.day] = Number(occupiedByDay[slot.day] || 0) + 1;
   });
 
-  return { occupiedSlots, occupiedByDay, subjectHours };
+  return {
+    occupiedSlots,
+    occupiedByDay,
+    subjectHours,
+    schoolSlots
+  };
 }
 
 function buildSeedTopicLastDay(existingTasks, existingSlots) {
@@ -752,7 +1645,14 @@ function mapSlotRow(row) {
 
 function computeStats(tasks, slots, profile) {
   const taskById = new Map(tasks.map((task) => [task.id, task]));
-  const assignedSlots = slots.filter((slot) => slot.taskId);
+  const assignedSlots = slots.filter((slot) => {
+    if (!slot.taskId) return false;
+    const task = taskById.get(slot.taskId);
+    if (!task) return false;
+    if (String(task.source || "").toLowerCase() === "school") return false;
+    if (String(task.type || "").toLowerCase() === "school-block") return false;
+    return true;
+  });
   const completedSlots = assignedSlots.filter((slot) => taskById.get(slot.taskId)?.status === "completed").length;
   const completionPercent = assignedSlots.length ? Math.round((completedSlots * 100) / assignedSlots.length) : 0;
 
@@ -792,7 +1692,12 @@ function buildAgenda(weekStart, tasks, slots) {
       hour: slot.hour,
       task: taskById.get(slot.taskId) || null
     }))
-    .filter((entry) => entry.task);
+    .filter((entry) => {
+      if (!entry.task) return false;
+      const source = String(entry.task.source || "").toLowerCase();
+      const type = String(entry.task.type || "").toLowerCase();
+      return source !== "school" && type !== "school-block";
+    });
 }
 
 async function ensureSchema(db) {
@@ -860,6 +1765,18 @@ async function ensureSchema(db) {
       PRIMARY KEY (student_id, week_start)
     )`
   );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS timetable_school_week_blocks (
+      student_id TEXT NOT NULL,
+      week_start TEXT NOT NULL,
+      blocks_json TEXT NOT NULL DEFAULT '[]',
+      source_type TEXT NOT NULL DEFAULT 'ics',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (student_id, week_start)
+    )`
+  );
 }
 
 async function getProfile(db, studentId) {
@@ -924,6 +1841,12 @@ async function saveProfile(db, studentId, input) {
 
 async function fetchWeekState(db, studentId, weekStart) {
   const profile = await getProfile(db, studentId);
+  const schoolBlocksForWeek = await resolveSchoolBlocksForWeek(db, studentId, weekStart, profile);
+  const profileForWeek = {
+    ...profile,
+    schoolBlocks: schoolBlocksForWeek
+  };
+  await syncSchoolTimetableForWeek(db, studentId, weekStart, profileForWeek, schoolBlocksForWeek);
   const taskRows = await all(
     db,
     `SELECT * FROM timetable_tasks WHERE student_id = ? AND week_start = ? ORDER BY priority DESC, created_at ASC`,
@@ -942,13 +1865,13 @@ async function fetchWeekState(db, studentId, weekStart) {
 
   const tasks = taskRows.map(mapTaskRow);
   const slots = slotRows.map(mapSlotRow);
-  const stats = computeStats(tasks, slots, profile);
+  const stats = computeStats(tasks, slots, profileForWeek);
   const agenda = buildAgenda(weekStart, tasks, slots);
 
   return {
     studentId,
     weekStart,
-    profile,
+    profile: profileForWeek,
     tasks,
     slots,
     stats,
@@ -1139,20 +2062,32 @@ async function generatePlanPayload({
   replaceExisting = false
 }) {
   const weeklyGoalHours = clampInt(profile.weeklyGoalsHours, 1, 60, 14);
-  const occupiedSlots = replaceExisting ? 0 : (existingSlots || []).filter((slot) => slot.taskId).length;
+  const taskById = new Map((existingTasks || []).map((task) => [task.id, task]));
+  const occupiedSlots = replaceExisting
+    ? 0
+    : (existingSlots || []).filter((slot) => {
+      if (!slot.taskId) return false;
+      const task = taskById.get(slot.taskId);
+      if (!task) return false;
+      const source = String(task.source || "").toLowerCase();
+      const type = String(task.type || "").toLowerCase();
+      return source !== "school" && type !== "school-block";
+    }).length;
   const availableBlockCount = Math.max(1, weeklyGoalHours - occupiedSlots);
   const existingSummary = buildExistingTimetableSummary(existingTasks, existingSlots);
   const existingSessions = buildExistingSessionsContext(existingTasks, existingSlots);
   const existingTaskSignals = extractExistingTaskSignals(existingTasks);
+  const schoolSignals = extractSchoolSubjectSignals(profile);
 
   const inputWeak = normalizeTopicList(weakConcepts);
   const inputRisk = normalizeTopicList(forgettingRiskTopics);
 
   // Prioritize the student's current manual timetable sessions first.
-  // Global weak topics are used as secondary signals.
-  const effectiveWeak = mergeUniqueConcepts(existingTaskSignals.concepts, inputWeak).slice(0, 4);
+  // If school timetable exists, use its subjects before global weak-topic noise.
+  const effectiveWeak = mergeUniqueConcepts(existingTaskSignals.concepts, schoolSignals, inputWeak).slice(0, 4);
   const weakKeys = new Set(effectiveWeak.map((item) => String(item || "").toLowerCase()));
-  const signalRisk = (existingTaskSignals.concepts || []).filter((concept) => !weakKeys.has(String(concept || "").toLowerCase()));
+  const signalRisk = mergeUniqueConcepts(existingTaskSignals.concepts, schoolSignals)
+    .filter((concept) => !weakKeys.has(String(concept || "").toLowerCase()));
   const effectiveRisk = mergeUniqueConcepts(signalRisk, inputRisk)
     .filter((concept) => !weakKeys.has(String(concept || "").toLowerCase()))
     .slice(0, 4);
@@ -1194,6 +2129,9 @@ async function generatePlanPayload({
   if (existingTaskSignals.concepts.length) {
     notes.unshift(`Included continuation blocks for your existing sessions: ${existingTaskSignals.concepts.slice(0, 3).join(", ")}.`);
   }
+  if (!existingTaskSignals.concepts.length && schoolSignals.length) {
+    notes.unshift(`Derived study focus from your school timetable subjects: ${schoolSignals.slice(0, 3).join(", ")}.`);
+  }
   if (existingSessions.length) {
     notes.unshift(`Used ${existingSessions.length} existing session(s) as AI context (title/topic/subject).`);
   }
@@ -1233,7 +2171,18 @@ function registerTimeManagementRoutes(app, deps) {
   const db = createDatabase();
   const schemaReady = ensureSchema(db);
 
-  const { callOpenAIChat, safeParseJson, isOpenAIConfigured, normalizeStudentId } = deps;
+  const {
+    callOpenAIChat,
+    safeParseJson,
+    isOpenAIConfigured,
+    normalizeStudentId,
+    upload,
+    pdfParse,
+    mammoth
+  } = deps;
+  const schoolUploadMiddleware = upload?.single
+    ? upload.single("timetable")
+    : (_req, res) => res.status(503).json({ error: "File upload unavailable on server." });
 
   const saveProfileHandler = async (req, res) => {
     try {
@@ -1261,6 +2210,66 @@ function registerTimeManagementRoutes(app, deps) {
   app.put("/api/time-management/:studentId/profile", saveProfileHandler);
   app.post("/api/time-management/:studentId/profile", saveProfileHandler);
 
+  app.post("/api/time-management/:studentId/upload-school-timetable", schoolUploadMiddleware, async (req, res) => {
+    try {
+      await schemaReady;
+      const studentId = normalizeStudentId(req.params.studentId);
+      const weekStart = normalizeWeekStart(req.body?.weekStart || req.query?.weekStart);
+      const file = req.file;
+      const calendarUrl = String(req.body?.calendarUrl || "").trim();
+      if (!file && !calendarUrl) {
+        return res.status(400).json({ error: "Upload a timetable file or provide a calendar URL." });
+      }
+
+      const parsed = file
+        ? await extractSchoolBlocksFromUpload(file, {
+          pdfParse,
+          mammoth,
+          callOpenAIChat,
+          safeParseJson,
+          isOpenAIConfigured
+        })
+        : await extractSchoolBlocksFromCalendarUrl(calendarUrl, {
+          callOpenAIChat,
+          safeParseJson,
+          isOpenAIConfigured
+        });
+      if (!parsed.blocks.length) {
+        return res.status(400).json({ error: "No timetable blocks detected from the uploaded file/calendar URL." });
+      }
+
+      const weeklyBlocks = parsed.weeklyBlocks && typeof parsed.weeklyBlocks === "object" ? parsed.weeklyBlocks : {};
+      const hasWeeklyBlocks = Object.keys(weeklyBlocks).length > 0;
+      const selectedWeekBlocks = dedupeSchoolBlocks(
+        hasWeeklyBlocks ? (weeklyBlocks[weekStart] || []) : (parsed.blocks || [])
+      );
+      const totalWeeksImported = Object.keys(weeklyBlocks).length;
+
+      const profile = await saveProfile(db, studentId, {
+        mode: "school_blocks",
+        schoolBlocks: selectedWeekBlocks,
+        examDatesText: req.body?.examDatesText || "",
+        weeklyGoalsHours: req.body?.weeklyGoalsHours
+      });
+
+      await saveSchoolWeekBlocks(db, studentId, weeklyBlocks, parsed.fileType || "ics");
+      await syncSchoolTimetableForWeek(db, studentId, weekStart, profile, selectedWeekBlocks);
+      const state = await fetchWeekState(db, studentId, weekStart);
+      return res.json({
+        ok: true,
+        studentId,
+        uploadedType: parsed.fileType,
+        parseProvider: parsed.provider || "ai",
+        calendarUrl: parsed.calendarUrl || null,
+        importedBlocks: parsed.blocks.length,
+        importedWeeks: totalWeeksImported,
+        state
+      });
+    } catch (error) {
+      handleRouteError(res, "Failed to upload school timetable", error);
+    }
+  });
+
   app.post("/api/time-management/:studentId/generate-plan", async (req, res) => {
     try {
       await schemaReady;
@@ -1272,6 +2281,10 @@ function registerTimeManagementRoutes(app, deps) {
       const weakConcepts = normalizeTopicList(payload.weakConcepts);
       const forgettingRiskTopics = normalizeTopicList(payload.forgettingRiskTopics);
       const currentState = await fetchWeekState(db, studentId, weekStart);
+      const planningProfile = {
+        ...profile,
+        schoolBlocks: currentState?.profile?.schoolBlocks || profile.schoolBlocks || []
+      };
       const preservedSlots = replaceExisting
         ? []
         : (currentState.slots || []).filter((slot) => String(slot.source || "").toLowerCase() !== "ai");
@@ -1286,7 +2299,7 @@ function registerTimeManagementRoutes(app, deps) {
         callOpenAIChat,
         safeParseJson,
         isOpenAIConfigured,
-        profile,
+        profile: planningProfile,
         weakConcepts,
         forgettingRiskTopics,
         existingTasks: preservedTasks,
