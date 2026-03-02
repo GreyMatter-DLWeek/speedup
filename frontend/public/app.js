@@ -33,6 +33,7 @@ const API = {
     return weekStart ? `${base}?weekStart=${encodeURIComponent(weekStart)}` : base;
   },
   timeManagementProfile: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/profile`,
+  timeManagementUploadSchoolTimetable: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/upload-school-timetable`,
   timeManagementGeneratePlan: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/generate-plan`,
   timeManagementTasks: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks`,
   timeManagementTask: (studentId, taskId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks/${encodeURIComponent(taskId)}`,
@@ -1343,7 +1344,7 @@ function bindSidebarActions() {
 async function apiGet(url) {
   const res = await fetch(apiUrl(url), { headers: await authHeaders() });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `GET ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `GET ${url} failed`));
   return payload;
 }
 
@@ -1354,7 +1355,7 @@ async function apiPost(url, body) {
     body: JSON.stringify(body)
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `POST ${url} failed`));
   return payload;
 }
 
@@ -1365,7 +1366,7 @@ async function apiPostForm(url, formData) {
     body: formData
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `POST ${url} failed`));
   return payload;
 }
 
@@ -1376,7 +1377,7 @@ async function apiPut(url, body) {
     body: JSON.stringify(body)
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `PUT ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `PUT ${url} failed`));
   return payload;
 }
 
@@ -1386,7 +1387,7 @@ async function apiDelete(url) {
     headers: await authHeaders()
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `DELETE ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `DELETE ${url} failed`));
   return payload;
 }
 
@@ -1399,10 +1400,21 @@ async function authHeaders(base = {}) {
 
 async function parseMaybeJson(res) {
   try {
-    return await res.json();
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { details: text.slice(0, 500) };
+    }
   } catch {
     return {};
   }
+}
+
+function extractErrorMessage(payload, fallback) {
+  if (!payload || typeof payload !== "object") return fallback;
+  return payload.error || payload.details || payload.message || fallback;
 }
 
 export function bootstrapApp() {
