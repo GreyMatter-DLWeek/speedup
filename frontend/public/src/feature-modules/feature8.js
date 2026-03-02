@@ -17,6 +17,8 @@ export function initFeature8(ctx) {
     const content = document.getElementById("modal-content");
     if (!overlay || !content) return;
 
+    content.classList.remove("settings-modal");
+
     content.innerHTML = `
       <div class="modal-title">${m.title}</div>
       <div class="modal-sub">${m.body}</div>
@@ -29,6 +31,7 @@ export function initFeature8(ctx) {
 
   function closeModal(e) {
     if (!e || e.target === document.getElementById("modal-overlay")) {
+      document.getElementById("modal-content")?.classList.remove("settings-modal");
       document.getElementById("modal-overlay")?.classList.remove("open");
     }
   }
