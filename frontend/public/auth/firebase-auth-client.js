@@ -42,12 +42,12 @@ async function waitForAuthReady() {
   if (authStateReadyPromise) await authStateReadyPromise;
 }
 
-async function getIdToken() {
+async function getIdToken(forceRefresh = false) {
   await waitForAuthReady();
   if (!auth) return "";
   const user = auth.currentUser || currentUser;
   if (!user) return "";
-  return user.getIdToken();
+  return user.getIdToken(Boolean(forceRefresh));
 }
 
 async function getUser() {

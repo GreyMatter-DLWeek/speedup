@@ -159,11 +159,15 @@ npm install
 ### 2) Configure environment
 Create `.env` from `.env.example` and set:
 - `OPENAI_API_KEY`
-- `FIREBASE_SERVICE_ACCOUNT_JSON`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY` (single-line string with `\n` escaped newlines)
 - `CLOUDINARY_CLOUD_NAME`
 - `CLOUDINARY_API_KEY`
 - `CLOUDINARY_API_SECRET`
 - `ALLOWED_ORIGINS`
+
+Do not use `FIREBASE_SERVICE_ACCOUNT_JSON` unless you intentionally need legacy fallback mode.
 
 ### 3) Configure frontend Firebase web config
 Edit `frontend/public/config/firebase-config.js`:
@@ -181,6 +185,23 @@ Enable Email/Password in Firebase Auth console.
 npm start
 ```
 Open `http://localhost:3000`.
+
+### 5) Validate auth wiring
+Health check:
+```bash
+curl http://localhost:3000/api/health
+```
+Expected: `firebaseConfigured: true`
+
+Browser token check (DevTools console after login):
+```js
+const token = await window.firebaseAuthClient.getIdToken(true);
+const claims = JSON.parse(atob(token.split(".")[1]));
+console.log({ aud: claims.aud, iss: claims.iss });
+```
+Expected:
+- `aud` equals your Firebase project id (for this project: `dlweek-ac284`)
+- `iss` contains `securetoken.google.com/<project-id>`
 
 ## Deployment
 ### Frontend (GitHub Pages)

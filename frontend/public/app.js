@@ -1341,60 +1341,52 @@ function bindSidebarActions() {
 }
 
 async function apiGet(url) {
-  const res = await fetch(apiUrl(url), { headers: await authHeaders() });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `GET ${url} failed`);
-  return payload;
+  return requestJson("GET", url);
 }
 
 async function apiPost(url, body) {
-  const res = await fetch(apiUrl(url), {
-    method: "POST",
-    headers: await authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
-  return payload;
+  return requestJson("POST", url, body);
 }
 
 async function apiPostForm(url, formData) {
-  const res = await fetch(apiUrl(url), {
-    method: "POST",
-    headers: await authHeaders(),
-    body: formData
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
-  return payload;
+  return requestJson("POST", url, formData, true);
 }
 
 async function apiPut(url, body) {
-  const res = await fetch(apiUrl(url), {
-    method: "PUT",
-    headers: await authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `PUT ${url} failed`);
-  return payload;
+  return requestJson("PUT", url, body);
 }
 
 async function apiDelete(url) {
-  const res = await fetch(apiUrl(url), {
-    method: "DELETE",
-    headers: await authHeaders()
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `DELETE ${url} failed`);
-  return payload;
+  return requestJson("DELETE", url);
 }
 
-async function authHeaders(base = {}) {
+async function authHeaders(base = {}, forceRefresh = false) {
   const headers = { ...base };
-  const token = await window.firebaseAuthClient?.getIdToken?.();
+  const token = await window.firebaseAuthClient?.getIdToken?.(forceRefresh);
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
+}
+
+async function requestJson(method, url, body = undefined, isForm = false) {
+  const attempt = async (forceRefresh = false) => {
+    const headers = isForm
+      ? await authHeaders({}, forceRefresh)
+      : await authHeaders({ "Content-Type": "application/json" }, forceRefresh);
+    const options = { method, headers };
+    if (method !== "GET" && method !== "DELETE" && body !== undefined) {
+      options.body = isForm ? body : JSON.stringify(body);
+    }
+    const res = await fetch(apiUrl(url), options);
+    const payload = await parseMaybeJson(res);
+    return { res, payload };
+  };
+
+  let { res, payload } = await attempt(false);
+  if (!res.ok && res.status === 401 && /invalid firebase token/i.test(String(payload?.error || ""))) {
+    ({ res, payload } = await attempt(true));
+  }
+  if (!res.ok) throw new Error(payload.error || `${method} ${url} failed`);
+  return payload;
 }
 
 async function parseMaybeJson(res) {
