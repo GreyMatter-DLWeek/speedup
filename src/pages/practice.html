@@ -1,117 +1,79 @@
-    <div id="page-practice" class="page">
-      <div class="topbar">
-        <div>
-          <div class="topbar-title">Practice Papers</div>
-          <div class="topbar-sub">Upload, analyze, and track your exam performance</div>
-        </div>
-      </div>
-      <div class="content">
-        <div class="grid-2-1">
-          <div>
-            <div class="upload-zone mb-20" onclick="openModal('upload-paper')">
-              <div class="upload-icon">📄</div>
-              <div class="upload-title">Upload Practice Paper or Past Exam</div>
-              <div class="upload-sub">PDF, DOCX, or image · AI will analyze and categorize all questions</div>
-              <div style="margin-top:14px;">
-                <span class="btn btn-primary">Choose File</span>
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="card-title">Exam History & Learning Correlation</div>
-              <div class="exam-row">
-                <div class="exam-score score-a">A</div>
-                <div class="exam-info">
-                  <div class="exam-name">Algorithms Mid-Term 2024</div>
-                  <div class="exam-date">Score: 87% · Feb 15, 2025 · Studied 14h over 2 weeks</div>
-                </div>
-                <div class="exam-trend" style="color:var(--accent)">↑ +12% vs prev</div>
-              </div>
-              <div class="exam-row">
-                <div class="exam-score score-b">B+</div>
-                <div class="exam-info">
-                  <div class="exam-name">Linear Algebra Quiz 3</div>
-                  <div class="exam-date">Score: 74% · Jan 22, 2025 · Studied 8h</div>
-                </div>
-                <div class="exam-trend" style="color:var(--accent2)">↑ +5% vs prev</div>
-              </div>
-              <div class="exam-row">
-                <div class="exam-score score-c">C+</div>
-                <div class="exam-info">
-                  <div class="exam-name">Discrete Math Mid-Term</div>
-                  <div class="exam-date">Score: 61% · Jan 10, 2025 · Studied 5h</div>
-                </div>
-                <div class="exam-trend" style="color:var(--danger)">↓ -3% vs prev</div>
-              </div>
-              <div class="exam-row">
-                <div class="exam-score score-a">A-</div>
-                <div class="exam-info">
-                  <div class="exam-name">Data Structures Final 2024</div>
-                  <div class="exam-date">Score: 91% · Dec 5, 2024 · Studied 20h over 3 weeks</div>
-                </div>
-                <div class="exam-trend" style="color:var(--accent)">↑ Best performance</div>
-              </div>
-            </div>
+<div id="page-practice" class="page">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Practice Papers</div>
+      <div class="topbar-sub">Upload, analyze, and track your exam performance</div>
+    </div>
+  </div>
+  <div class="content">
+    <div class="grid-2-1">
+      <div>
+        <div class="card mb-20">
+          <div class="card-title">Upload Practice File</div>
+          <div class="form-group">
+            <label class="form-label">File (PDF, DOCX, PPTX, TXT)</label>
+            <input id="practiceFileInput" class="input" type="file" accept=".pdf,.docx,.pptx,.txt,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation">
           </div>
+          <div class="form-group">
+            <label class="form-label">Or paste text</label>
+            <textarea id="practicePastedText" class="input" style="min-height:120px;resize:vertical;" placeholder="Paste your question paper text here..."></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Topic Hint</label>
+            <input id="practiceTopicInput" class="input" type="text" placeholder="e.g. Algorithms">
+          </div>
+          <button id="practiceAnalyzeBtn" class="btn btn-primary">Analyze Practice Paper</button>
+          <div id="practiceStatus" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
+        </div>
 
-          <div style="display:flex;flex-direction:column;gap:16px;">
-            <div class="card">
-              <div class="card-title">AI Learning Pattern Analysis</div>
-              <div class="insight-card">
-                <div class="insight-type">Study Behavior → Score Correlation</div>
-                <div class="insight-text">When you study <strong style="color:var(--accent)">14+ hours spread over 2+ weeks</strong>, your scores average 85%+. Short cramming sessions (under 5h) correlate with 60% average.</div>
-                <div class="insight-action">→ Plan your next exam study window</div>
-              </div>
-              <div class="insight-card" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),transparent);border-color:rgba(251,191,36,0.15);">
-                <div class="insight-type" style="color:var(--accent4)">Style Insight</div>
-                <div class="insight-text">You perform best when you <strong style="color:var(--accent4)">practice past papers in the last 3 days</strong> before an exam — this pattern correlates with 15% score improvement.</div>
-              </div>
-            </div>
+        <div class="card mb-20">
+          <div class="card-title">AI Analysis Result</div>
+          <div id="practiceAnalysis" style="font-size:13px;color:var(--text2);line-height:1.7;">No analysis yet.</div>
+        </div>
 
-            <div class="card">
-              <div class="card-title">Uploaded Papers</div>
-              <div style="display:flex;flex-direction:column;gap:8px;">
-                <div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-                  <div style="font-size:20px;">📄</div>
-                  <div style="flex:1;">
-                    <div style="font-size:13px;font-weight:600;">Algorithms Past Paper 2023</div>
-                    <div style="font-size:11px;color:var(--text3);">24 questions · AI analyzed · Topics tagged</div>
-                  </div>
-                  <span class="chip chip-green" style="font-size:11px;">✓ Done</span>
-                </div>
-                <div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-                  <div style="font-size:20px;">📄</div>
-                  <div style="flex:1;">
-                    <div style="font-size:13px;font-weight:600;">Discrete Math Mid-Term 2023</div>
-                    <div style="font-size:11px;color:var(--text3);">18 questions · Processing…</div>
-                  </div>
-                  <div class="spinner"></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="card">
-              <div class="card-title">Add Exam Mark</div>
-              <div class="form-group">
-                <label class="form-label">Subject</label>
-                <select class="select">
-                  <option>Algorithms</option>
-                  <option>Linear Algebra</option>
-                  <option>Discrete Mathematics</option>
-                  <option>Operating Systems</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">Score (%)</label>
-                <input class="input" type="number" placeholder="e.g. 78" min="0" max="100">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Study hours before exam</label>
-                <input class="input" type="number" placeholder="e.g. 12">
-              </div>
-              <button class="btn btn-primary" style="width:100%;">📊 Submit & Train AI</button>
-            </div>
+        <div class="card">
+          <div class="card-title">Exam History & Learning Correlation</div>
+          <div id="examHistoryList" style="display:flex;flex-direction:column;gap:10px;">
+            <div style="font-size:12px;color:var(--text3);">No exam history yet.</div>
           </div>
         </div>
       </div>
-    </div><!-- END PRACTICE -->
+
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="card">
+          <div class="card-title">Upload Insights</div>
+          <div id="practiceInsights" style="font-size:13px;color:var(--text2);line-height:1.7;">Upload and analyze a paper to generate learning signals.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Uploaded Papers</div>
+          <div id="uploadedPapersList" style="display:flex;flex-direction:column;gap:8px;">
+            <div style="font-size:12px;color:var(--text3);">No uploads yet.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Add Exam Mark</div>
+          <div class="form-group">
+            <label class="form-label">Subject</label>
+            <input id="examNameInput" class="input" type="text" placeholder="e.g. Algorithms Midterm">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Score (%)</label>
+            <input id="examScoreInput" class="input" type="number" placeholder="e.g. 78" min="0" max="100">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Study hours before exam</label>
+            <input id="examHoursInput" class="input" type="number" placeholder="e.g. 12" min="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Confidence (1-10)</label>
+            <input id="examConfidenceInput" class="input" type="number" min="1" max="10" value="6">
+          </div>
+          <button id="addExamBtn" class="btn btn-primary" style="width:100%;">Submit & Train AI</button>
+          <div id="examStatus" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div><!-- END PRACTICE -->

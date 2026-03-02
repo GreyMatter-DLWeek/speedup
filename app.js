@@ -8,11 +8,13 @@ import { initFeature7 } from "./src/feature-modules/feature7.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
 
 const STORAGE_KEY = "speedup_dashboard_reference_v1";
-const STUDENT_ID = "demo-student-1";
+const STUDENT_ID = "anonymous";
 
 const API = {
   health: "/api/health",
-  state: (studentId) => `/api/state/${encodeURIComponent(studentId)}`,
+  userState: "/api/user/state",
+  userExam: "/api/user/exam",
+  practiceAnalyze: "/api/practice/analyze",
   explain: "/api/explain",
   highlightAnalyze: "/api/highlight/analyze",
   ragQuery: "/api/rag/query",
@@ -23,23 +25,14 @@ const API = {
 const defaultState = {
   student: {
     id: STUDENT_ID,
-    name: "Alex Kim",
-    focus: "Master Graph Theory and Dynamic Programming before finals.",
-    productiveSlot: "morning",
-    weeklyHours: 14
+    name: "",
+    focus: "",
+    productiveSlot: "",
+    weeklyHours: 0
   },
-  mastery: [54, 57, 59, 61, 60, 64, 67, 69],
-  topics: [
-    { name: "Graph Theory", weakScore: 79, reason: "Persistent conceptual errors" },
-    { name: "Vector Spaces", weakScore: 72, reason: "Long inactivity gap" },
-    { name: "LCS DP", weakScore: 65, reason: "Transition logic confusion" },
-    { name: "SQL Joins", weakScore: 44, reason: "Occasional careless mistakes" }
-  ],
-  recommendedActions: [
-    "Do 25 minutes of Graph Theory weak-topic drills and explain each step out loud.",
-    "Run one timed DP problem at your peak focus window and review error types.",
-    "Revisit Vector Spaces with one worked example and one self-test question."
-  ],
+  mastery: [],
+  topics: [],
+  recommendedActions: [],
   liveRecommendation: {
     recommendation: "Live recommendation pending...",
     qualityCheck: "",
@@ -50,49 +43,42 @@ const defaultState = {
   },
   notes: {},
   highlights: [],
-  examHistory: [
-    { name: "Algorithms Quiz 2", score: 68, hours: 7, confidence: 6, date: "2026-02-20" },
-    { name: "Discrete Math Practice", score: 62, hours: 5.5, confidence: 5, date: "2026-02-25" }
-  ],
+  practiceUploads: [],
+  examHistory: [],
   responsibleControls: {
     explainability: true,
     personalization: true,
     decayModeling: true,
     errorTypeDetection: true
   },
-  auditLog: [{ ts: new Date().toISOString(), message: "System initialized on reference UI." }]
+  auditLog: []
 };
 
-const flashcards = [
-  { q: "What are the two key properties needed for Dynamic Programming?", a: "Optimal substructure and overlapping subproblems." },
-  { q: "Memoization vs Tabulation: key difference?", a: "Memoization computes on demand recursively. Tabulation computes bottom-up iteratively." },
-  { q: "What does LCS stand for?", a: "Longest Common Subsequence." },
-  { q: "What is the typical complexity of 0/1 Knapsack DP?", a: "O(nW), where n is item count and W is capacity." },
-  { q: "When is a graph bipartite?", a: "If and only if it has no odd-length cycle." }
-];
+const flashcards = [];
 
 const modals = {
   focus: { title: "Start Focus Session", body: "<div class='form-group'><label class='form-label'>Mode</label><select class='select'><option>Active Reading</option><option>AI Tutor</option><option>Practice Questions</option></select></div>", confirm: "Start" },
-  visual: { title: "Concept Visualization", body: "<div class='form-group'><label class='form-label'>Concept</label><input class='input' placeholder='Enter concept...' value='Memoization vs Tabulation'></div>", confirm: "Generate" },
+  visual: { title: "Concept Visualization", body: "<div class='form-group'><label class='form-label'>Concept</label><input class='input' placeholder='Enter concept...'></div>", confirm: "Generate" },
   export: { title: "Export Highlights", body: "<div style='font-size:13px;color:var(--text3);line-height:1.7;'>Export current highlights to JSON report from dashboard.</div>", confirm: "Close" },
   "full-plan": { title: "Generate Full Plan", body: "<div class='form-group'><label class='form-label'>Available hours</label><input class='input' type='number' value='12'></div>", confirm: "Generate" },
   "override-rec": { title: "Override Recommendation", body: "<div class='form-group'><label class='form-label'>Reason</label><textarea class='input' style='height:90px;resize:none;' placeholder='Why this recommendation does not fit...'></textarea></div>", confirm: "Submit" },
   snooze: { title: "Snooze Recommendation", body: "<div class='form-group'><select class='select'><option>3 days</option><option>1 week</option></select></div>", confirm: "Snooze" },
   "context-override": { title: "Override Tutor Context", body: "<div class='form-group'><label class='form-label'>Learning style</label><select class='select'><option>Analogy-based</option><option>Visual-first</option></select></div>", confirm: "Save" },
   "add-session": { title: "Add Session", body: "<div class='form-group'><label class='form-label'>Subject</label><input class='input' value='Algorithms'></div>", confirm: "Add" },
-  "upload-paper": { title: "Upload Practice Paper", body: "<div style='font-size:13px;color:var(--text3);'>Upload is demo-only in this build.</div>", confirm: "Close" },
+  "upload-paper": { title: "Upload Practice Paper", body: "<div style='font-size:13px;color:var(--text3);'>Upload from Practice tab.</div>", confirm: "Close" },
   "time-input": { title: "30-minute Plan", body: "<div style='font-size:13px;color:var(--text3);'>Focus on one weak-topic drill + one timed check.</div>", confirm: "Apply" }
 };
 
 const runtime = {
   state: loadLocalState(),
-  cloudServices: { openaiConfigured: false, searchConfigured: false, blobConfigured: false },
+  cloudServices: { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false },
   highlightMode: false,
   currentParagraphId: 1,
   currentAttempt: 0,
   cardIndex: 0,
   flipped: false,
   voiceActive: false,
+  authUser: null,
   flashcards
 };
 
@@ -102,6 +88,7 @@ const ctx = {
   modals,
   apiGet,
   apiPost,
+  apiPostForm,
   apiPut,
   parseMaybeJson,
   escapeHtml,
@@ -119,22 +106,26 @@ const feature6 = initFeature6(ctx);
 const feature7 = initFeature7(ctx);
 const feature8 = initFeature8(ctx);
 
-function init() {
+async function init() {
+  const authed = await ensureAuthenticated();
+  if (!authed) return;
+
+  updateSidebarIdentity();
+  bindSidebarActions();
   ensureDynamicContainers();
   feature2.bindNotesSelectionCapture();
 
-  loadCloudHealth()
-    .then(() => hydrateStateFromBackend())
-    .then(() => {
-      hydrateFromDom();
-      feature2.renderHighlights();
-      feature5.renderRecommendations();
-      renderCloudStatus();
-      feature2.renderFlashcard();
-      feature6.initWeeklyChart();
-      feature6.initHeatmap();
-      feature7.initPracticeFeature();
-    });
+  await loadCloudHealth();
+  await hydrateStateFromBackend();
+
+  hydrateFromDom();
+  feature2.renderHighlights();
+  feature5.renderRecommendations();
+  renderCloudStatus();
+  feature2.renderFlashcard();
+  feature6.initWeeklyChart();
+  feature6.initHeatmap();
+  feature7.initPracticeFeature();
 }
 
 function ensureDynamicContainers() {
@@ -172,13 +163,12 @@ function hydrateFromDom() {
   document.querySelectorAll(".paragraph-wrap").forEach((wrap) => {
     const id = Number((wrap.id || "").replace("para-", ""));
     const paraText = wrap.querySelector(".para-text");
-    const aiBox = wrap.querySelector(".para-ai-box");
-    if (!id || !paraText || !aiBox) return;
+    if (!id || !paraText) return;
 
     if (!runtime.state.notes[id]) {
       runtime.state.notes[id] = {
         text: paraText.textContent.trim(),
-        status: id === 1 ? "clear" : "unreviewed",
+        status: "unreviewed",
         attempt: 0
       };
     }
@@ -189,7 +179,7 @@ function hydrateFromDom() {
 function renderCloudStatus() {
   const topbarSub = document.querySelector("#page-dashboard .topbar-sub");
   if (!topbarSub) return;
-  const status = `OpenAI: ${runtime.cloudServices.openaiConfigured ? "Connected" : "Not configured"} · Search: ${runtime.cloudServices.searchConfigured ? "Connected" : "Not configured"} · Blob: ${runtime.cloudServices.blobConfigured ? "Connected" : "Not configured"}`;
+  const status = `OpenAI: ${runtime.cloudServices.openaiConfigured ? "Connected" : "Not configured"} | RAG: ${runtime.cloudServices.ragConfigured ? "Connected" : "Not configured"} | Firebase: ${runtime.cloudServices.firebaseConfigured ? "Connected" : "Not configured"} | Files: ${runtime.cloudServices.fileStorageConfigured ? "Connected" : "Not configured"}`;
   topbarSub.textContent = `${topbarSub.textContent.split("|")[0].trim()} | ${status}`;
 }
 
@@ -211,19 +201,20 @@ async function loadCloudHealth() {
     const health = await apiGet(API.health);
     runtime.cloudServices = health.services || runtime.cloudServices;
   } catch {
-    runtime.cloudServices = { openaiConfigured: false, searchConfigured: false, blobConfigured: false };
+    runtime.cloudServices = { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false };
   }
 }
 
 async function hydrateStateFromBackend() {
-  if (!runtime.cloudServices.blobConfigured) return;
   try {
-    const remote = await apiGet(API.state(runtime.state.student.id || STUDENT_ID));
-    runtime.state = mergeDeep(structuredClone(defaultState), remote);
+    const remote = await apiGet(API.userState);
+    runtime.state = mergeDeep(structuredClone(defaultState), remote.state || {});
+    if (runtime.authUser?.uid) runtime.state.student.id = runtime.authUser.uid;
+    if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email.split("@")[0];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(runtime.state));
-    logAudit("Loaded student state from Blob.");
+    logAudit("Loaded user state from backend.");
   } catch {
-    logAudit("Cloud state unavailable. Using local state.");
+    logAudit("User state unavailable. Using local state.");
   }
 }
 
@@ -233,9 +224,8 @@ function scheduleSave() {
 }
 
 async function persistStateToBackend() {
-  if (!runtime.cloudServices.blobConfigured) return;
   try {
-    await apiPut(API.state(runtime.state.student.id || STUDENT_ID), runtime.state);
+    await apiPut(API.userState, { state: runtime.state });
   } catch {
     // Keep local only.
   }
@@ -282,8 +272,65 @@ function escapeHtml(input) {
     .replace(/'/g, "&#039;");
 }
 
+async function ensureAuthenticated() {
+  try {
+    const authClient = window.firebaseAuthClient;
+    if (!authClient?.initFirebaseClient) {
+      window.location.replace("/login.html");
+      return false;
+    }
+    await authClient.initFirebaseClient();
+    await authClient.waitForAuthReady();
+    const user = await authClient.getUser();
+    if (!user) {
+      window.location.replace("/login.html");
+      return false;
+    }
+    runtime.authUser = user;
+    runtime.state.student.id = user.uid || runtime.state.student.id || STUDENT_ID;
+    if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
+    authClient.onAuthChanged((nextUser) => {
+      if (!nextUser) window.location.replace("/login.html");
+    });
+    return true;
+  } catch {
+    window.location.replace("/login.html");
+    return false;
+  }
+}
+
+function updateSidebarIdentity() {
+  const user = runtime.authUser;
+  const avatar = document.getElementById("sidebarAvatar");
+  const nameEl = document.getElementById("sidebarUserName");
+  const metaEl = document.getElementById("sidebarUserMeta");
+  const email = String(user?.email || "").trim();
+  const initials = (runtime.state.student.name || email || "ST")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() || "")
+    .join("") || "ST";
+  if (avatar) avatar.textContent = initials;
+  if (nameEl) nameEl.textContent = runtime.state.student.name || "Student";
+  if (metaEl) metaEl.textContent = email || "Authenticated user";
+}
+
+function bindSidebarActions() {
+  const logoutBtn = document.getElementById("logoutBtn");
+  if (!logoutBtn) return;
+  logoutBtn.addEventListener("click", async () => {
+    logoutBtn.disabled = true;
+    try {
+      await window.firebaseAuthClient?.signOutUser?.();
+    } finally {
+      window.location.replace("/login.html");
+    }
+  });
+}
+
 async function apiGet(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: await authHeaders() });
   const payload = await parseMaybeJson(res);
   if (!res.ok) throw new Error(payload.error || `GET ${url} failed`);
   return payload;
@@ -292,8 +339,19 @@ async function apiGet(url) {
 async function apiPost(url, body) {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body)
+  });
+  const payload = await parseMaybeJson(res);
+  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
+  return payload;
+}
+
+async function apiPostForm(url, formData) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: formData
   });
   const payload = await parseMaybeJson(res);
   if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
@@ -303,12 +361,19 @@ async function apiPost(url, body) {
 async function apiPut(url, body) {
   const res = await fetch(url, {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body)
   });
   const payload = await parseMaybeJson(res);
   if (!res.ok) throw new Error(payload.error || `PUT ${url} failed`);
   return payload;
+}
+
+async function authHeaders(base = {}) {
+  const headers = { ...base };
+  const token = await window.firebaseAuthClient?.getIdToken?.();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
 }
 
 async function parseMaybeJson(res) {
@@ -343,4 +408,3 @@ export function bootstrapApp() {
   window.indexLatestHighlight = feature5.indexLatestHighlight;
   init();
 }
-

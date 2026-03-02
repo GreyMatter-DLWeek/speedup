@@ -82,6 +82,10 @@ export function initFeature2(ctx) {
   function renderFlashcard() {
     const q = document.getElementById("flashcard-q");
     if (!q) return;
+    if (!runtime.flashcards.length) {
+      q.textContent = "No flashcards yet. Add notes to generate cards.";
+      return;
+    }
     const item = runtime.flashcards[runtime.cardIndex];
     q.textContent = runtime.flipped ? item.a : item.q;
   }
@@ -94,6 +98,7 @@ export function initFeature2(ctx) {
   }
 
   function nextCard() {
+    if (!runtime.flashcards.length) return;
     runtime.cardIndex = (runtime.cardIndex + 1) % runtime.flashcards.length;
     runtime.flipped = false;
     renderFlashcard();

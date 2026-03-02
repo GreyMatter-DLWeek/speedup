@@ -8,7 +8,7 @@ export function initFeature5(ctx) {
 
     const query = input.value.trim();
     if (!query) return;
-    out.textContent = "Querying Azure AI Search...";
+    out.textContent = "Querying RAG index...";
 
     try {
       const res = await apiPost(API.ragQuery, { query, topK: 5 });
