@@ -20,7 +20,10 @@ const API = {
   userState: "/api/user/state",
   userExam: "/api/user/exam",
   practiceAnalyze: "/api/practice/analyze",
+  practiceGenerateQuiz: "/api/practice/generate-quiz",
+  practiceGenerateFlashcards: "/api/practice/generate-flashcards",
   explain: "/api/explain",
+  tutorQuery: "/api/tutor/query",
   highlightAnalyze: "/api/highlight/analyze",
   ragQuery: "/api/rag/query",
   ragIndexNote: "/api/rag/index-note",
@@ -56,6 +59,14 @@ const defaultState = {
     sources: [],
     provider: "local"
   },
+  tutorHistory: [],
+  tutorDrafts: {
+    "active-reading": "",
+    "study-notes": "",
+    "practice-papers": ""
+  },
+  tutorRevisitQueue: [],
+  practiceErrorLog: [],
   notes: {},
   highlights: [],
   practiceUploads: [],
@@ -94,7 +105,16 @@ const runtime = {
   flipped: false,
   voiceActive: false,
   authUser: null,
-  flashcards
+  flashcards,
+  tutorPanelOpen: false,
+  tutorPanelDocked: true,
+  tutorPanelPosition: null,
+  tutorPeekTop: 132,
+  tutorDragState: null,
+  tutorInteractionsBound: false,
+  tutorContextType: "active-reading",
+  tutorContextLabel: "Context: Active Reading",
+  tutorScopeMeta: []
 };
 
 const ctx = {
@@ -135,6 +155,8 @@ async function init() {
   bindSidebarActions();
   ensureDynamicContainers();
   feature2.bindNotesSelectionCapture();
+  bindTutorKeyboardShortcuts();
+  initTutorPanelInteractions();
 
   await loadCloudHealth();
   await hydrateStateFromBackend();
@@ -147,6 +169,8 @@ async function init() {
   feature6.initWeeklyChart();
   feature6.initHeatmap();
   feature7.initPracticeFeature();
+
+  renderTutorPanel();
   feature4.initTimeManagement();
 }
 
@@ -643,8 +667,537 @@ function navigate(page) {
     if (onclick.includes(`'${page}'`)) item.classList.add("active");
   });
 
+  syncTutorContextFromPage(page);
+
   if (page === "timetable") {
     feature4.refreshTimeManagement();
+  }
+}
+
+function inferCurrentPage() {
+  const active = document.querySelector(".page.active")?.id || "";
+  return active.replace(/^page-/, "") || "dashboard";
+}
+
+function mapPageToTutorContext(page) {
+  if (page === "study-notes") return "study-notes";
+  if (page === "practice") return "practice-papers";
+  return "active-reading";
+}
+
+function syncTutorContextFromPage(page = inferCurrentPage()) {
+  if (!runtime.tutorPanelOpen) {
+    runtime.tutorContextType = mapPageToTutorContext(page);
+  }
+  renderTutorContextHeader();
+}
+
+function bindTutorKeyboardShortcuts() {
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented) return;
+    const target = e.target;
+    const tag = String(target?.tagName || "").toLowerCase();
+    const isTyping = ["input", "textarea", "select"].includes(tag) || target?.isContentEditable;
+
+    if (e.key === "/" && !isTyping) {
+      e.preventDefault();
+      openTutorPanel();
+      return;
+    }
+
+    if (e.key === "Escape" && (runtime.tutorPanelOpen || runtime.tutorPanelDocked)) {
+      closeTutorPanel();
+    }
+  });
+}
+
+function initTutorPanelInteractions() {
+  if (runtime.tutorInteractionsBound) return;
+  runtime.tutorInteractionsBound = true;
+
+  const dragHandle = document.getElementById("tutorDragHandle");
+  const panel = document.getElementById("tutorPanel");
+  if (!dragHandle || !panel) return;
+
+  dragHandle.addEventListener("pointerdown", (event) => {
+    if (!runtime.tutorPanelOpen || runtime.tutorPanelDocked) return;
+    if (event.button !== 0) return;
+    if (event.target?.closest("button, textarea, input, .tutor-action-btn, .chip")) return;
+
+    const rect = panel.getBoundingClientRect();
+    const current = ensureTutorPanelPosition(rect);
+    runtime.tutorDragState = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startTop: current.top,
+      startRight: current.right,
+      moved: false
+    };
+
+    panel.classList.add("dragging");
+    dragHandle.setPointerCapture?.(event.pointerId);
+  });
+
+  dragHandle.addEventListener("pointermove", (event) => {
+    const drag = runtime.tutorDragState;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) drag.moved = true;
+
+    runtime.tutorPanelPosition = {
+      top: drag.startTop + deltaY,
+      right: drag.startRight - deltaX
+    };
+    applyTutorPanelPosition();
+    event.preventDefault();
+  });
+
+  const stopDrag = (event) => {
+    const drag = runtime.tutorDragState;
+    if (!drag) return;
+    if (event?.pointerId != null && drag.pointerId !== event.pointerId) return;
+
+    runtime.tutorDragState = null;
+    panel.classList.remove("dragging");
+    try {
+      if (event?.pointerId != null) dragHandle.releasePointerCapture?.(event.pointerId);
+    } catch {
+      // ignore
+    }
+  };
+
+  dragHandle.addEventListener("pointerup", stopDrag);
+  dragHandle.addEventListener("pointercancel", stopDrag);
+  window.addEventListener("resize", () => {
+    applyTutorPanelPosition();
+    updateTutorPeekPosition();
+  });
+
+  updateTutorPeekPosition();
+}
+
+function clampNumber(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function ensureTutorPanelPosition(existingRect = null) {
+  const panel = document.getElementById("tutorPanel");
+  if (!panel) return { top: 88, right: 16 };
+  if (window.matchMedia("(max-width: 700px)").matches) {
+    return { top: 74, right: 7 };
+  }
+  if (!runtime.tutorPanelPosition) {
+    const rect = existingRect || panel.getBoundingClientRect();
+    runtime.tutorPanelPosition = {
+      top: Number.isFinite(rect.top) ? rect.top : 88,
+      right: Number.isFinite(window.innerWidth - rect.right) ? window.innerWidth - rect.right : 16
+    };
+  }
+  return clampTutorPanelPosition(runtime.tutorPanelPosition);
+}
+
+function clampTutorPanelPosition(pos) {
+  const panel = document.getElementById("tutorPanel");
+  if (window.matchMedia("(max-width: 700px)").matches) {
+    return { top: 74, right: 7 };
+  }
+  const width = panel?.offsetWidth || Math.min(560, Math.floor(window.innerWidth * 0.96));
+  const height = panel?.offsetHeight || Math.min(760, Math.floor(window.innerHeight * 0.78));
+
+  const minTop = 56;
+  const maxTop = Math.max(minTop, window.innerHeight - height - 8);
+  const minRight = 6;
+  const maxRight = Math.max(minRight, window.innerWidth - width - 6);
+
+  return {
+    top: clampNumber(Number(pos?.top ?? 88), minTop, maxTop),
+    right: clampNumber(Number(pos?.right ?? 16), minRight, maxRight)
+  };
+}
+
+function applyTutorPanelPosition() {
+  const panel = document.getElementById("tutorPanel");
+  if (!panel) return;
+
+  const clamped = ensureTutorPanelPosition();
+  runtime.tutorPanelPosition = clamped;
+
+  panel.style.left = "auto";
+  panel.style.top = `${Math.round(clamped.top)}px`;
+  panel.style.right = `${Math.round(clamped.right)}px`;
+
+  const peekTop = window.matchMedia("(max-width: 700px)").matches ? 118 : clamped.top + 54;
+  runtime.tutorPeekTop = clampNumber(peekTop, 80, Math.max(80, window.innerHeight - 140));
+  updateTutorPeekPosition();
+}
+
+function updateTutorPeekPosition() {
+  const peek = document.getElementById("tutorPeekRobot");
+  if (!peek) return;
+  const top = clampNumber(Number(runtime.tutorPeekTop || 160), 76, Math.max(76, window.innerHeight - 140));
+  peek.style.top = `${Math.round(top)}px`;
+}
+
+function dockTutorPanel() {
+  const panel = document.getElementById("tutorPanel");
+  if (panel) {
+    const rect = panel.getBoundingClientRect();
+    runtime.tutorPanelPosition = {
+      top: rect.top,
+      right: window.innerWidth - rect.right
+    };
+    runtime.tutorPeekTop = clampNumber(rect.top + 54, 80, Math.max(80, window.innerHeight - 140));
+    panel.classList.remove("dragging");
+  }
+  runtime.tutorDragState = null;
+  runtime.tutorPanelDocked = true;
+  runtime.tutorPanelOpen = false;
+  renderTutorPanel();
+}
+
+function restoreTutorPanel() {
+  runtime.tutorPanelDocked = false;
+  runtime.tutorPanelOpen = true;
+  runtime.tutorDragState = null;
+  renderTutorPanel();
+  document.getElementById("tutorInput")?.focus();
+}
+
+function contextLabel(type, details = {}) {
+  if (type === "study-notes") {
+    return `Context: Study Pack (${details.packName || "Current Pack"}${details.section ? ` · ${details.section}` : ""})`;
+  }
+  if (type === "practice-papers") {
+    return `Context: Practice (${details.sourceName || "Current Paper"}${details.questionId ? ` · ${details.questionId}` : ""})`;
+  }
+  return `Context: Active Reading (${details.docName || "Current Reading"}${details.page ? ` · p.${details.page}` : ""})`;
+}
+
+function buildTutorContext(type) {
+  const activeType = type || runtime.tutorContextType || "active-reading";
+  const nowPage = inferCurrentPage();
+  const resolvedType = type || mapPageToTutorContext(nowPage);
+  const highlights = Array.isArray(runtime.state.highlights) ? runtime.state.highlights.slice(0, 4) : [];
+
+  if (resolvedType === "study-notes") {
+    const packName = runtime.state.student?.focus ? `${runtime.state.student.focus} Study Pack` : "Study Notes Pack";
+    const section = document.querySelector("#page-study-notes .section-title")?.textContent?.trim() || "Captured Highlights";
+    return {
+      contextType: "study-notes",
+      details: { packName, section },
+      context: {
+        packName,
+        section,
+        selection: highlights[0]?.summary || highlights[0]?.text || "",
+        highlights: highlights.map((h) => ({ text: h.text, summary: h.summary, section }))
+      }
+    };
+  }
+
+  if (resolvedType === "practice-papers") {
+    const uploads = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
+    const selectedIdx = Number(document.getElementById("quizSourceSelect")?.value || 0);
+    const selected = uploads[selectedIdx] || uploads[0] || null;
+    const sourceName = selected?.name || "Practice Paper";
+    const questionText = selected?.analysis?.summary || selected?.sourceTextSnippet || "Current question context not selected.";
+    const markingScheme = (selected?.analysis?.recommendedNextSteps || []).join(" ");
+    const linkedNote = highlights[0]?.summary || "";
+    const questionId = `Q${Math.max(1, selectedIdx + 1)}`;
+    return {
+      contextType: "practice-papers",
+      details: { sourceName, questionId },
+      context: {
+        sourceName,
+        questionId,
+        questionText,
+        markingScheme,
+        linkedNote
+      }
+    };
+  }
+
+  const paragraph = document.querySelector("#page-notes .paragraph-wrap .para-text")?.textContent?.trim() || "";
+  const selection = window.getSelection?.()?.toString?.().trim?.() || "";
+  const page = runtime.currentParagraphId || 1;
+  const docName = "Algorithms Chapter 7";
+  return {
+    contextType: "active-reading",
+    details: { docName, page },
+    context: {
+      docName,
+      page,
+      selection,
+      currentParagraph: paragraph,
+      jumpRef: "notesBody",
+      highlights: highlights.map((h) => ({ text: h.text, summary: h.summary, page: page, jumpRef: "dynamicHighlights" }))
+    }
+  };
+}
+
+function renderTutorContextHeader() {
+  const labelEl = document.getElementById("tutorScopeLabel");
+  const chipsEl = document.getElementById("tutorContextChips");
+  if (!labelEl || !chipsEl) return;
+  labelEl.textContent = runtime.tutorContextLabel || "Context: Active Reading";
+  chipsEl.innerHTML = (runtime.tutorScopeMeta || [])
+    .map((v) => `<span class="tutor-context-chip">${escapeHtml(v)}</span>`)
+    .join("");
+}
+
+function pushTutorMsg(role, payload) {
+  runtime.state.tutorHistory = Array.isArray(runtime.state.tutorHistory) ? runtime.state.tutorHistory : [];
+  runtime.state.tutorHistory.push({
+    role,
+    contextType: runtime.tutorContextType,
+    ts: new Date().toISOString(),
+    ...payload
+  });
+  runtime.state.tutorHistory = runtime.state.tutorHistory.slice(-120);
+  scheduleSave();
+}
+
+function renderTutorMessages() {
+  const wrap = document.getElementById("tutorMessages");
+  if (!wrap) return;
+  const rows = Array.isArray(runtime.state.tutorHistory) ? runtime.state.tutorHistory : [];
+  if (!rows.length) {
+    wrap.innerHTML = `<div class="tutor-msg"><div class="tutor-msg-head">Tutor · ready</div><div class="tutor-msg-body">Ask me from your current context. I will cite source snippets with page/section references.</div></div>`;
+    return;
+  }
+
+  wrap.innerHTML = rows.map((m) => {
+    if (m.role === "user") {
+      return `<div class="tutor-msg user"><div class="tutor-msg-head">You <span>${escapeHtml(new Date(m.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</span></div><div class="tutor-msg-body">${escapeHtml(m.text || "")}</div></div>`;
+    }
+
+    const citations = Array.isArray(m.citations) ? m.citations : [];
+    const actions = Array.isArray(m.actions) ? m.actions : [];
+    const citationsHtml = citations.length
+      ? `<div class="tutor-citations">${citations.map((c, i) => `
+        <div class="tutor-cite">
+          <div class="tutor-cite-head">
+            <span>${escapeHtml(c.docName || "Source")} · ${escapeHtml(String(c.page || "N/A"))}</span>
+            ${c.jumpRef ? `<button class="tutor-action-btn" onclick="jumpTutorSource('${escapeHtml(c.jumpRef)}')">Jump</button>` : ""}
+          </div>
+          <div class="tutor-cite-quote">${escapeHtml(c.quote || "")}</div>
+        </div>
+      `).join("")}</div>`
+      : "";
+
+    const actionsHtml = actions.length
+      ? `<div class="tutor-actions">${actions.map((a, i) => `<button class="tutor-action-btn" onclick="runTutorAction(${rows.indexOf(m)}, ${i})">${escapeHtml(a.label || "Action")}</button>`).join("")}</div>`
+      : "";
+
+    return `<div class="tutor-msg"><div class="tutor-msg-head">Tutor · ${escapeHtml(m.provider || "local")}</div><div class="tutor-msg-body">${escapeHtml(m.answer || "")}</div>${citationsHtml}${actionsHtml}</div>`;
+  }).join("");
+
+  wrap.scrollTop = wrap.scrollHeight;
+}
+
+function renderTutorPanel() {
+  const panel = document.getElementById("tutorPanel");
+  const peek = document.getElementById("tutorPeekRobot");
+  const fab = document.getElementById("tutorFabBtn");
+  if (!panel) return;
+
+  panel.classList.toggle("open", Boolean(runtime.tutorPanelOpen));
+  panel.classList.toggle("docked", Boolean(runtime.tutorPanelDocked));
+  panel.setAttribute("aria-hidden", runtime.tutorPanelOpen ? "false" : "true");
+
+  if (runtime.tutorPanelOpen && !runtime.tutorPanelDocked) {
+    applyTutorPanelPosition();
+  }
+
+  if (peek) {
+    updateTutorPeekPosition();
+    peek.classList.toggle("show", Boolean(runtime.tutorPanelDocked));
+    peek.setAttribute("aria-hidden", runtime.tutorPanelDocked ? "false" : "true");
+  }
+
+  if (fab) {
+    fab.style.display = runtime.tutorPanelOpen || runtime.tutorPanelDocked ? "none" : "inline-flex";
+  }
+
+  renderTutorContextHeader();
+  renderTutorMessages();
+  const input = document.getElementById("tutorInput");
+  if (input) {
+    input.value = runtime.state.tutorDrafts?.[runtime.tutorContextType] || "";
+    input.oninput = () => {
+      runtime.state.tutorDrafts = runtime.state.tutorDrafts || {};
+      runtime.state.tutorDrafts[runtime.tutorContextType] = input.value;
+    };
+    input.onkeydown = (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendTutorMessage();
+      }
+    };
+  }
+}
+
+function openTutorPanel(type = null) {
+  const built = buildTutorContext(type || mapPageToTutorContext(inferCurrentPage()));
+  runtime.tutorPanelDocked = false;
+  runtime.tutorPanelOpen = true;
+  runtime.tutorContextType = built.contextType;
+  runtime.tutorContextLabel = contextLabel(built.contextType, built.details);
+  runtime.tutorScopeMeta = Object.values(built.details || {})
+    .filter(Boolean)
+    .map((v) => String(v));
+  runtime.tutorContextCache = built;
+  renderTutorPanel();
+  document.getElementById("tutorInput")?.focus();
+}
+
+function closeTutorPanel() {
+  dockTutorPanel();
+}
+
+function askTutorQuick(question) {
+  const input = document.getElementById("tutorInput");
+  if (!input) return;
+  input.value = question;
+  runtime.state.tutorDrafts = runtime.state.tutorDrafts || {};
+  runtime.state.tutorDrafts[runtime.tutorContextType] = question;
+  sendTutorMessage();
+}
+
+async function sendTutorMessage() {
+  const input = document.getElementById("tutorInput");
+  const text = String(input?.value || "").trim();
+  if (!text) return;
+
+  const built = buildTutorContext(runtime.tutorContextType);
+  runtime.tutorContextType = built.contextType;
+  runtime.tutorContextLabel = contextLabel(built.contextType, built.details);
+  runtime.tutorScopeMeta = Object.values(built.details || {}).filter(Boolean).map((v) => String(v));
+  runtime.tutorContextCache = built;
+
+  pushTutorMsg("user", { text });
+  runtime.state.tutorDrafts[runtime.tutorContextType] = "";
+  if (input) input.value = "";
+  renderTutorPanel();
+
+  try {
+    const out = await apiPost(API.tutorQuery, {
+      contextType: built.contextType,
+      question: text,
+      context: built.context,
+      studentId: runtime.state.student.id
+    });
+
+    pushTutorMsg("assistant", {
+      answer: out.answer,
+      provider: out.provider,
+      citations: Array.isArray(out.citations) ? out.citations : [],
+      actions: Array.isArray(out.actions) ? out.actions : []
+    });
+
+    if (built.contextType === "practice-papers") {
+      runtime.state.practiceErrorLog = Array.isArray(runtime.state.practiceErrorLog) ? runtime.state.practiceErrorLog : [];
+      runtime.state.practiceErrorLog.unshift({
+        ts: new Date().toISOString(),
+        question: text,
+        fix: out.answer,
+        reviseLink: (out.actions || []).find((a) => a.type === "revise-link")?.target || "study-notes"
+      });
+      runtime.state.practiceErrorLog = runtime.state.practiceErrorLog.slice(0, 80);
+      runtime.state.tutorRevisitQueue = Array.isArray(runtime.state.tutorRevisitQueue) ? runtime.state.tutorRevisitQueue : [];
+      runtime.state.tutorRevisitQueue.unshift({
+        ts: new Date().toISOString(),
+        contextType: built.contextType,
+        prompt: text,
+        revisitOn: addDaysIso(2)
+      });
+      runtime.state.tutorRevisitQueue = runtime.state.tutorRevisitQueue.slice(0, 80);
+      scheduleSave();
+    }
+  } catch (error) {
+    pushTutorMsg("assistant", {
+      answer: `Tutor unavailable: ${error.message || "unknown error"}`,
+      provider: "fallback",
+      citations: [],
+      actions: []
+    });
+  }
+
+  renderTutorPanel();
+}
+
+function addDaysIso(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + Number(days || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+function jumpTutorSource(jumpRef) {
+  if (!jumpRef) return;
+  if (jumpRef === "study-notes") {
+    navigate("study-notes");
+    closeTutorPanel();
+    return;
+  }
+  if (jumpRef === "practice") {
+    navigate("practice");
+    closeTutorPanel();
+    return;
+  }
+  if (jumpRef === "notes") {
+    navigate("notes");
+    closeTutorPanel();
+    return;
+  }
+
+  const el = document.getElementById(jumpRef);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.style.outline = "2px solid rgba(110,231,183,0.5)";
+  setTimeout(() => {
+    el.style.outline = "";
+  }, 1200);
+}
+
+function runTutorAction(msgIndex, actionIndex) {
+  const row = runtime.state.tutorHistory?.[msgIndex];
+  const action = row?.actions?.[actionIndex];
+  if (!action) return;
+
+  if (action.type === "jump") {
+    jumpTutorSource(action.jumpRef);
+    return;
+  }
+
+  if (action.type === "revise-link") {
+    navigate(action.target || "study-notes");
+    closeTutorPanel();
+    return;
+  }
+
+  if (action.type === "add-note") {
+    const key = `tutor-${Date.now()}`;
+    runtime.state.notes[key] = {
+      text: action.text || row.answer || "",
+      status: "saved",
+      attempt: 0
+    };
+    logAudit("Tutor answer added to notes.");
+    scheduleSave();
+    return;
+  }
+
+  if (action.type === "flashcards") {
+    runtime.flashcards.unshift({
+      q: "Tutor Insight",
+      a: action.text || row.answer || ""
+    });
+    runtime.flashcards.splice(20);
+    feature2.renderFlashcard();
+    logAudit("Tutor answer converted to flashcard.");
+    scheduleSave();
   }
 }
 
@@ -884,6 +1437,14 @@ export function bootstrapApp() {
   window.initHeatmap = feature6.initHeatmap;
   window.runRagQuery = feature5.runRagQuery;
   window.indexLatestHighlight = feature5.indexLatestHighlight;
+  window.openTutorPanel = openTutorPanel;
+  window.closeTutorPanel = closeTutorPanel;
+  window.dockTutorPanel = dockTutorPanel;
+  window.restoreTutorPanel = restoreTutorPanel;
+  window.sendTutorMessage = sendTutorMessage;
+  window.askTutorQuick = askTutorQuick;
+  window.jumpTutorSource = jumpTutorSource;
+  window.runTutorAction = runTutorAction;
   window.openSettingsModal = openSettingsModal;
   window.saveSettingsProfile = saveSettingsProfile;
   window.resetSidebarOrder = resetSidebarOrder;

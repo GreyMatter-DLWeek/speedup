@@ -3,3 +3,41 @@
     <!-- Content injected by JS -->
   </div>
 </div>
+
+<button class="tutor-fab" id="tutorFabBtn" type="button" onclick="openTutorPanel()" title="Ask Tutor (/)">
+  <span class="tutor-fab-icon" aria-hidden="true">🤖</span>
+  <span>Ask Tutor</span>
+</button>
+
+<button class="tutor-peek-robot" id="tutorPeekRobot" type="button" aria-label="Re-open tutor" title="Open Tutor" onclick="restoreTutorPanel()">
+  <span class="tutor-peek-icon" aria-hidden="true">🤖</span>
+  <span class="tutor-peek-text">Ask Tutor</span>
+</button>
+
+<aside class="tutor-panel" id="tutorPanel" aria-hidden="true">
+  <div class="tutor-panel-header" id="tutorDragHandle">
+    <div>
+      <div class="tutor-panel-title"><span aria-hidden="true">🤖</span> Ask Tutor</div>
+      <div class="tutor-panel-sub" id="tutorScopeLabel">Context: Active Reading</div>
+    </div>
+    <div class="tutor-panel-controls">
+      <button class="tutor-icon-btn" type="button" onclick="dockTutorPanel()" title="Push to side">⇢</button>
+      <button class="tutor-icon-btn" type="button" onclick="closeTutorPanel()" title="Close">✕</button>
+    </div>
+  </div>
+
+  <div class="tutor-context-strip" id="tutorContextChips"></div>
+
+  <div class="tutor-quick-actions" id="tutorQuickActions">
+    <button class="chip chip-purple" type="button" onclick="askTutorQuick('Explain this section in simple terms')">Explain section</button>
+    <button class="chip chip-green" type="button" onclick="askTutorQuick('Quiz me with 3 questions from this context')">Quiz me</button>
+    <button class="chip chip-yellow" type="button" onclick="askTutorQuick('Give one worked example')">Give example</button>
+  </div>
+
+  <div class="tutor-messages" id="tutorMessages"></div>
+
+  <div class="tutor-input-wrap">
+    <textarea id="tutorInput" class="chat-input" rows="2" placeholder="Ask your tutor... (press Enter)"></textarea>
+    <button class="send-btn" type="button" onclick="sendTutorMessage()">➤</button>
+  </div>
+</aside>

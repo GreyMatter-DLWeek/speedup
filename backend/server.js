@@ -20,7 +20,8 @@ const cloudinary = cloudinaryModule?.v2 || null;
 const { isFirebaseConfigured, getFirestore } = require("./firebase/firebaseAdmin");
 const { requireFirebaseAuth, tryGetFirebaseUser } = require("./firebase/firebaseAuth");
 const { getUserState, setUserState, appendAuditEvent } = require("./firebase/firebaseStore");
-const { registerTimeManagementRoutes } = require("../time-management");
+const timeManagementModule = tryRequire("../time-management");
+const registerTimeManagementRoutes = timeManagementModule?.registerTimeManagementRoutes || null;
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -331,6 +332,86 @@ app.post("/api/explain", withRateLimit("explain", 40, 60 * 1000), async (req, re
   }
 });
 
+app.post("/api/tutor/query", withRateLimit("tutor_query", 60, 60 * 1000), async (req, res) => {
+  try {
+    const contextType = cleanText(req.body?.contextType || "active-reading", 40).toLowerCase();
+    const question = cleanText(req.body?.question, 2000);
+    const context = req.body?.context && typeof req.body.context === "object" ? req.body.context : {};
+    if (!question) return res.status(400).json({ error: "question is required." });
+
+    const authUser = await tryGetFirebaseUser(req);
+    const ownerId = normalizeStudentId(authUser?.uid || cleanText(req.body?.studentId || "", 80));
+    const evidence = buildTutorEvidence(contextType, context);
+
+    let ragHits = [];
+    try {
+      ragHits = await searchDocuments(question, 4, ownerId);
+    } catch {
+      ragHits = [];
+    }
+
+    const ragCitations = ragHits.map((hit) => ({
+      docName: cleanText(hit.title || "Indexed Notes", 160),
+      page: "RAG",
+      quote: cleanText(hit.snippet || "", 220),
+      jumpRef: "study-notes",
+      sourceType: "retrieval"
+    }));
+
+    const baselineCitations = dedupeTutorCitations([...(evidence.citations || []), ...ragCitations]).slice(0, 6);
+
+    const system = [
+      "You are SpeedUp AI Tutor.",
+      "Always stay within the supplied context scope.",
+      "Return strict JSON with keys: answer, citations, actions.",
+      "citations must be an array of {docName,page,quote,jumpRef,sourceType}.",
+      "actions must be an array of up to 4 items with keys {type,label,target,jumpRef,text}.",
+      "If evidence is weak, clearly state uncertainty and ask user to expand scope."
+    ].join(" ");
+
+    const userPayload = {
+      contextType,
+      question,
+      scope: evidence.scope,
+      localCitations: baselineCitations,
+      retrievedNotes: ragHits.map((h) => ({ title: h.title, source: h.source, snippet: h.snippet }))
+    };
+
+    let parsed = null;
+    let provider = "fallback";
+    try {
+      const raw = await callOpenAIChat([
+        { role: "system", content: system },
+        { role: "user", content: JSON.stringify(userPayload) }
+      ], 0.2);
+      parsed = safeParseJson(raw);
+      provider = "openai-api";
+    } catch {
+      parsed = null;
+      provider = "fallback";
+    }
+
+    const fallback = buildTutorFallback(contextType, question, evidence.scope, baselineCitations);
+    const answer = cleanText(parsed?.answer || fallback.answer, 2800);
+    const citations = dedupeTutorCitations((parsed?.citations || []).map(normalizeTutorCitation).filter(Boolean).length
+      ? (parsed?.citations || []).map(normalizeTutorCitation).filter(Boolean)
+      : fallback.citations);
+    const actions = normalizeTutorActions(parsed?.actions, contextType, citations, answer, fallback.actions);
+
+    return res.json({
+      ok: true,
+      provider,
+      contextType,
+      scope: evidence.scope,
+      answer,
+      citations,
+      actions
+    });
+  } catch (error) {
+    handleError(res, "Failed to generate tutor response", error);
+  }
+});
+
 app.post("/api/highlight/analyze", withRateLimit("highlight", 50, 60 * 1000), async (req, res) => {
   try {
     const text = cleanText(req.body?.text, 3000);
@@ -486,12 +567,16 @@ app.post("/api/recommendations", withRateLimit("recommend", 20, 60 * 1000), asyn
   }
 });
 
-registerTimeManagementRoutes(app, {
-  callOpenAIChat,
-  safeParseJson,
-  isOpenAIConfigured,
-  normalizeStudentId
-});
+if (registerTimeManagementRoutes) {
+  registerTimeManagementRoutes(app, {
+    callOpenAIChat,
+    safeParseJson,
+    isOpenAIConfigured,
+    normalizeStudentId
+  });
+} else {
+  console.warn("Time management routes disabled: optional dependency `sqlite3` is missing.");
+}
 
 app.post("/api/live/event/:studentId", async (req, res) => {
   try {
@@ -1448,4 +1533,212 @@ async function indexRagNote({ studentId, title, text, source }) {
 
 function isTemperatureUnsupported(message) {
   return /Unsupported parameter/i.test(String(message || "")) && /temperature/i.test(String(message || ""));
+}
+
+function buildTutorEvidence(contextType, context) {
+  const safeContext = context && typeof context === "object" ? context : {};
+  const type = String(contextType || "active-reading").toLowerCase();
+
+  if (type === "study-notes") {
+    const packName = cleanText(safeContext.packName || "Study Pack", 140) || "Study Pack";
+    const section = cleanText(safeContext.section || "", 140);
+    const selection = cleanText(safeContext.selection || "", 700);
+    const highlights = Array.isArray(safeContext.highlights) ? safeContext.highlights.slice(0, 5) : [];
+    const citations = [];
+    if (selection) {
+      citations.push({
+        docName: packName,
+        page: section || "Section",
+        quote: selection,
+        jumpRef: "study-notes",
+        sourceType: "selection"
+      });
+    }
+    highlights.forEach((h, idx) => {
+      const quote = cleanText(h?.text || h?.summary || "", 220);
+      if (!quote) return;
+      citations.push({
+        docName: packName,
+        page: cleanText(h?.section || section || `S${idx + 1}`, 40),
+        quote,
+        jumpRef: "study-notes",
+        sourceType: "pack"
+      });
+    });
+    return {
+      scope: {
+        label: `Context: Study Pack (${packName}${section ? ` · ${section}` : ""})`,
+        contextType: "study-notes",
+        packName,
+        section
+      },
+      citations
+    };
+  }
+
+  if (type === "practice-papers") {
+    const sourceName = cleanText(safeContext.sourceName || "Practice Paper", 160) || "Practice Paper";
+    const questionText = cleanText(safeContext.questionText || "", 900);
+    const markingScheme = cleanText(safeContext.markingScheme || "", 900);
+    const linkedNote = cleanText(safeContext.linkedNote || "", 220);
+    const questionId = cleanText(safeContext.questionId || "Q", 40) || "Q";
+    const citations = [];
+    if (questionText) {
+      citations.push({
+        docName: sourceName,
+        page: questionId,
+        quote: questionText,
+        jumpRef: "practice",
+        sourceType: "question"
+      });
+    }
+    if (markingScheme) {
+      citations.push({
+        docName: `${sourceName} Marking`,
+        page: questionId,
+        quote: markingScheme,
+        jumpRef: "practice",
+        sourceType: "marking"
+      });
+    }
+    if (linkedNote) {
+      citations.push({
+        docName: "Study Notes",
+        page: "Linked",
+        quote: linkedNote,
+        jumpRef: "study-notes",
+        sourceType: "revision-link"
+      });
+    }
+    return {
+      scope: {
+        label: `Context: Practice (${sourceName}${questionId ? ` · ${questionId}` : ""})`,
+        contextType: "practice-papers",
+        sourceName,
+        questionId
+      },
+      citations
+    };
+  }
+
+  const docName = cleanText(safeContext.docName || "Current Reading", 160) || "Current Reading";
+  const page = cleanText(String(safeContext.page || safeContext.pageNumber || "Current page"), 40) || "Current page";
+  const selection = cleanText(safeContext.selection || "", 700);
+  const paragraph = cleanText(safeContext.currentParagraph || "", 900);
+  const jumpRef = cleanText(safeContext.jumpRef || "notesBody", 80) || "notesBody";
+  const highlights = Array.isArray(safeContext.highlights) ? safeContext.highlights.slice(0, 4) : [];
+  const citations = [];
+  if (selection) {
+    citations.push({ docName, page, quote: selection, jumpRef, sourceType: "selection" });
+  }
+  if (paragraph) {
+    citations.push({ docName, page, quote: paragraph, jumpRef, sourceType: "paragraph" });
+  }
+  highlights.forEach((h) => {
+    const quote = cleanText(h?.text || h?.summary || "", 220);
+    if (!quote) return;
+    citations.push({
+      docName,
+      page: cleanText(String(h?.page || page), 40),
+      quote,
+      jumpRef: cleanText(h?.jumpRef || jumpRef, 80),
+      sourceType: "highlight"
+    });
+  });
+
+  return {
+    scope: {
+      label: `Context: Active Reading (${docName} · p.${page})`,
+      contextType: "active-reading",
+      docName,
+      page
+    },
+    citations
+  };
+}
+
+function normalizeTutorCitation(value) {
+  if (!value || typeof value !== "object") return null;
+  const quote = cleanText(value.quote || value.snippet || "", 260);
+  if (!quote) return null;
+  return {
+    docName: cleanText(value.docName || value.title || "Source", 180) || "Source",
+    page: cleanText(String(value.page || "N/A"), 50) || "N/A",
+    quote,
+    jumpRef: cleanText(value.jumpRef || "", 80),
+    sourceType: cleanText(value.sourceType || "source", 50) || "source"
+  };
+}
+
+function dedupeTutorCitations(citations) {
+  const out = [];
+  const seen = new Set();
+  (citations || []).forEach((raw) => {
+    const c = normalizeTutorCitation(raw);
+    if (!c) return;
+    const key = `${c.docName}|${c.page}|${c.quote.slice(0, 80)}`.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(c);
+  });
+  return out;
+}
+
+function buildTutorFallback(contextType, question, scope, citations) {
+  const hint = String(contextType || "active-reading").toLowerCase();
+  let answer = "I could not reach the full tutor model, so here is a safe scoped answer.";
+  if (hint === "study-notes") {
+    answer = `From your selected Study Pack context, start by summarizing the core rule in 2 lines, then test it with one checkpoint question. Question received: ${question}`;
+  } else if (hint === "practice-papers") {
+    answer = `For this practice question, use progressive help: identify known data, choose method, then compare with marking points. Question received: ${question}`;
+  } else {
+    answer = `From the current reading context, explain the selected part in plain words, then apply one worked example before moving on. Question received: ${question}`;
+  }
+
+  const safeCitations = dedupeTutorCitations(citations).slice(0, 4);
+  const fallbackActions = [
+    safeCitations[0]?.jumpRef ? { type: "jump", label: "Jump to source", jumpRef: safeCitations[0].jumpRef } : null,
+    { type: "add-note", label: "Add to my notes", text: answer },
+    hint === "practice-papers"
+      ? { type: "revise-link", label: "Revise in Study Notes", target: "study-notes" }
+      : { type: "flashcards", label: "Turn into flashcards", text: answer }
+  ].filter(Boolean);
+
+  return {
+    answer,
+    citations: safeCitations,
+    actions: fallbackActions,
+    scope
+  };
+}
+
+function normalizeTutorActions(actions, contextType, citations, answer, fallbackActions = []) {
+  const normalized = Array.isArray(actions)
+    ? actions
+      .map((a) => {
+        if (!a || typeof a !== "object") return null;
+        return {
+          type: cleanText(a.type || "", 40),
+          label: cleanText(a.label || "", 80),
+          target: cleanText(a.target || "", 80),
+          jumpRef: cleanText(a.jumpRef || "", 80),
+          text: cleanText(a.text || "", 280)
+        };
+      })
+      .filter((a) => a && a.label)
+      .slice(0, 4)
+    : [];
+
+  if (normalized.length) return normalized;
+
+  const hint = String(contextType || "active-reading").toLowerCase();
+  const defaults = [
+    citations[0]?.jumpRef ? { type: "jump", label: "Jump to source", jumpRef: citations[0].jumpRef } : null,
+    { type: "add-note", label: "Add to my notes", text: cleanText(answer, 240) },
+    hint === "practice-papers"
+      ? { type: "revise-link", label: "Revise in Study Notes", target: "study-notes" }
+      : { type: "flashcards", label: "Turn into flashcards", text: cleanText(answer, 200) }
+  ].filter(Boolean);
+
+  return (fallbackActions.length ? fallbackActions : defaults).slice(0, 4);
 }
