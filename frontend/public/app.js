@@ -33,6 +33,7 @@ const API = {
     return weekStart ? `${base}?weekStart=${encodeURIComponent(weekStart)}` : base;
   },
   timeManagementProfile: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/profile`,
+  timeManagementUploadSchoolTimetable: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/upload-school-timetable`,
   timeManagementGeneratePlan: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/generate-plan`,
   timeManagementTasks: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks`,
   timeManagementTask: (studentId, taskId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks/${encodeURIComponent(taskId)}`,
@@ -1385,16 +1386,27 @@ async function requestJson(method, url, body = undefined, isForm = false) {
   if (!res.ok && res.status === 401 && /invalid firebase token/i.test(String(payload?.error || ""))) {
     ({ res, payload } = await attempt(true));
   }
-  if (!res.ok) throw new Error(payload.error || `${method} ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `${method} ${url} failed`));
   return payload;
 }
 
 async function parseMaybeJson(res) {
   try {
-    return await res.json();
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { details: text.slice(0, 500) };
+    }
   } catch {
     return {};
   }
+}
+
+function extractErrorMessage(payload, fallback) {
+  if (!payload || typeof payload !== "object") return fallback;
+  return payload.error || payload.details || payload.message || fallback;
 }
 
 export function bootstrapApp() {
