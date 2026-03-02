@@ -246,6 +246,145 @@ function inferSubject(topic) {
   return "Study";
 }
 
+function normalizeConceptLabel(value) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function isGenericPlanningLabel(value) {
+  const v = String(value || "").toLowerCase().trim();
+  if (!v) return true;
+  return (
+    v === "study" ||
+    v === "revision" ||
+    v === "mock test" ||
+    v === "exam prep" ||
+    v === "focused revision block" ||
+    v === "practice"
+  );
+}
+
+function mergeUniqueConcepts(primary, extra, limit = 8) {
+  const seen = new Set();
+  const merged = [];
+  [...(primary || []), ...(extra || [])].forEach((item) => {
+    const label = normalizeConceptLabel(item);
+    if (!label) return;
+    const key = label.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(label);
+  });
+  return merged.slice(0, limit);
+}
+
+function extractExistingTaskSignals(existingTasks) {
+  const conceptCounts = new Map();
+  const subjectCounts = new Map();
+  const conceptToSubject = new Map();
+  const bump = (map, key, amount = 1) => {
+    const label = normalizeConceptLabel(key);
+    if (!label || isGenericPlanningLabel(label)) return;
+    map.set(label, Number(map.get(label) || 0) + amount);
+  };
+
+  (existingTasks || []).forEach((task) => {
+    const source = String(task?.source || "manual").toLowerCase();
+    if (source === "ai") return;
+
+    const title = normalizeConceptLabel(task?.title);
+    const topic = normalizeConceptLabel(task?.topic);
+    const subject = normalizeConceptLabel(task?.subject);
+    const subjectKey = subject || "";
+    const mapConceptToSubject = (concept) => {
+      const c = normalizeConceptLabel(concept);
+      if (!c || !subjectKey) return;
+      const key = c.toLowerCase();
+      if (!conceptToSubject.has(key)) conceptToSubject.set(key, subjectKey);
+    };
+
+    if (topic) bump(conceptCounts, topic, 3);
+    if (subject) {
+      bump(subjectCounts, subject, 2);
+      bump(conceptCounts, subject, 1);
+    }
+    mapConceptToSubject(topic);
+    mapConceptToSubject(subject);
+
+    if (title) {
+      const lead = title.split(/[-:|]/)[0].trim();
+      bump(conceptCounts, lead, 1);
+      mapConceptToSubject(lead);
+    }
+  });
+
+  const concepts = [...conceptCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([label]) => label)
+    .slice(0, 5);
+
+  const subjects = [...subjectCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([label]) => label)
+    .slice(0, 4);
+
+  return { concepts, subjects, conceptToSubject };
+}
+
+function getMappedSubjectForConcept(signals, concept) {
+  const key = normalizeConceptLabel(concept).toLowerCase();
+  if (!key) return "";
+  return String(signals?.conceptToSubject?.get?.(key) || "").trim();
+}
+
+function taskRelatesToConcept(task, concept) {
+  const t = `${task?.title || ""} ${task?.topic || ""} ${task?.subject || ""}`.toLowerCase();
+  const c = String(concept || "").toLowerCase().trim();
+  if (!c) return false;
+  return t.includes(c);
+}
+
+function injectExistingCoverageTasks(tasks, signals, availableBlockCount) {
+  const current = Array.isArray(tasks) ? [...tasks] : [];
+  const concepts = (signals?.concepts || []).slice(0, 2);
+  if (!concepts.length) return current.slice(0, availableBlockCount);
+
+  const injected = [];
+  concepts.forEach((concept, idx) => {
+    if (current.some((task) => taskRelatesToConcept(task, concept)) || injected.some((task) => taskRelatesToConcept(task, concept))) {
+      return;
+    }
+
+    const mapped = getMappedSubjectForConcept(signals, concept);
+    const inferred = inferSubject(concept);
+    const subject = mapped || (inferred !== "Study" ? inferred : (signals?.subjects?.[0] || "Study"));
+    const basePriority = 86 - idx * 5;
+
+    injected.push({
+      title: `${concept} focused practice`,
+      subject,
+      topic: concept,
+      type: "practice",
+      priority: basePriority,
+      estimatedMinutes: 60,
+      source: "ai"
+    });
+
+    if (availableBlockCount >= 8) {
+      injected.push({
+        title: `Spaced review: ${concept}`,
+        subject,
+        topic: concept,
+        type: "spaced-review",
+        priority: basePriority - 8,
+        estimatedMinutes: 60,
+        source: "ai"
+      });
+    }
+  });
+
+  return [...injected, ...current].slice(0, availableBlockCount);
+}
+
 function buildScoredSlots(profile) {
   const productiveRanges = profile.productiveHours || [];
   const schoolBlocks = profile.schoolBlocks || [];
@@ -372,6 +511,8 @@ async function refineTasksWithOpenAI({
   profile,
   weakConcepts,
   forgettingRiskTopics,
+  existingTaskSignals,
+  existingSessions,
   baselineTasks,
   existingSummary,
   availableBlockCount
@@ -386,6 +527,8 @@ async function refineTasksWithOpenAI({
     "tasks must be an array where each item has: title, subject, topic, type, priority, estimatedMinutes.",
     "Do not exceed the same number of tasks as provided in baselineTasks.",
     "Prioritize weak concepts first, include spaced review and mock tests.",
+    "Use existingSessions (title/topic/subject/assignedSlot/status) as the primary personalization signal.",
+    "When a student has existing manual sessions, generate related continuation blocks in the same subject taxonomy.",
     "Consider existing timetable coverage and avoid duplicating already-heavy subjects."
   ].join(" ");
 
@@ -393,6 +536,8 @@ async function refineTasksWithOpenAI({
     profile,
     weakConcepts,
     forgettingRiskTopics,
+    existingTaskSignals,
+    existingSessions,
     baselineTasks,
     existingTimetable: existingSummary,
     availableBlockCount
@@ -482,6 +627,33 @@ function scheduleTasks(tasks, profile, options = {}) {
   });
 
   return assignments;
+}
+
+function buildExistingSessionsContext(existingTasks, existingSlots) {
+  const slotByTaskId = new Map();
+  (existingSlots || []).forEach((slot) => {
+    if (!slot?.taskId) return;
+    slotByTaskId.set(slot.taskId, { day: slot.day, hour: slot.hour });
+  });
+
+  return (existingTasks || [])
+    .map((task) => ({
+      id: task.id,
+      title: String(task.title || "").trim(),
+      topic: String(task.topic || "").trim(),
+      subject: String(task.subject || "").trim(),
+      type: String(task.type || "").trim(),
+      priority: Number(task.priority || 0),
+      estimatedMinutes: Number(task.estimatedMinutes || 60),
+      status: String(task.status || "planned"),
+      source: String(task.source || "manual"),
+      assignedSlot: slotByTaskId.get(task.id) || null
+    }))
+    .filter((task) => task.title || task.topic || task.subject)
+    .sort((a, b) => {
+      if (a.source !== b.source) return a.source === "manual" ? -1 : 1;
+      return b.priority - a.priority;
+    });
 }
 
 function buildExistingTimetableSummary(tasks, slots) {
@@ -970,20 +1142,45 @@ async function generatePlanPayload({
   const occupiedSlots = replaceExisting ? 0 : (existingSlots || []).filter((slot) => slot.taskId).length;
   const availableBlockCount = Math.max(1, weeklyGoalHours - occupiedSlots);
   const existingSummary = buildExistingTimetableSummary(existingTasks, existingSlots);
-  const baselineTasks = buildHeuristicTasks(profile, weakConcepts, forgettingRiskTopics).slice(0, availableBlockCount);
+  const existingSessions = buildExistingSessionsContext(existingTasks, existingSlots);
+  const existingTaskSignals = extractExistingTaskSignals(existingTasks);
+
+  const inputWeak = normalizeTopicList(weakConcepts);
+  const inputRisk = normalizeTopicList(forgettingRiskTopics);
+
+  // Prioritize the student's current manual timetable sessions first.
+  // Global weak topics are used as secondary signals.
+  const effectiveWeak = mergeUniqueConcepts(existingTaskSignals.concepts, inputWeak).slice(0, 4);
+  const weakKeys = new Set(effectiveWeak.map((item) => String(item || "").toLowerCase()));
+  const signalRisk = (existingTaskSignals.concepts || []).filter((concept) => !weakKeys.has(String(concept || "").toLowerCase()));
+  const effectiveRisk = mergeUniqueConcepts(signalRisk, inputRisk)
+    .filter((concept) => !weakKeys.has(String(concept || "").toLowerCase()))
+    .slice(0, 4);
+
+  let baselineTasks = buildHeuristicTasks(profile, effectiveWeak, effectiveRisk).slice(0, availableBlockCount);
+  baselineTasks = baselineTasks.map((task) => {
+    if (String(task.subject || "").toLowerCase() !== "study") return task;
+    const mapped = getMappedSubjectForConcept(existingTaskSignals, task.topic || task.title || "");
+    if (!mapped) return task;
+    return { ...task, subject: mapped };
+  });
   const ai = await refineTasksWithOpenAI({
     callOpenAIChat,
     safeParseJson,
     isOpenAIConfigured,
     profile,
-    weakConcepts,
-    forgettingRiskTopics,
+    weakConcepts: effectiveWeak,
+    forgettingRiskTopics: effectiveRisk,
+    existingTaskSignals,
+    existingSessions,
     baselineTasks,
     existingSummary,
     availableBlockCount
   });
 
-  const tasks = (Array.isArray(ai.tasks) && ai.tasks.length ? ai.tasks : baselineTasks).slice(0, availableBlockCount);
+  let tasks = (Array.isArray(ai.tasks) && ai.tasks.length ? ai.tasks : baselineTasks).slice(0, availableBlockCount);
+  tasks = injectExistingCoverageTasks(tasks, existingTaskSignals, availableBlockCount);
+
   const blockedSlots = replaceExisting
     ? []
     : (existingSlots || []).filter((slot) => slot.taskId).map((slot) => `${slot.day}_${slot.hour}`);
@@ -993,7 +1190,13 @@ async function generatePlanPayload({
   });
   const notes = ai.notes?.length
     ? ai.notes
-    : buildFallbackNotes(profile, weakConcepts, forgettingRiskTopics, existingSummary);
+    : buildFallbackNotes(profile, effectiveWeak, effectiveRisk, existingSummary);
+  if (existingTaskSignals.concepts.length) {
+    notes.unshift(`Included continuation blocks for your existing sessions: ${existingTaskSignals.concepts.slice(0, 3).join(", ")}.`);
+  }
+  if (existingSessions.length) {
+    notes.unshift(`Used ${existingSessions.length} existing session(s) as AI context (title/topic/subject).`);
+  }
   notes.unshift(`AI analyzed your current timetable and generated ${tasks.length} additional study block(s).`);
   const provider = ai.provider || "heuristic";
 
