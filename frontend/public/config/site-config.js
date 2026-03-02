@@ -1,6 +1,15 @@
 (function bootstrapSiteConfig() {
-  // Optional: set this after backend deploy, e.g. "https://speedup-api.onrender.com"
-  var configuredApiBase = "https://speedup-api.onrender.com";
+  var host = String(window.location.hostname || "").toLowerCase();
+  var isLocalHost =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "0.0.0.0" ||
+    host.startsWith("192.168.") ||
+    host.startsWith("10.") ||
+    host.endsWith(".local");
+
+  // Use remote API only outside local/dev environments.
+  var configuredApiBase = isLocalHost ? "" : "https://speedup-api.onrender.com";
   var path = String(window.location.pathname || "/");
   var segments = path.split("/").filter(Boolean);
   var repoBase = "";
@@ -17,10 +26,12 @@
   }
 
   var apiFromStorage = "";
-  try {
-    apiFromStorage = window.localStorage.getItem("speedup_api_base") || "";
-  } catch {
-    apiFromStorage = "";
+  if (!isLocalHost) {
+    try {
+      apiFromStorage = window.localStorage.getItem("speedup_api_base") || "";
+    } catch {
+      apiFromStorage = "";
+    }
   }
 
   window.SPEEDUP_SITE_BASE = window.SPEEDUP_SITE_BASE || repoBase;
