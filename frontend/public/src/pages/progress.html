@@ -14,48 +14,36 @@
           <div class="stat-card green">
             <div class="stat-icon">🏆</div>
             <div class="stat-label">Overall Level</div>
-            <div class="stat-value" style="color:var(--accent)">Lv.7</div>
-            <div class="stat-change up">↑ Up from Lv.6</div>
+            <div class="stat-value" id="progress-overall-level-value" style="color:var(--accent)">Lv.0</div>
+            <div class="stat-change neutral" id="progress-overall-level-change">→ Waiting for data</div>
           </div>
           <div class="stat-card purple">
             <div class="stat-icon">📚</div>
             <div class="stat-label">Concepts Mastered</div>
-            <div class="stat-value" style="color:var(--accent2)">48</div>
-            <div class="stat-change up">↑ +6 this month</div>
+            <div class="stat-value" id="progress-concepts-mastered-value" style="color:var(--accent2)">0</div>
+            <div class="stat-change neutral" id="progress-concepts-mastered-change">→ 0 at target mastery</div>
           </div>
           <div class="stat-card yellow">
             <div class="stat-icon">🔍</div>
             <div class="stat-label">Gaps Identified</div>
-            <div class="stat-value" style="color:var(--accent4)">7</div>
-            <div class="stat-change neutral">→ 3 critical</div>
+            <div class="stat-value" id="progress-gaps-identified-value" style="color:var(--accent4)">0</div>
+            <div class="stat-change neutral" id="progress-gaps-identified-change">→ 0 critical</div>
           </div>
           <div class="stat-card pink">
             <div class="stat-icon">⏳</div>
             <div class="stat-label">Avg. Mastery Decay</div>
-            <div class="stat-value" style="color:var(--accent3)">–3%</div>
-            <div class="stat-change down">↓ After 14 day gap</div>
+            <div class="stat-value" id="progress-mastery-decay-value" style="color:var(--accent3)">0%</div>
+            <div class="stat-change neutral" id="progress-mastery-decay-change">→ No inactivity signal yet</div>
           </div>
         </div>
 
         <div class="grid-2 mb-20">
           <div class="card">
-            <div class="card-title">Mastery Over Time — Algorithms</div>
+            <div class="card-title" id="progress-mastery-trend-title">Mastery Over Time — Concepts</div>
             <div style="position:relative;height:180px;padding:10px 0;">
-              <svg width="100%" height="160" viewBox="0 0 500 160" preserveAspectRatio="none">
-                <defs>
-                  <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.3"/>
-                    <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
-                  </linearGradient>
-                </defs>
-                <path d="M0,140 L60,120 L120,110 L180,90 L220,100 L260,80 L320,70 L380,60 L440,50 L500,45" stroke="var(--accent)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M0,140 L60,120 L120,110 L180,90 L220,100 L260,80 L320,70 L380,60 L440,50 L500,45 L500,160 L0,160 Z" fill="url(#lineGrad)"/>
-                <!-- Gap annotation -->
-                <rect x="185" y="0" width="55" height="160" fill="rgba(248,113,113,0.05)"/>
-                <text x="212" y="15" text-anchor="middle" fill="var(--danger)" font-size="10" font-family="JetBrains Mono">GAP</text>
-              </svg>
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:-10px;">
-                <span>Sep</span><span>Oct</span><span>Nov</span><span>Dec</span><span>Jan</span><span>Feb</span><span>Mar</span>
+              <canvas id="progressMasteryTrendChart"></canvas>
+              <div id="progress-mastery-empty" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;font-size:12px;color:var(--text3);">
+                Not enough mastery history yet
               </div>
             </div>
             <div style="display:flex;gap:12px;font-size:11px;color:var(--text3);margin-top:6px;">
@@ -67,32 +55,25 @@
           <div class="card">
             <div class="card-title">Mistake Analysis — Careless vs Knowledge Gap</div>
             <div style="display:flex;gap:16px;align-items:center;padding:10px 0;">
-              <svg width="130" height="130" viewBox="0 0 130 130">
-                <circle cx="65" cy="65" r="52" fill="none" stroke="var(--surface2)" stroke-width="14"/>
-                <!-- Careless = 35% -->
-                <circle cx="65" cy="65" r="52" fill="none" stroke="var(--accent4)" stroke-width="14"
-                  stroke-dasharray="326" stroke-dashoffset="212" stroke-linecap="round"
-                  transform="rotate(-90 65 65)"/>
-                <!-- Gap = 65% -->
-                <circle cx="65" cy="65" r="52" fill="none" stroke="var(--danger)" stroke-width="14"
-                  stroke-dasharray="326" stroke-dashoffset="326" stroke-linecap="round"
-                  transform="rotate(-90 65 65)" style="stroke-dashoffset:212">
-                </circle>
-                <text x="65" y="60" text-anchor="middle" fill="var(--text)" font-family="Syne" font-size="18" font-weight="800">65%</text>
-                <text x="65" y="76" text-anchor="middle" fill="var(--text3)" font-family="DM Sans" font-size="10">True gaps</text>
-              </svg>
+              <div style="width:130px;height:130px;position:relative;flex-shrink:0;">
+                <canvas id="progressErrorBreakdownChart"></canvas>
+                <div id="progress-error-center" style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;">
+                  <div id="progress-error-center-value" style="font-family:'Syne',sans-serif;font-size:18px;font-weight:800;">0%</div>
+                  <div style="font-size:10px;color:var(--text3);">True gaps</div>
+                </div>
+              </div>
               <div style="flex:1;">
                 <div style="margin-bottom:14px;">
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
                     <div style="width:10px;height:10px;border-radius:2px;background:var(--danger);flex-shrink:0;"></div>
-                    <span style="font-size:13px;font-weight:600;">65% — Knowledge Gaps</span>
+                    <span id="progress-gap-label" style="font-size:13px;font-weight:600;">0% — Knowledge Gaps</span>
                   </div>
                   <div style="font-size:12px;color:var(--text3);">Wrong on ≥3 attempts, consistent errors across sessions</div>
                 </div>
                 <div>
                   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
                     <div style="width:10px;height:10px;border-radius:2px;background:var(--accent4);flex-shrink:0;"></div>
-                    <span style="font-size:13px;font-weight:600;">35% — Careless Mistakes</span>
+                    <span id="progress-careless-label" style="font-size:13px;font-weight:600;">0% — Careless Mistakes</span>
                   </div>
                   <div style="font-size:12px;color:var(--text3);">Got right on retry, likely attention/time pressure issues</div>
                 </div>
@@ -103,25 +84,10 @@
 
         <div class="card mb-20">
           <div class="card-title">Topic-Level Mastery Breakdown</div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">
+          <div id="progress-topic-breakdown" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">
             <div>
-              <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px;">📘 Algorithms</div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Sorting Algorithms</span><span class="progress-val">92%</span></div><div class="progress-bar"><div class="progress-fill fill-green" style="width:92%"></div></div></div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Graph Traversal</span><span class="progress-val">78%</span></div><div class="progress-bar"><div class="progress-fill fill-green" style="width:78%"></div></div></div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Dynamic Programming</span><span class="progress-val">67%</span></div><div class="progress-bar"><div class="progress-fill fill-purple" style="width:67%"></div></div></div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Divide & Conquer</span><span class="progress-val">55%</span></div><div class="progress-bar"><div class="progress-fill fill-yellow" style="width:55%"></div></div></div>
-            </div>
-            <div>
-              <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px;">📐 Linear Algebra</div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Matrix Operations</span><span class="progress-val">70%</span></div><div class="progress-bar"><div class="progress-fill fill-purple" style="width:70%"></div></div></div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Eigenvalues/Vectors</span><span class="progress-val">48%</span></div><div class="progress-bar"><div class="progress-fill fill-yellow" style="width:48%"></div></div></div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Vector Spaces</span><span class="progress-val">35%</span></div><div class="progress-bar"><div class="progress-fill fill-red" style="width:35%"></div></div></div>
-            </div>
-            <div>
-              <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px;">🔢 Discrete Math</div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Propositional Logic</span><span class="progress-val">60%</span></div><div class="progress-bar"><div class="progress-fill fill-yellow" style="width:60%"></div></div></div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Graph Theory</span><span class="progress-val">33%</span></div><div class="progress-bar"><div class="progress-fill fill-red" style="width:33%"></div></div></div>
-              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Counting / Combinatorics</span><span class="progress-val">45%</span></div><div class="progress-bar"><div class="progress-fill fill-red" style="width:45%"></div></div></div>
+              <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px;">📚 Concepts</div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">No topic data yet</span><span class="progress-val">0%</span></div><div class="progress-bar"><div class="progress-fill fill-red" style="width:0%"></div></div></div>
             </div>
           </div>
         </div>

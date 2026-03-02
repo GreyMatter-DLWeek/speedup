@@ -167,8 +167,7 @@ async function init() {
   feature5.renderRecommendations();
   renderCloudStatus();
   feature2.renderFlashcard();
-  feature6.initWeeklyChart();
-  feature6.initHeatmap();
+  await feature6.refreshFeature6();
   feature7.initPracticeFeature();
 
   renderTutorPanel();
@@ -672,6 +671,9 @@ function navigate(page) {
 
   if (page === "timetable") {
     feature4.refreshTimeManagement();
+  }
+  if (page === "dashboard" || page === "progress") {
+    feature6.refreshFeature6();
   }
 }
 
@@ -1445,6 +1447,7 @@ export function bootstrapApp() {
   window.toggleFeedback = feature8.toggleFeedback;
   window.openModal = feature8.openModal;
   window.closeModal = feature8.closeModal;
+  window.refreshFeature6 = feature6.refreshFeature6;
   window.initWeeklyChart = feature6.initWeeklyChart;
   window.initHeatmap = feature6.initHeatmap;
   window.runRagQuery = feature5.runRagQuery;
