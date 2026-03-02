@@ -1,4 +1,5 @@
 const STORAGE_KEY = "speedup_dashboard_reference_v1";
+const SIDEBAR_ORDER_KEY = "speedup_sidebar_order_v1";
 const STUDENT_ID = "demo-student-1";
 
 const API = {
@@ -64,6 +65,9 @@ let currentAttempt = 0;
 let cardIndex = 0;
 let flipped = false;
 let voiceActive = false;
+let defaultSidebarOrder = null;
+let settingsDragState = null;
+let initialSidebarSnapshot = null;
 
 const flashcards = [
   { q: "What are the two key properties needed for Dynamic Programming?", a: "Optimal substructure and overlapping subproblems." },
@@ -74,9 +78,11 @@ const flashcards = [
 ];
 
 function init() {
+  initSidebarOrdering();
   ensureDynamicContainers();
   bindNotesSelectionCapture();
   loadCloudHealth().then(() => hydrateStateFromBackend()).then(() => {
+    initialSidebarSnapshot = captureSidebarOrder();
     hydrateFromDom();
     renderHighlights();
     renderRecommendations();
@@ -84,13 +90,440 @@ function init() {
     renderFlashcard();
     initWeeklyChart();
     initHeatmap();
+    applyUserProfileToUi();
   });
 }
 
+function initSidebarOrdering() {
+  if (!defaultSidebarOrder) defaultSidebarOrder = captureSidebarOrder();
+  const savedOrder = loadSidebarOrder();
+  if (savedOrder) applySidebarOrder(savedOrder);
+  if (!savedOrder) saveSidebarOrder();
+}
+
+function getSidebarSections() {
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar) return [];
+  return Array.from(sidebar.children).filter((child) => child.classList?.contains("nav-section"));
+}
+
+function getSectionLabel(section) {
+  return section?.querySelector(".nav-label")?.textContent?.trim() || "";
+}
+
+function getSectionItems(section) {
+  return Array.from(section?.children || []).filter((child) => child.classList?.contains("nav-item"));
+}
+
+function getNavItemPageKey(item) {
+  const onclick = item?.getAttribute("onclick") || "";
+  const match = onclick.match(/navigate\('([^']+)'\)/);
+  return match?.[1] || "";
+}
+
+function captureSidebarOrder() {
+  const sectionOrder = [];
+  const itemOrders = {};
+  getSidebarSections().forEach((section) => {
+    const label = getSectionLabel(section);
+    if (!label) return;
+    sectionOrder.push(label);
+    itemOrders[label] = getSectionItems(section).map((item) => getNavItemPageKey(item)).filter(Boolean);
+  });
+  return { sectionOrder, itemOrders };
+}
+
+function applySidebarOrder(order) {
+  if (!order) return;
+  const sidebar = document.querySelector(".sidebar");
+  const bottom = document.querySelector(".sidebar-bottom");
+  if (!sidebar || !bottom) return;
+
+  const sections = getSidebarSections();
+  const byLabel = new Map();
+  sections.forEach((section) => {
+    const label = getSectionLabel(section);
+    if (label) byLabel.set(label, section);
+  });
+
+  const reorderedSections = [];
+  (order.sectionOrder || []).forEach((label) => {
+    const section = byLabel.get(label);
+    if (section) {
+      reorderedSections.push(section);
+      byLabel.delete(label);
+    }
+  });
+  reorderedSections.push(...byLabel.values());
+  reorderedSections.forEach((section) => sidebar.insertBefore(section, bottom));
+
+  const allItems = sections.flatMap((section) => getSectionItems(section));
+  const itemByPage = new Map();
+  const originalSectionByPage = new Map();
+  allItems.forEach((item) => {
+    const page = getNavItemPageKey(item);
+    if (!page) return;
+    itemByPage.set(page, item);
+    originalSectionByPage.set(page, getSectionLabel(item.closest(".nav-section")));
+  });
+
+  reorderedSections.forEach((section) => {
+    const label = getSectionLabel(section);
+    const desiredPages = Array.isArray(order.itemOrders?.[label]) ? order.itemOrders[label] : [];
+    desiredPages.forEach((page) => {
+      const item = itemByPage.get(page);
+      if (!item) return;
+      section.appendChild(item);
+      itemByPage.delete(page);
+    });
+  });
+
+  itemByPage.forEach((item, page) => {
+    const originalLabel = originalSectionByPage.get(page);
+    const targetSection = reorderedSections.find((section) => getSectionLabel(section) === originalLabel) || reorderedSections[0];
+    targetSection?.appendChild(item);
+  });
+}
+
+function loadSidebarOrder() {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_ORDER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.sectionOrder) || typeof parsed.itemOrders !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveSidebarOrder() {
+  localStorage.setItem(SIDEBAR_ORDER_KEY, JSON.stringify(captureSidebarOrder()));
+}
+
+function resetSidebarOrder(event) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const fallback = defaultSidebarOrder || initialSidebarSnapshot || captureSidebarOrder();
+  applySidebarOrder(fallback);
+  localStorage.removeItem(SIDEBAR_ORDER_KEY);
+  saveSidebarOrder();
+  if (document.getElementById("settingsNavDndBoard")) renderSettingsNavDndBoard();
+}
+
+function getCurrentUserProfile() {
+  const nameEl = document.querySelector(".user-name");
+  const levelEl = document.querySelector(".user-level");
+  const avatarEl = document.querySelector(".avatar");
+  const name = nameEl?.textContent?.trim() || "Alex Kim";
+  const levelText = levelEl?.textContent?.trim() || "Level 7 · Computer Science";
+  const initials = avatarEl?.textContent?.trim() || computeInitials(name);
+
+  let level = "Level 7";
+  let program = "Computer Science";
+  if (levelText.includes("·")) {
+    const [left, right] = levelText.split("·").map((s) => s.trim());
+    level = left || level;
+    program = right || program;
+  } else {
+    level = levelText || level;
+  }
+
+  return { name, initials, level, program };
+}
+
+function loadUserProfile() {
+  const fallback = getCurrentUserProfile();
+  try {
+    const raw = localStorage.getItem("speedup_user_profile_v1");
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return {
+      name: parsed?.name || fallback.name,
+      initials: parsed?.initials || computeInitials(parsed?.name || fallback.name),
+      level: parsed?.level || fallback.level,
+      program: parsed?.program || fallback.program
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveUserProfile(profile) {
+  localStorage.setItem("speedup_user_profile_v1", JSON.stringify(profile));
+}
+
+function computeInitials(name) {
+  const parts = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  if (!parts.length) return "ST";
+  return parts.map((part) => part[0]?.toUpperCase() || "").join("") || "ST";
+}
+
+function applyUserProfileToUi(profile = null) {
+  const safeProfile = profile || loadUserProfile();
+  const nameEl = document.querySelector(".user-name");
+  const levelEl = document.querySelector(".user-level");
+  const avatarEl = document.querySelector(".avatar");
+  if (nameEl) nameEl.textContent = safeProfile.name;
+  if (levelEl) levelEl.textContent = `${safeProfile.level} · ${safeProfile.program}`;
+  if (avatarEl) avatarEl.textContent = (safeProfile.initials || computeInitials(safeProfile.name)).slice(0, 2).toUpperCase();
+}
+
+function buildSettingsModalBody() {
+  return `
+    <div class="settings-layout">
+      <div class="settings-card">
+        <div class="settings-card-title">Navigation order</div>
+        <div class="settings-help">Drag categories or tabs to reorder. Changes apply instantly.</div>
+        <div id="settingsNavDndBoard" class="settings-dnd-board"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <div class="settings-card">
+          <div class="settings-card-title">Profile</div>
+          <div class="form-group">
+            <label class="form-label">Name</label>
+            <input id="settingsNameInput" class="input" placeholder="Your name" />
+          </div>
+          <div class="form-group">
+            <label class="form-label">Level</label>
+            <input id="settingsLevelInput" class="input" placeholder="e.g. Level 7" />
+          </div>
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label">Program</label>
+            <input id="settingsProgramInput" class="input" placeholder="e.g. Computer Science" />
+          </div>
+          <button class="btn btn-secondary" style="width:100%;margin-top:10px;" onclick="saveSettingsProfile()">Save profile</button>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-title">Quick actions</div>
+          <div class="settings-inline-row" style="margin-bottom:8px;">
+            <div style="font-size:12px;color:var(--text2);">Reset navigation order</div>
+            <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" onclick="resetSidebarOrder(event)">Reset</button>
+          </div>
+          <div style="font-size:11px;color:var(--text3);line-height:1.6;">Tip: Open this settings panel anytime from the sidebar to update order or profile info.</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function openSettingsModal() {
+  const overlay = document.getElementById("modal-overlay");
+  const content = document.getElementById("modal-content");
+  if (!overlay || !content) return;
+
+  content.classList.add("settings-modal");
+  content.innerHTML = `
+    <div class="modal-title">Settings</div>
+    <div class="modal-sub">Configure navigation order with drag-and-drop and update your profile details.</div>
+    ${buildSettingsModalBody()}
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Close</button>
+    </div>
+  `;
+  overlay.classList.add("open");
+
+  const profile = loadUserProfile();
+  const nameInput = document.getElementById("settingsNameInput");
+  const levelInput = document.getElementById("settingsLevelInput");
+  const programInput = document.getElementById("settingsProgramInput");
+  if (nameInput) nameInput.value = profile.name;
+  if (levelInput) levelInput.value = profile.level;
+  if (programInput) programInput.value = profile.program;
+
+  renderSettingsNavDndBoard();
+}
+
+function renderSettingsNavDndBoard() {
+  const board = document.getElementById("settingsNavDndBoard");
+  if (!board) return;
+  board.innerHTML = "";
+
+  const sections = getSidebarSections();
+  sections.forEach((section, sectionIndex) => {
+    const label = getSectionLabel(section);
+    if (!label) return;
+    const sectionBlock = document.createElement("div");
+    sectionBlock.className = "settings-dnd-section";
+    sectionBlock.dataset.sectionIndex = String(sectionIndex);
+
+    const header = document.createElement("div");
+    header.className = "settings-dnd-section-header";
+    header.draggable = true;
+    header.dataset.sectionIndex = String(sectionIndex);
+    header.innerHTML = `<span>${escapeHtml(label)}</span><span class="settings-dnd-hint">Drag category</span>`;
+
+    const tabsWrap = document.createElement("div");
+    tabsWrap.className = "settings-dnd-tabs";
+    tabsWrap.dataset.sectionIndex = String(sectionIndex);
+
+    getSectionItems(section).forEach((item, tabIndex) => {
+      const pageKey = getNavItemPageKey(item);
+      const tab = document.createElement("div");
+      tab.className = "settings-dnd-tab";
+      tab.draggable = true;
+      tab.dataset.sectionIndex = String(sectionIndex);
+      tab.dataset.tabIndex = String(tabIndex);
+      tab.dataset.pageKey = pageKey;
+      tab.textContent = getNavItemLabel(item);
+      tabsWrap.appendChild(tab);
+    });
+
+    sectionBlock.append(header, tabsWrap);
+    board.appendChild(sectionBlock);
+  });
+
+  bindSettingsDragAndDrop();
+}
+
+function getNavItemLabel(item) {
+  const clone = item.cloneNode(true);
+  clone.querySelectorAll(".nav-icon, .nav-badge, .item-reorder-controls").forEach((el) => el.remove());
+  return clone.textContent.replace(/\s+/g, " ").trim();
+}
+
+function bindSettingsDragAndDrop() {
+  const board = document.getElementById("settingsNavDndBoard");
+  if (!board) return;
+
+  board.querySelectorAll(".settings-dnd-section-header").forEach((header) => {
+    header.addEventListener("dragstart", (event) => {
+      settingsDragState = { type: "section", fromSection: Number(header.dataset.sectionIndex) };
+      event.dataTransfer.effectAllowed = "move";
+    });
+  });
+
+  board.querySelectorAll(".settings-dnd-section").forEach((sectionEl) => {
+    sectionEl.addEventListener("dragover", (event) => {
+      if (settingsDragState?.type === "section") {
+        event.preventDefault();
+        sectionEl.classList.add("settings-drop-target");
+      }
+    });
+    sectionEl.addEventListener("dragleave", () => sectionEl.classList.remove("settings-drop-target"));
+    sectionEl.addEventListener("drop", (event) => {
+      if (settingsDragState?.type !== "section") return;
+      event.preventDefault();
+      sectionEl.classList.remove("settings-drop-target");
+      const toSection = Number(sectionEl.dataset.sectionIndex);
+      reorderSectionByIndex(settingsDragState.fromSection, toSection);
+      settingsDragState = null;
+    });
+  });
+
+  board.querySelectorAll(".settings-dnd-tab").forEach((tab) => {
+    tab.addEventListener("dragstart", (event) => {
+      settingsDragState = {
+        type: "tab",
+        fromSection: Number(tab.dataset.sectionIndex),
+        fromTab: Number(tab.dataset.tabIndex)
+      };
+      event.dataTransfer.effectAllowed = "move";
+    });
+    tab.addEventListener("dragover", (event) => {
+      if (settingsDragState?.type === "tab") {
+        event.preventDefault();
+        tab.classList.add("settings-drop-target");
+      }
+    });
+    tab.addEventListener("dragleave", () => tab.classList.remove("settings-drop-target"));
+    tab.addEventListener("drop", (event) => {
+      if (settingsDragState?.type !== "tab") return;
+      event.preventDefault();
+      tab.classList.remove("settings-drop-target");
+      const toSection = Number(tab.dataset.sectionIndex);
+      const toTab = Number(tab.dataset.tabIndex);
+      reorderTabByIndex(settingsDragState.fromSection, settingsDragState.fromTab, toSection, toTab);
+      settingsDragState = null;
+    });
+  });
+
+  board.querySelectorAll(".settings-dnd-tabs").forEach((tabsWrap) => {
+    tabsWrap.addEventListener("dragover", (event) => {
+      if (settingsDragState?.type === "tab") {
+        event.preventDefault();
+        tabsWrap.classList.add("settings-drop-target");
+      }
+    });
+    tabsWrap.addEventListener("dragleave", () => tabsWrap.classList.remove("settings-drop-target"));
+    tabsWrap.addEventListener("drop", (event) => {
+      if (settingsDragState?.type !== "tab") return;
+      event.preventDefault();
+      tabsWrap.classList.remove("settings-drop-target");
+      const toSection = Number(tabsWrap.dataset.sectionIndex);
+      const toTab = getSectionItems(getSidebarSections()[toSection] || {}).length;
+      reorderTabByIndex(settingsDragState.fromSection, settingsDragState.fromTab, toSection, toTab);
+      settingsDragState = null;
+    });
+  });
+}
+
+function reorderSectionByIndex(fromIndex, toIndex) {
+  if (fromIndex === toIndex) return;
+  const sidebar = document.querySelector(".sidebar");
+  const bottom = document.querySelector(".sidebar-bottom");
+  const sections = getSidebarSections();
+  if (!sidebar || !bottom || !sections[fromIndex] || !sections[toIndex]) return;
+
+  const reordered = [...sections];
+  const [moved] = reordered.splice(fromIndex, 1);
+  reordered.splice(toIndex, 0, moved);
+  reordered.forEach((section) => sidebar.insertBefore(section, bottom));
+  saveSidebarOrder();
+  renderSettingsNavDndBoard();
+}
+
+function reorderTabByIndex(fromSectionIdx, fromTabIdx, toSectionIdx, toTabIdx) {
+  const sections = getSidebarSections();
+  const fromSection = sections[fromSectionIdx];
+  const toSection = sections[toSectionIdx];
+  if (!fromSection || !toSection) return;
+
+  const fromItems = getSectionItems(fromSection);
+  const moving = fromItems[fromTabIdx];
+  if (!moving) return;
+
+  if (fromSection === toSection) {
+    const items = getSectionItems(fromSection);
+    const reordered = [...items];
+    const [moved] = reordered.splice(fromTabIdx, 1);
+    const bounded = Math.max(0, Math.min(toTabIdx, reordered.length));
+    reordered.splice(bounded, 0, moved);
+    reordered.forEach((item) => fromSection.appendChild(item));
+  } else {
+    const targetItems = getSectionItems(toSection);
+    const anchor = targetItems[Math.max(0, Math.min(toTabIdx, targetItems.length - 1))];
+    if (anchor) toSection.insertBefore(moving, anchor);
+    else toSection.appendChild(moving);
+  }
+
+  saveSidebarOrder();
+  renderSettingsNavDndBoard();
+}
+
+function saveSettingsProfile() {
+  const nameInput = document.getElementById("settingsNameInput");
+  const levelInput = document.getElementById("settingsLevelInput");
+  const programInput = document.getElementById("settingsProgramInput");
+  const profile = {
+    name: (nameInput?.value || "").trim() || "Alex Kim",
+    level: (levelInput?.value || "").trim() || "Level 7",
+    program: (programInput?.value || "").trim() || "Computer Science"
+  };
+  profile.initials = computeInitials(profile.name);
+  saveUserProfile(profile);
+  applyUserProfileToUi(profile);
+}
+
 function ensureDynamicContainers() {
-  const highlightsPage = document.getElementById("page-highlights");
-  if (highlightsPage) {
-    const sectionHead = highlightsPage.querySelector(".section-head");
+  const studyNotesPage = document.getElementById("page-study-notes");
+  if (studyNotesPage) {
+    const sectionHead = studyNotesPage.querySelector(".section-head");
     if (sectionHead && !document.getElementById("dynamicHighlights")) {
       const wrap = document.createElement("div");
       wrap.id = "dynamicHighlights";
@@ -99,14 +532,14 @@ function ensureDynamicContainers() {
     }
   }
 
-  const tutorRightCol = document.querySelector("#page-tutor .grid-2-1 > div:last-child");
-  if (tutorRightCol && !document.getElementById("ragCard")) {
+  const studyNotesRightCol = document.querySelector("#page-study-notes .grid-2-1 > div:last-child");
+  if (studyNotesRightCol && !document.getElementById("ragCard")) {
     const card = document.createElement("div");
     card.className = "card";
     card.id = "ragCard";
     card.innerHTML = `
-      <div class="card-title">RAG Assistant</div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:8px;">Grounded retrieval on your indexed notes.</div>
+      <div class="card-title">Study Notes RAG Assistant</div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:8px;">Context-aware retrieval across your indexed notes and highlights.</div>
       <input id="ragQueryInput" class="input" placeholder="Ask from your indexed notes..." />
       <div style="display:flex;gap:8px;margin-top:8px;">
         <button class="btn btn-secondary" style="padding:6px 10px;font-size:12px;" onclick="runRagQuery()">Run RAG</button>
@@ -114,7 +547,7 @@ function ensureDynamicContainers() {
       </div>
       <div id="ragResults" style="margin-top:8px;font-size:12px;color:var(--text2);max-height:140px;overflow:auto;"></div>
     `;
-    tutorRightCol.appendChild(card);
+    studyNotesRightCol.appendChild(card);
   }
 }
 
@@ -309,7 +742,7 @@ function renderFlashcard() {
 
 function flipCard() {
   flipped = !flipped;
-  const btn = document.querySelector("#page-highlights .btn-secondary");
+  const btn = document.getElementById("flashcardToggleBtn");
   renderFlashcard();
   if (btn) btn.textContent = flipped ? "🔄 Back to Question" : "🔄 Reveal Answer";
 }
@@ -318,7 +751,7 @@ function nextCard() {
   cardIndex = (cardIndex + 1) % flashcards.length;
   flipped = false;
   renderFlashcard();
-  const btn = document.querySelector("#page-highlights .btn-secondary");
+  const btn = document.getElementById("flashcardToggleBtn");
   if (btn) btn.textContent = "🔄 Reveal Answer";
 }
 
@@ -352,6 +785,42 @@ async function tutorResponse(question) {
       provider: "fallback"
     };
   }
+}
+
+async function askStudyNotesAI(prefillQuestion = "") {
+  const input = document.getElementById("studyNotesAiInput");
+  const output = document.getElementById("studyNotesAiOutput");
+  if (!output) return;
+
+  const question = (prefillQuestion || input?.value || "").trim();
+  if (!question) {
+    output.textContent = "Please type a question to get contextual notes support.";
+    return;
+  }
+  if (input && prefillQuestion) input.value = question;
+
+  output.textContent = "Analyzing your notes context...";
+  const response = await tutorResponse(`Study Notes context: ${question}`);
+  output.innerHTML = `${response.html}<div style="margin-top:8px;color:var(--text3);font-size:11px;">Context-aware AI support active inside Study Notes.</div>`;
+  logAudit(`Study Notes AI used: ${question}`);
+  scheduleSave();
+}
+
+async function askPracticeAI() {
+  const input = document.getElementById("practiceAiInput");
+  const output = document.getElementById("practiceAiOutput");
+  if (!input || !output) return;
+  const question = input.value.trim();
+  if (!question) {
+    output.textContent = "Enter a practice question or option you want explained.";
+    return;
+  }
+
+  output.textContent = "Analyzing question and error patterns...";
+  const response = await tutorResponse(`Practice Papers context: ${question}. Emphasize reasoning and common mistakes.`);
+  output.innerHTML = `${response.html}<div style="margin-top:8px;color:var(--text3);font-size:11px;">AI help is contextual to Practice Papers for in-flow question support.</div>`;
+  logAudit(`Practice AI helper used: ${question}`);
+  scheduleSave();
 }
 
 function quickAsk(q) {
@@ -560,9 +1029,13 @@ function initHeatmap() {
 }
 
 const modals = {
-  focus: { title: "Start Focus Session", body: "<div class='form-group'><label class='form-label'>Mode</label><select class='select'><option>Active Reading</option><option>AI Tutor</option><option>Practice Questions</option></select></div>", confirm: "Start" },
+  focus: { title: "Start Focus Session", body: "<div class='form-group'><label class='form-label'>Mode</label><select class='select'><option>Active Reading</option><option>Study Notes + AI</option><option>Practice Questions</option></select></div>", confirm: "Start" },
+  settings: { title: "Settings", body: "", confirm: "Close" },
   visual: { title: "Concept Visualization", body: "<div class='form-group'><label class='form-label'>Concept</label><input class='input' placeholder='Enter concept...' value='Memoization vs Tabulation'></div>", confirm: "Generate" },
   export: { title: "Export Highlights", body: "<div style='font-size:13px;color:var(--text3);line-height:1.7;'>Export current highlights to JSON report from dashboard.</div>", confirm: "Close" },
+  "upload-notes": { title: "Upload Notes", body: "<div style='font-size:13px;color:var(--text3);line-height:1.7;'>Upload lecture notes (PDF/DOCX) to add them into your Study Notes workspace.</div>", confirm: "Close" },
+  "combine-notes": { title: "Combine Notes", body: "<div style='font-size:13px;color:var(--text3);line-height:1.7;'>Merge selected notes into one consolidated revision sheet with duplicate concept cleanup.</div>", confirm: "Combine" },
+  "organize-notes": { title: "Organize Notes by Topic", body: "<div style='font-size:13px;color:var(--text3);line-height:1.7;'>Auto-tag your notes into topics like Algorithms, Linear Algebra, and Discrete Math.</div>", confirm: "Organize" },
   "full-plan": { title: "Generate Full Plan", body: "<div class='form-group'><label class='form-label'>Available hours</label><input class='input' type='number' value='12'></div>", confirm: "Generate" },
   "override-rec": { title: "Override Recommendation", body: "<div class='form-group'><label class='form-label'>Reason</label><textarea class='input' style='height:90px;resize:none;' placeholder='Why this recommendation does not fit...'></textarea></div>", confirm: "Submit" },
   snooze: { title: "Snooze Recommendation", body: "<div class='form-group'><select class='select'><option>3 days</option><option>1 week</option></select></div>", confirm: "Snooze" },
@@ -573,6 +1046,11 @@ const modals = {
 };
 
 function openModal(key) {
+  if (key === "settings") {
+    openSettingsModal();
+    return;
+  }
+
   const m = modals[key];
   if (!m) return;
   const overlay = document.getElementById("modal-overlay");
@@ -590,6 +1068,8 @@ function openModal(key) {
 
 function closeModal(e) {
   if (!e || e.target === document.getElementById("modal-overlay")) {
+    const content = document.getElementById("modal-content");
+    content?.classList.remove("settings-modal");
     document.getElementById("modal-overlay")?.classList.remove("open");
   }
 }
@@ -715,6 +1195,8 @@ window.flipCard = flipCard;
 window.nextCard = nextCard;
 window.sendMessage = sendMessage;
 window.quickAsk = quickAsk;
+window.askStudyNotesAI = askStudyNotesAI;
+window.askPracticeAI = askPracticeAI;
 window.addUserMsg = addUserMsg;
 window.addAIMsg = addAIMsg;
 window.sendClarityMsg = sendClarityMsg;
@@ -728,5 +1210,7 @@ window.initWeeklyChart = initWeeklyChart;
 window.initHeatmap = initHeatmap;
 window.runRagQuery = runRagQuery;
 window.indexLatestHighlight = indexLatestHighlight;
+window.resetSidebarOrder = resetSidebarOrder;
+window.saveSettingsProfile = saveSettingsProfile;
 
 window.addEventListener("DOMContentLoaded", init);

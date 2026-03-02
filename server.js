@@ -305,9 +305,30 @@ app.get("*", (req, res) => {
   res.sendFile(path.resolve(__dirname, "index.html"));
 });
 
-app.listen(port, () => {
-  console.log(`SpeedUp server running on http://localhost:${port}`);
-});
+startServer(port);
+
+function startServer(preferredPort, attempt = 0) {
+  const candidatePort = Number(preferredPort) + attempt;
+  const server = app.listen(candidatePort, () => {
+    console.log(`SpeedUp server running on http://localhost:${candidatePort}`);
+  });
+
+  server.on("error", (error) => {
+    if (error?.code === "EADDRINUSE" && attempt < 10) {
+      console.warn(`Port ${candidatePort} is in use. Trying ${candidatePort + 1}...`);
+      try {
+        server.close();
+      } catch {
+        // ignore
+      }
+      setTimeout(() => startServer(preferredPort, attempt + 1), 50);
+      return;
+    }
+
+    console.error("Server failed to start", error?.message || error);
+    process.exit(1);
+  });
+}
 
 function createBlobClient() {
   const cs = String(config.storage.connectionString || "").trim();
