@@ -8,6 +8,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const { registerTimeManagementRoutes } = require("./time-management");
 const multer = require("multer");
 const mammoth = require("mammoth");
 const pdfParse = require("pdf-parse");
@@ -78,6 +79,7 @@ app.get("/api/health", async (req, res) => {
     ok: true,
     services: {
       openaiConfigured: Boolean(config.openai.apiKey && config.openai.model),
+      sqliteConfigured: true,
       ragConfigured: Boolean(isFirebaseConfigured()),
       firebaseConfigured: Boolean(isFirebaseConfigured()),
       fileStorageConfigured: Boolean(isCloudinaryConfigured())
@@ -478,6 +480,13 @@ app.post("/api/recommendations", withRateLimit("recommend", 20, 60 * 1000), asyn
   }
 });
 
+registerTimeManagementRoutes(app, {
+  callOpenAIChat,
+  safeParseJson,
+  isOpenAIConfigured,
+  normalizeStudentId
+});
+
 app.post("/api/live/event/:studentId", async (req, res) => {
   try {
     const studentId = normalizeStudentId(req.params.studentId);
@@ -808,7 +817,6 @@ app.get("/api/live/bootstrap/:studentId", async (req, res) => {
     handleError(res, "Failed to build live bootstrap payload", error);
   }
 });
-
 app.get("*", (req, res) => {
   res.sendFile(path.resolve(__dirname, "index.html"));
 });

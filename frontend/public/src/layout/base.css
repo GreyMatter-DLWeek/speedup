@@ -656,6 +656,70 @@
   .tt-chem { background: rgba(251,191,36,0.15); color: var(--accent4); }
   .tt-break { background: rgba(255,255,255,0.04); color: var(--text3); font-style: italic; }
 
+  .tm-slot-hover {
+    border-color: var(--accent) !important;
+    background: rgba(110, 231, 183, 0.08);
+  }
+
+  .tm-task-pill {
+    cursor: grab;
+    user-select: none;
+  }
+
+  .tm-mini-btn {
+    border: 1px solid var(--border2);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text2);
+    width: 20px;
+    height: 20px;
+    border-radius: 6px;
+    font-size: 11px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    padding: 0;
+  }
+
+  .tm-mini-btn:hover {
+    color: var(--text);
+    border-color: var(--accent2);
+    background: rgba(129, 140, 248, 0.14);
+  }
+
+  .tm-mini-btn.danger:hover {
+    color: var(--danger);
+    border-color: rgba(248, 113, 113, 0.45);
+    background: rgba(248, 113, 113, 0.12);
+  }
+
+  .tm-mini-btn.active {
+    color: var(--accent);
+    border-color: rgba(110, 231, 183, 0.4);
+    background: rgba(110, 231, 183, 0.12);
+  }
+
+  .tm-event-label {
+    display: inline-block;
+    max-width: calc(100% - 44px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tm-event-actions {
+    margin-left: auto;
+    display: inline-flex;
+    gap: 4px;
+  }
+
+  .tm-task-completed {
+    opacity: 0.76;
+    text-decoration: line-through;
+  }
+
   /* HIGHLIGHTS DOC */
   .highlight-item {
     display: flex;
