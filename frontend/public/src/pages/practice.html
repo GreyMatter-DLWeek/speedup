@@ -1,0 +1,79 @@
+<div id="page-practice" class="page">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Practice Papers</div>
+      <div class="topbar-sub">Upload, analyze, and track your exam performance</div>
+    </div>
+  </div>
+  <div class="content">
+    <div class="grid-2-1">
+      <div>
+        <div class="card mb-20">
+          <div class="card-title">Upload Practice File</div>
+          <div class="form-group">
+            <label class="form-label">File (PDF, DOCX, PPTX, TXT)</label>
+            <input id="practiceFileInput" class="input" type="file" accept=".pdf,.docx,.pptx,.txt,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Or paste text</label>
+            <textarea id="practicePastedText" class="input" style="min-height:120px;resize:vertical;" placeholder="Paste your question paper text here..."></textarea>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Topic Hint</label>
+            <input id="practiceTopicInput" class="input" type="text" placeholder="e.g. Algorithms">
+          </div>
+          <button id="practiceAnalyzeBtn" class="btn btn-primary">Analyze Practice Paper</button>
+          <div id="practiceStatus" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
+        </div>
+
+        <div class="card mb-20">
+          <div class="card-title">AI Analysis Result</div>
+          <div id="practiceAnalysis" style="font-size:13px;color:var(--text2);line-height:1.7;">No analysis yet.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Exam History & Learning Correlation</div>
+          <div id="examHistoryList" style="display:flex;flex-direction:column;gap:10px;">
+            <div style="font-size:12px;color:var(--text3);">No exam history yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="card">
+          <div class="card-title">Upload Insights</div>
+          <div id="practiceInsights" style="font-size:13px;color:var(--text2);line-height:1.7;">Upload and analyze a paper to generate learning signals.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Uploaded Papers</div>
+          <div id="uploadedPapersList" style="display:flex;flex-direction:column;gap:8px;">
+            <div style="font-size:12px;color:var(--text3);">No uploads yet.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Add Exam Mark</div>
+          <div class="form-group">
+            <label class="form-label">Subject</label>
+            <input id="examNameInput" class="input" type="text" placeholder="e.g. Algorithms Midterm">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Score (%)</label>
+            <input id="examScoreInput" class="input" type="number" placeholder="e.g. 78" min="0" max="100">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Study hours before exam</label>
+            <input id="examHoursInput" class="input" type="number" placeholder="e.g. 12" min="0">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Confidence (1-10)</label>
+            <input id="examConfidenceInput" class="input" type="number" min="1" max="10" value="6">
+          </div>
+          <button id="addExamBtn" class="btn btn-primary" style="width:100%;">Submit & Train AI</button>
+          <div id="examStatus" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div><!-- END PRACTICE -->

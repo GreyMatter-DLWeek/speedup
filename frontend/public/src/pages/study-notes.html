@@ -1,0 +1,63 @@
+<div id="page-study-notes" class="page">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Study Notes</div>
+      <div class="topbar-sub">Summarize highlights, build flashcards, and query your notes with RAG</div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-secondary" onclick="navigate('notes')">📖 Back to Active Reading</button>
+      <button class="btn btn-primary" onclick="openModal('full-plan')">🧠 Generate Study Plan</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="grid-2-1">
+      <div>
+        <div class="section-head">
+          <div class="section-title">Captured Highlights & AI Context</div>
+          <div class="section-link" onclick="navigate('notes')">+ Add from Active Reading</div>
+        </div>
+
+        <div class="card mb-16">
+          <div class="card-title">Quick Actions</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            <button class="btn btn-secondary" onclick="indexLatestHighlight()">📥 Index Latest Highlight</button>
+            <button class="btn btn-ghost" onclick="navigate('practice')">📝 Open Practice Papers</button>
+          </div>
+          <div style="font-size:12px;color:var(--text3);margin-top:10px;line-height:1.6;">
+            Tip: Save highlights in Active Reading, then use this page to search them semantically and turn them into revision-ready notes.
+          </div>
+        </div>
+
+        <div id="dynamicHighlights"></div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="card">
+          <div class="card-title">Study Notes Snapshot</div>
+          <div class="progress-wrap">
+            <div class="progress-header"><span class="progress-label">Indexed notes coverage</span><span class="progress-val">68%</span></div>
+            <div class="progress-bar"><div class="progress-fill fill-purple" style="width:68%"></div></div>
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-header"><span class="progress-label">Weak-topic notes completed</span><span class="progress-val">42%</span></div>
+            <div class="progress-bar"><div class="progress-fill fill-yellow" style="width:42%"></div></div>
+          </div>
+          <div class="progress-wrap" style="margin-bottom:0;">
+            <div class="progress-header"><span class="progress-label">Ready-for-practice topics</span><span class="progress-val">5</span></div>
+            <div class="progress-bar"><div class="progress-fill fill-green" style="width:55%"></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Recommended Next Step</div>
+          <div class="insight-card" style="margin-bottom:0;">
+            <div class="insight-type">High ROI Revision</div>
+            <div class="insight-text">Review your Graph Theory highlights and run one targeted practice set to close your largest current gap.</div>
+            <div class="insight-action" onclick="navigate('practice')">→ Open Practice Papers</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

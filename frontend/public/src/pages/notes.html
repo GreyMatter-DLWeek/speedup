@@ -1,0 +1,154 @@
+    <div id="page-notes" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">Active Reading</div>
+          <div class="topbar-sub">Algorithms — Chapter 7: Dynamic Programming</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost" onclick="startVoice()">🔊 Audio Mode</button>
+          <button class="btn btn-secondary" onclick="navigate('study-notes')">📝 Open Study Notes</button>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="grid-2-1">
+          <div>
+            <div class="notes-content">
+              <div class="notes-toolbar">
+                <button class="toolbar-btn active" id="tb-read">📖 Read Mode</button>
+                <button class="toolbar-btn" id="tb-highlight" onclick="toggleHighlightMode()">🖊 Highlight</button>
+                <button class="toolbar-btn" id="tb-visual" onclick="openModal('visual')">🎨 Visualize</button>
+                <button class="toolbar-btn" onclick="startVoice()">🔊 Audio Explain</button>
+                <button class="toolbar-btn" onclick="openModal('own-words')">✏️ My Own Words</button>
+              </div>
+              <div class="notes-body" id="notesBody">
+
+                <div style="margin-bottom:24px;">
+                  <h2 style="font-family:'Syne',sans-serif;font-size:18px;font-weight:700;margin-bottom:4px;">7.1 Introduction to Dynamic Programming</h2>
+                  <p style="font-size:12px;color:var(--text3);">Estimated read: 8 min · 5 paragraphs</p>
+                </div>
+
+                <!-- PARAGRAPH 1 -->
+                <div class="paragraph-wrap" id="para-1">
+                  <div class="para-checkbox" onclick="explainPara(1)" data-tip="Click to get AI explanation">✓</div>
+                  <div style="flex:1;">
+                    <p class="para-text">Dynamic Programming (DP) is a method for solving complex problems by breaking them down into simpler subproblems. It is applicable when subproblems overlap and the solution to each subproblem can be computed once and stored for future use, avoiding redundant computations. This technique was pioneered by Richard Bellman in the 1950s.</p>
+                    <div class="para-ai-box visible" id="ai-box-1">
+                      <div class="para-ai-header">🤖 SpeedUp AI · Explanation</div>
+                      <p style="margin-bottom:10px;">Think of DP like a <strong style="color:var(--accent)">smart notebook</strong>. Instead of solving the same math problem over and over (like Fibonacci), you write down the answer the first time and look it up later. <br><br>
+                      <strong>Real example:</strong> Finding the cheapest flight route. Instead of recalculating every possible path from scratch, DP stores the cheapest known cost to each intermediate city.</p>
+                      <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">📌 Connected to: Memoization, Recursion (Ch.5), Bellman-Ford Algorithm</div>
+                      <div class="msg-clarity">
+                        <button class="clarity-btn clarity-yes" onclick="markClear(1, true)">✓ Clear!</button>
+                        <button class="clarity-btn clarity-no" onclick="markClear(1, false)">✗ Still confused</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- PARAGRAPH 2 -->
+                <div class="paragraph-wrap" id="para-2">
+                  <div class="para-checkbox" onclick="explainPara(2)" data-tip="Tick to get AI explanation">+</div>
+                  <div style="flex:1;">
+                    <p class="para-text">The two key properties that make a problem suitable for dynamic programming are <em>optimal substructure</em> and <em>overlapping subproblems</em>. Optimal substructure means the optimal solution to the problem can be constructed from optimal solutions of its subproblems. Overlapping subproblems means the same subproblems are encountered multiple times during the computation.</p>
+                    <div class="para-ai-box" id="ai-box-2"></div>
+                  </div>
+                </div>
+
+                <!-- PARAGRAPH 3 -->
+                <div class="paragraph-wrap" id="para-3">
+                  <div class="para-checkbox" onclick="explainPara(3)" data-tip="Tick to get AI explanation">+</div>
+                  <div style="flex:1;">
+                    <p class="para-text">There are two main approaches to implementing dynamic programming: <em>top-down with memoization</em> and <em>bottom-up tabulation</em>. In the top-down approach, the problem is solved recursively, but results of subproblems are cached (memoized). In the bottom-up approach, subproblems are solved iteratively, starting from the smallest and building up.</p>
+                    <div class="para-ai-box" id="ai-box-3"></div>
+                  </div>
+                </div>
+
+                <!-- PARAGRAPH 4 -->
+                <div class="paragraph-wrap" id="para-4">
+                  <div class="para-checkbox" onclick="explainPara(4)" data-tip="Tick to get AI explanation">+</div>
+                  <div style="flex:1;">
+                    <p class="para-text">The time complexity of DP solutions depends on the number of unique subproblems and the time taken to solve each. For instance, the classic 0/1 Knapsack problem has O(nW) complexity where n is the number of items and W is the maximum weight capacity. Space complexity can often be optimized by only storing relevant rows of the DP table.</p>
+                    <div class="para-ai-box" id="ai-box-4"></div>
+                  </div>
+                </div>
+
+                <!-- PARAGRAPH 5 -->
+                <div class="paragraph-wrap" id="para-5">
+                  <div class="para-checkbox" onclick="explainPara(5)" data-tip="Tick to get AI explanation">+</div>
+                  <div style="flex:1;">
+                    <p class="para-text">Classic DP problems include the Fibonacci sequence, Longest Common Subsequence (LCS), Matrix Chain Multiplication, Coin Change problem, and Shortest Path algorithms like Bellman-Ford. Mastering these canonical problems provides a framework for recognizing and solving new DP problems in competitive programming and technical interviews.</p>
+                    <div class="para-ai-box" id="ai-box-5"></div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+          <!-- SIDEBAR: READING PROGRESS -->
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="card">
+              <div class="card-title">Reading Progress</div>
+              <div style="text-align:center;padding:10px 0;">
+                <div class="donut-wrap" style="margin:0 auto 12px;">
+                  <svg width="120" height="120" viewBox="0 0 120 120">
+                    <circle cx="60" cy="60" r="50" fill="none" stroke="var(--surface2)" stroke-width="10"/>
+                    <circle cx="60" cy="60" r="50" fill="none" stroke="var(--accent)" stroke-width="10"
+                      stroke-dasharray="314" stroke-dashoffset="220" stroke-linecap="round"
+                      transform="rotate(-90 60 60)" style="transition:stroke-dashoffset 1s"/>
+                  </svg>
+                  <div class="donut-label">
+                    <div class="donut-val" style="color:var(--accent)">30%</div>
+                    <div class="donut-sub">Complete</div>
+                  </div>
+                </div>
+                <div style="font-size:12px;color:var(--text3);">1 of 5 paragraphs explained</div>
+              </div>
+              <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+                <div style="font-size:12px;color:var(--text3);margin-bottom:8px;">Comprehension Status</div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                  <span class="chip chip-green">✓ Para 1 — Clear</span>
+                  <span class="chip" style="color:var(--text3)">⬡ Para 2</span>
+                  <span class="chip" style="color:var(--text3)">⬡ Para 3</span>
+                  <span class="chip" style="color:var(--text3)">⬡ Para 4</span>
+                  <span class="chip" style="color:var(--text3)">⬡ Para 5</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Voice Assistant</div>
+              <div style="text-align:center;padding:16px 0;">
+                <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()">🔊</button>
+                <div style="margin-top:14px;font-size:13px;color:var(--text2)" id="voiceStatus">Tap to listen to AI audio explanation</div>
+                <div style="margin-top:8px;font-size:11px;color:var(--text3);">Plays explanation of last ticked paragraph</div>
+              </div>
+              <div style="border-top:1px solid var(--border);padding-top:12px;">
+                <div style="font-size:12px;color:var(--text3);margin-bottom:6px;">Voice Settings</div>
+                <div class="override-row">
+                  <div><div class="override-label" style="font-size:12px;">Slow mode</div></div>
+                  <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+                </div>
+                <div class="override-row">
+                  <div><div class="override-label" style="font-size:12px;">Auto-play next paragraph</div></div>
+                  <div class="toggle" onclick="this.classList.toggle('on')"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Related Topics</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                <span class="chip chip-purple">Recursion</span>
+                <span class="chip chip-green">Memoization</span>
+                <span class="chip chip-yellow">Graph Theory</span>
+                <span class="chip chip-pink">Greedy Algorithms</span>
+                <span class="chip chip-green">Tree DP</span>
+                <span class="chip chip-purple">Bellman-Ford</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- END NOTES -->

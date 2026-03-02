@@ -2,19 +2,24 @@
   "name": "speedup-dashboard",
   "version": "1.0.0",
   "private": true,
-  "description": "SpeedUp adaptive learning dashboard with Azure OpenAI, Azure AI Search RAG, and Azure Blob storage",
-  "main": "server.js",
+  "description": "SpeedUp adaptive learning dashboard with OpenAI + Firebase Auth/Firestore/Storage",
+  "main": "backend/server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node backend/server.js",
+    "dev": "node backend/server.js"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
-    "@azure/storage-blob": "^12.28.0",
+    "cloudinary": "^2.8.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "firebase-admin": "^13.6.0",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.9.1",
+    "multer": "^2.0.2",
+    "pdf-parse": "^1.1.1"
   }
 }

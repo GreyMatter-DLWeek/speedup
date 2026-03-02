@@ -1,96 +1,129 @@
-# SpeedUp Dashboard (Cloud-Integrated)
+# SpeedUp Dashboard (OpenAI + Firebase)
 
-SpeedUp is now a full-stack dashboard with:
+Production-style student learning dashboard with:
 
-- OpenAI API for live explanations/recommendations/generations
-- Azure AI Search for RAG retrieval + note indexing
-- Azure Blob Storage for persistent student state
+- Live AI explanations/recommendations (`OpenAI API`)
+- Per-user auth (`Firebase Auth`)
+- Per-user state + RAG note index (`Firestore`)
+- Practice paper file storage (`Cloudinary`)
 
-## Architecture
+## Stack
 
-- Frontend: `index.html` (reference template with embedded CSS), `app.js`
-- Backend API: `server.js` (Express)
-- Storage: Azure Blob (`/api/state/:studentId`)
-- RAG: Azure AI Search (`/api/rag/query`, `/api/rag/index-note`)
-- LLM: OpenAI API (`/api/explain`, `/api/highlight/analyze`, `/api/recommendations`)
+- Frontend: `frontend/public/` (entry: `frontend/public/index.html`)
+- Backend: `backend/server.js` (Express)
+- Data/Auth: Firebase Admin SDK + Firebase Web SDK (`backend/firebase/*` and `frontend/public/auth/*`)
 
-## Files
+## 1) Install
 
-- `index.html` UI (includes cloud health + RAG panel)
-- `app.js` frontend logic and API integration
-- `server.js` backend routes + OpenAI/Azure integrations
-- `.env.example` environment template
-- `package.json` dependencies/scripts
+```bash
+npm install
+```
 
-## Setup
+## 2) Configure backend env
 
-1. Create `.env` from `.env.example` and fill required values.
-2. Install dependencies:
-   - Preferred: `npm install`
-   - If `npm` is not available but Node is installed:
-     - `"C:\Program Files\nodejs\node.exe" "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" install`
-3. Start app:
-   - Preferred: `npm start`
-   - Fallback (no npm): `node server.js`
-4. Open:
-   - `http://localhost:3000`
+Create `.env` from `.env.example` and fill:
 
-## Windows troubleshooting (`npm` not found / `npm.cmd` fails)
+- `OPENAI_API_KEY`
+- `FIREBASE_SERVICE_ACCOUNT_JSON` (recommended), or split Firebase admin vars
+- `CLOUDINARY_CLOUD_NAME`
+- `CLOUDINARY_API_KEY`
+- `CLOUDINARY_API_SECRET`
 
-If Node works but `npm start` fails with an error like:
-`Program 'npm.cmd' failed to run: The system cannot find the file specified`
+## 3) Configure frontend Firebase web app
 
-Use one of these workarounds:
+In `frontend/public/config/firebase-config.js`, fill:
 
-- Run directly with Node:
-  - `node server.js`
-- Or invoke npm CLI through Node:
-  - `"C:\Program Files\nodejs\node.exe" "C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js" start`
+- `window.FIREBASE_CLIENT_CONFIG.apiKey`
+- `authDomain`
+- `projectId`
+- `storageBucket`
+- `messagingSenderId`
+- `appId`
 
-Then fix your terminal/environment setup:
+Also enable Firebase Auth provider:
 
-- Ensure Node is installed in `C:\Program Files\nodejs`
-- Restart VS Code/terminal after installation
-- Confirm PATH includes `C:\Program Files\nodejs`
-- Verify `%ComSpec%` points to a valid `cmd.exe`
+- Firebase Console -> Authentication -> Sign-in method -> `Email/Password` -> Enable
 
-Once terminal setup is corrected, `npm install` and `npm start` should work normally.
+## 4) Start
 
-## Required Resources
+```bash
+npm start
+```
 
-- OpenAI API key + model name
-- Azure AI Search service + index
-- Azure Storage Account (Blob) + connection string
+Open `http://localhost:3000`.
+You will be redirected to `/login.html` until authenticated.
 
-## Azure AI Search index notes
+## GitHub Pages Hosting (Frontend)
 
-Your index should include fields compatible with these env mappings:
+This repo can auto-deploy static frontend to GitHub Pages via:
 
-- `id` (key)
-- `title`
-- `content`
-- `source`
+- [deploy-pages.yml](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/.github/workflows/deploy-pages.yml)
 
-Adjust mappings with:
+Important:
 
-- `AZURE_SEARCH_ID_FIELD`
-- `AZURE_SEARCH_TITLE_FIELD`
-- `AZURE_SEARCH_CONTENT_FIELD`
-- `AZURE_SEARCH_SOURCE_FIELD`
+- GitHub Pages hosts frontend only (no Node/Express backend).
+- Your backend must be deployed separately (Render/Railway/Fly/VM).
 
-## API Endpoints
+Set backend URL for Pages:
+
+1. Open `frontend/public/config/site-config.js`
+2. Set:
+   - `window.SPEEDUP_API_BASE = "https://<your-backend-domain>";`
+3. Commit + push to `main`.
+
+Then enable in GitHub:
+
+1. `Repo -> Settings -> Pages`
+2. Source: `GitHub Actions`
+3. Push to `main` and wait for workflow completion.
+
+## Deploy Backend on Render
+
+This repo includes Render Blueprint config:
+
+- [render.yaml](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/render.yaml)
+
+Steps:
+
+1. Go to Render Dashboard -> `New` -> `Blueprint`.
+2. Connect this GitHub repo and deploy.
+3. In Render service `Environment`, fill secret values:
+   - `OPENAI_API_KEY`
+   - `FIREBASE_SERVICE_ACCOUNT_JSON`
+   - `CLOUDINARY_CLOUD_NAME`
+   - `CLOUDINARY_API_KEY`
+   - `CLOUDINARY_API_SECRET`
+4. Keep non-secret env defaults from `render.yaml` (or copy from [.env.example](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/.env.example)).
+5. After deploy, copy backend URL:
+   - Example: `https://speedup-api.onrender.com`
+6. Update `frontend/public/config/site-config.js`:
+   - Set `window.SPEEDUP_API_BASE = "https://<your-render-url>";`
+7. Commit + push `main` so GitHub Pages frontend calls Render backend.
+
+Quick health check:
+
+- Open `https://<your-render-url>/api/health` and verify `ok: true`.
+
+## Main APIs
 
 - `GET /api/health`
-- `GET /api/state/:studentId`
-- `PUT /api/state/:studentId`
+- `GET /api/user/profile` (auth)
+- `PUT /api/user/profile` (auth)
+- `GET /api/user/state` (auth)
+- `PUT /api/user/state` (auth)
+- `GET /api/user/bootstrap` (auth)
+- `POST /api/user/event` (auth)
+- `POST /api/user/exam` (auth)
+- `POST /api/user/controls` (auth)
 - `POST /api/explain`
 - `POST /api/highlight/analyze`
-- `POST /api/rag/query`
 - `POST /api/rag/index-note`
+- `POST /api/rag/query`
 - `POST /api/recommendations`
+- `POST /api/practice/analyze` (multipart: `paper`, or `pastedText`)
 
 ## Notes
 
-- If cloud configs are missing, frontend falls back to local behavior.
-- Local persistence still uses `localStorage` as safety fallback.
-- Production hardening (auth, rate limits, tenant isolation) should be added before deployment.
+- Uploaded files are stored in Cloudinary under `speedup/practice-papers/<uid>/...`.
+- API routes now include basic request throttling for AI-heavy endpoints.
+- If Firebase/OpenAI is not configured, UI falls back partially to local state/demo behavior.

@@ -1,0 +1,122 @@
+    <div id="page-responsible" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">AI Transparency & Responsible AI</div>
+          <div class="topbar-sub">How SpeedUp's AI works, what it knows, and how to control it</div>
+        </div>
+      </div>
+      <div class="content">
+
+        <div class="grid-3 mb-20">
+          <div class="card" style="border-color:rgba(110,231,183,0.2);">
+            <div style="font-size:28px;margin-bottom:10px;">🔍</div>
+            <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin-bottom:6px;">Explainable Recommendations</div>
+            <div style="font-size:13px;color:var(--text3);line-height:1.7;">Every recommendation shows exactly why it was made — the data points, patterns, and reasoning used. Nothing is a black box.</div>
+          </div>
+          <div class="card" style="border-color:rgba(129,140,248,0.2);">
+            <div style="font-size:28px;margin-bottom:10px;">✋</div>
+            <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin-bottom:6px;">Human Override</div>
+            <div style="font-size:13px;color:var(--text3);line-height:1.7;">You are always in control. Disagree with any recommendation, override your profile, or flag incorrect AI assessments at any time.</div>
+          </div>
+          <div class="card" style="border-color:rgba(244,114,182,0.2);">
+            <div style="font-size:28px;margin-bottom:10px;">🔒</div>
+            <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin-bottom:6px;">Privacy First</div>
+            <div style="font-size:13px;color:var(--text3);line-height:1.7;">All learning data is anonymized, stored locally, and never shared. You can delete your learning profile at any time.</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <div class="card">
+            <div class="card-title">Your AI Profile Settings</div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Show reasoning for all recommendations</div>
+                <div class="override-meta">Always explain why each suggestion is made</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Personalized learning style detection</div>
+                <div class="override-meta">AI learns your optimal study patterns</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Mastery decay modeling</div>
+                <div class="override-meta">Adjust mastery scores during inactivity gaps</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Careless vs gap error detection</div>
+                <div class="override-meta">Distinguish error types from attempt history</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">External study credit</div>
+                <div class="override-meta">Allow manual logging of offline study sessions</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">AI Architecture — How It Works</div>
+            <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">
+              <div style="padding:12px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);">
+                <div style="font-weight:600;color:var(--accent);margin-bottom:4px;">1. Knowledge State Modeling</div>
+                <div style="color:var(--text3);line-height:1.6;">Uses Bayesian Knowledge Tracing (BKT) per topic to model your evolving mastery. Updates after every question attempt and reading session.</div>
+              </div>
+              <div style="padding:12px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);">
+                <div style="font-weight:600;color:var(--accent2);margin-bottom:4px;">2. Pattern Detection Agent</div>
+                <div style="color:var(--text3);line-height:1.6;">Analyzes error patterns across sessions to distinguish genuine knowledge gaps from careless errors using attempt history and time signals.</div>
+              </div>
+              <div style="padding:12px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);">
+                <div style="font-weight:600;color:var(--accent3);margin-bottom:4px;">3. Recommendation Agent</div>
+                <div style="color:var(--text3);line-height:1.6;">Generates personalized study plans based on mastery gaps, exam proximity, time availability, and your historically effective study patterns.</div>
+              </div>
+              <div style="padding:12px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);">
+                <div style="font-weight:600;color:var(--accent4);margin-bottom:4px;">4. Evaluator Loop (Maker-Checker)</div>
+                <div style="color:var(--text3);line-height:1.6;">Each recommendation is checked for bias, fairness, and consistency before display. The student's disagree feedback is used to improve future recommendations.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-20">
+          <div class="card-title">Bias & Fairness Commitment</div>
+          <div class="grid-3" style="margin-top:8px;">
+            <div style="padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+              <div style="font-size:20px;margin-bottom:8px;">⚖️</div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Equitable Treatment</div>
+              <div style="font-size:12px;color:var(--text3);line-height:1.6;">Recommendations do not vary based on demographic factors. The AI only uses your individual interaction data to generate personalized guidance.</div>
+            </div>
+            <div style="padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+              <div style="font-size:20px;margin-bottom:8px;">📊</div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Consistency</div>
+              <div style="font-size:12px;color:var(--text3);line-height:1.6;">The same learning data will always produce the same recommendations. AI outputs are deterministic and auditable, not random.</div>
+            </div>
+            <div style="padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+              <div style="font-size:20px;margin-bottom:8px;">🗑</div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Data Minimization</div>
+              <div style="font-size:12px;color:var(--text3);line-height:1.6;">SpeedUp only stores what's needed: attempt counts, timestamps, mastery scores, and topic tags. No keystroke logging, no screen recording.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Data Usage & Control</div>
+          <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap;">
+            <button class="btn btn-secondary">📥 Download My Data</button>
+            <button class="btn btn-secondary">🔄 Reset AI Profile</button>
+            <button class="btn btn-secondary" style="color:var(--danger);border-color:rgba(248,113,113,0.3);">🗑 Delete All Data</button>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- END RESPONSIBLE AI -->
