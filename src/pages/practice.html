@@ -1,117 +1,173 @@
-<div id="page-practice" class="page">
+<div id="page-practice" class="page practice-page">
+  <style>
+    .practice-hero {
+      background: linear-gradient(135deg, rgba(110,231,183,0.12), rgba(129,140,248,0.1));
+      border: 1px solid rgba(110,231,183,0.28);
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 18px;
+    }
+    .practice-hero h2 {
+      font-family: 'Syne', sans-serif;
+      font-size: 28px;
+      margin: 0 0 8px;
+      line-height: 1.1;
+    }
+    .practice-hero p { font-size: 15px; color: var(--text2); margin: 0; }
+    .practice-grid {
+      display: grid;
+      grid-template-columns: 1.25fr 1fr;
+      gap: 18px;
+    }
+    .practice-panel {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+    }
+    .practice-panel h3 {
+      font-family: 'Syne', sans-serif;
+      font-size: 18px;
+      margin: 0 0 14px;
+      color: var(--text);
+    }
+    .practice-panel .sub { font-size: 13px; color: var(--text3); margin: -6px 0 14px; }
+    .practice-output {
+      margin-top: 14px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      min-height: 120px;
+      max-height: 360px;
+      overflow: auto;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+    .practice-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .practice-actions .btn { font-size: 14px; padding: 10px 16px; }
+    .context-select { margin-top: 8px; }
+    .upload-card {
+      padding: 12px;
+      border-radius: 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      margin-bottom: 9px;
+    }
+    .upload-card-title { font-size: 14px; font-weight: 700; color: var(--text); }
+    .upload-card-meta { font-size: 12px; color: var(--text3); margin-top: 2px; }
+    .upload-card.active { border-color: var(--accent); background: rgba(110,231,183,0.06); }
+    @media (max-width: 1100px) {
+      .practice-grid { grid-template-columns: 1fr; }
+      .practice-hero h2 { font-size: 24px; }
+    }
+  </style>
+
   <div class="topbar">
     <div>
-      <div class="topbar-title">Practice Papers</div>
-      <div class="topbar-sub">Upload, analyze, and generate quiz/flashcards from your context</div>
+      <div class="topbar-title">Practice Studio</div>
+      <div class="topbar-sub">Upload materials, then generate quiz and flashcards with selected source</div>
     </div>
   </div>
+
   <div class="content">
-    <div class="grid-2-1">
-      <div>
-        <div class="card mb-20">
-          <div class="card-title">Upload Practice File</div>
+    <div class="practice-hero">
+      <h2>Turn Any Practice Paper Into Personalized Drills</h2>
+      <p>Upload once, choose any uploaded context, and generate targeted questions or flashcards by difficulty and format.</p>
+    </div>
+
+    <div class="practice-grid">
+      <div style="display:flex;flex-direction:column;gap:18px;">
+        <section class="practice-panel">
+          <h3>1) Upload & Analyze</h3>
+          <p class="sub">Supported: PDF, DOCX, PPTX, TXT, or pasted text</p>
+
           <div class="form-group">
-            <label class="form-label">File (PDF, DOCX, PPTX, TXT)</label>
+            <label class="form-label">File</label>
             <input id="practiceFileInput" class="input" type="file" accept=".pdf,.docx,.pptx,.txt,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation">
           </div>
+
           <div class="form-group">
-            <label class="form-label">Or paste text</label>
-            <textarea id="practicePastedText" class="input" style="min-height:120px;resize:vertical;" placeholder="Paste your question paper text here..."></textarea>
+            <label class="form-label">Or Paste Text</label>
+            <textarea id="practicePastedText" class="input" style="min-height:140px;resize:vertical;" placeholder="Paste question text, notes, or model answers..."></textarea>
           </div>
+
           <div class="form-group">
             <label class="form-label">Topic Hint</label>
-            <input id="practiceTopicInput" class="input" type="text" placeholder="e.g. Algorithms">
+            <input id="practiceTopicInput" class="input" type="text" placeholder="e.g. Algorithms, Thermodynamics">
           </div>
-          <button id="practiceAnalyzeBtn" class="btn btn-primary">Analyze Practice Paper</button>
-          <div id="practiceStatus" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
-        </div>
 
-        <div class="card mb-20">
-          <div class="card-title">AI Analysis Result</div>
-          <div id="practiceAnalysis" style="font-size:13px;color:var(--text2);line-height:1.7;">No analysis yet.</div>
-        </div>
+          <div class="practice-actions">
+            <button id="practiceAnalyzeBtn" class="btn btn-primary">Analyze Practice Source</button>
+          </div>
+          <div id="practiceStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
 
-        <div class="card mb-20">
-          <div class="card-title">Generate Quiz</div>
-          <div class="form-group">
-            <label class="form-label">Difficulty</label>
-            <select id="quizDifficulty" class="select">
-              <option value="easy">Easy</option>
-              <option value="medium" selected>Medium</option>
-              <option value="hard">Hard</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Number of questions</label>
-            <input id="quizCount" class="input" type="number" min="1" max="15" value="5">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Question type</label>
-            <select id="quizType" class="select">
-              <option value="mcq" selected>MCQ</option>
-              <option value="short-answer">Short Answer</option>
-              <option value="mixed">Mixed</option>
-            </select>
-          </div>
-          <button id="generateQuizBtn" class="btn btn-secondary">Generate Questions</button>
-          <div id="quizStatus" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
-          <div id="quizOutput" style="margin-top:10px;font-size:13px;color:var(--text2);line-height:1.7;">No quiz generated yet.</div>
-        </div>
+          <div id="practiceAnalysis" class="practice-output">No analysis yet.</div>
+        </section>
 
-        <div class="card">
-          <div class="card-title">Exam History & Learning Correlation</div>
-          <div id="examHistoryList" style="display:flex;flex-direction:column;gap:10px;">
-            <div style="font-size:12px;color:var(--text3);">No exam history yet.</div>
+        <section class="practice-panel">
+          <h3>2) Generate Quiz</h3>
+          <div class="form-group context-select">
+            <label class="form-label">Choose Uploaded Source</label>
+            <select id="quizSourceSelect" class="select"></select>
           </div>
-        </div>
+          <div class="grid-3" style="gap:10px;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Difficulty</label>
+              <select id="quizDifficulty" class="select">
+                <option value="easy">Easy</option>
+                <option value="medium" selected>Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label"># Questions</label>
+              <input id="quizCount" class="input" type="number" min="1" max="20" value="5">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label">Type</label>
+              <select id="quizType" class="select">
+                <option value="mcq" selected>MCQ</option>
+                <option value="short-answer">Short Answer</option>
+                <option value="mixed">Mixed</option>
+              </select>
+            </div>
+          </div>
+          <div class="practice-actions">
+            <button id="generateQuizBtn" class="btn btn-secondary">Generate Quiz</button>
+          </div>
+          <div id="quizStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
+          <div id="quizOutput" class="practice-output">No quiz generated yet.</div>
+        </section>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:16px;">
-        <div class="card">
-          <div class="card-title">Upload Insights</div>
-          <div id="practiceInsights" style="font-size:13px;color:var(--text2);line-height:1.7;">Upload and analyze a paper to generate learning signals.</div>
-        </div>
+      <div style="display:flex;flex-direction:column;gap:18px;">
+        <section class="practice-panel">
+          <h3>3) Generate Flashcards</h3>
+          <div class="form-group context-select">
+            <label class="form-label">Choose Uploaded Source</label>
+            <select id="flashcardSourceSelect" class="select"></select>
+          </div>
+          <div class="grid-2" style="gap:10px;">
+            <div class="form-group" style="margin-bottom:0;">
+              <label class="form-label"># Flashcards</label>
+              <input id="flashcardCount" class="input" type="number" min="1" max="30" value="8">
+            </div>
+          </div>
+          <div class="practice-actions">
+            <button id="generateFlashcardsBtn" class="btn btn-secondary">Generate Flashcards</button>
+          </div>
+          <div id="flashcardStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
+          <div id="flashcardOutput" class="practice-output">No flashcards generated yet.</div>
+        </section>
 
-        <div class="card">
-          <div class="card-title">Generate Flashcards</div>
-          <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">Generated from your latest uploaded practice context.</div>
-          <div class="form-group">
-            <label class="form-label">Number of cards</label>
-            <input id="flashcardCount" class="input" type="number" min="3" max="20" value="8">
-          </div>
-          <button id="generateFlashcardsBtn" class="btn btn-secondary">Generate Flashcards</button>
-          <div id="flashcardStatus" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
-          <div id="flashcardOutput" style="margin-top:10px;font-size:13px;color:var(--text2);line-height:1.7;">No flashcards generated yet.</div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Uploaded Papers</div>
-          <div id="uploadedPapersList" style="display:flex;flex-direction:column;gap:8px;">
-            <div style="font-size:12px;color:var(--text3);">No uploads yet.</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-title">Add Exam Mark</div>
-          <div class="form-group">
-            <label class="form-label">Subject</label>
-            <input id="examNameInput" class="input" type="text" placeholder="e.g. Algorithms Midterm">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Score (%)</label>
-            <input id="examScoreInput" class="input" type="number" placeholder="e.g. 78" min="0" max="100">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Study hours before exam</label>
-            <input id="examHoursInput" class="input" type="number" placeholder="e.g. 12" min="0">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Confidence (1-10)</label>
-            <input id="examConfidenceInput" class="input" type="number" min="1" max="10" value="6">
-          </div>
-          <button id="addExamBtn" class="btn btn-primary" style="width:100%;">Submit & Train AI</button>
-          <div id="examStatus" style="margin-top:10px;font-size:12px;color:var(--text3);"></div>
-        </div>
+        <section class="practice-panel">
+          <h3>Uploaded Sources</h3>
+          <p class="sub">Select any uploaded file as generation context</p>
+          <div id="uploadedPapersList"></div>
+          <div id="practiceInsights" class="practice-output" style="min-height:100px;max-height:160px;">Upload and analyze a paper to generate learning signals.</div>
+        </section>
       </div>
     </div>
   </div>

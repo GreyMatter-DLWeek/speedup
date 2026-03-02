@@ -721,7 +721,7 @@ app.post("/api/practice/generate-flashcards", withRateLimit("practice_flashcards
   try {
     const authUser = await tryGetFirebaseUser(req);
     const uid = authUser?.uid || "";
-    const count = Math.max(3, Math.min(20, Number(req.body?.count || 8)));
+    const count = Math.max(1, Math.min(30, Number(req.body?.count || 8)));
     const sourceText = cleanText(req.body?.sourceText, 20000) || await resolvePracticeContext(uid);
 
     if (!sourceText) {
