@@ -15,6 +15,8 @@ const API = {
   userState: "/api/user/state",
   userExam: "/api/user/exam",
   practiceAnalyze: "/api/practice/analyze",
+  practiceGenerateQuiz: "/api/practice/generate-quiz",
+  practiceGenerateFlashcards: "/api/practice/generate-flashcards",
   explain: "/api/explain",
   highlightAnalyze: "/api/highlight/analyze",
   ragQuery: "/api/rag/query",
@@ -54,6 +56,7 @@ const defaultState = {
   notes: {},
   highlights: [],
   practiceUploads: [],
+  tutorMessages: [],
   examHistory: [],
   responsibleControls: {
     explainability: true,
@@ -133,6 +136,7 @@ async function init() {
 
   hydrateFromDom();
   feature2.renderHighlights();
+  feature3.initTutor();
   feature5.renderRecommendations();
   renderCloudStatus();
   feature2.renderFlashcard();
@@ -228,7 +232,7 @@ async function hydrateStateFromBackend() {
     const remote = await apiGet(API.userState);
     runtime.state = mergeDeep(structuredClone(defaultState), remote.state || {});
     if (runtime.authUser?.uid) runtime.state.student.id = runtime.authUser.uid;
-    if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email.split("@")[0];
+    if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(runtime.state));
     logAudit("Loaded user state from backend.");
   } catch {
@@ -306,7 +310,7 @@ async function ensureAuthenticated() {
     }
     runtime.authUser = user;
     runtime.state.student.id = user.uid || runtime.state.student.id || STUDENT_ID;
-    if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
+    if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email;
     authClient.onAuthChanged((nextUser) => {
       if (!nextUser) window.location.replace(appPath("/login.html"));
     });
@@ -330,8 +334,8 @@ function updateSidebarIdentity() {
     .map((p) => p[0]?.toUpperCase() || "")
     .join("") || "ST";
   if (avatar) avatar.textContent = initials;
-  if (nameEl) nameEl.textContent = runtime.state.student.name || "Student";
-  if (metaEl) metaEl.textContent = email || "Authenticated user";
+  if (nameEl) nameEl.textContent = email || "Student";
+  if (metaEl) metaEl.textContent = user?.uid ? `UID: ${String(user.uid).slice(0, 10)}...` : "Authenticated user";
 }
 
 function bindSidebarActions() {
@@ -435,6 +439,7 @@ export function bootstrapApp() {
   window.addUserMsg = feature3.addUserMsg;
   window.addAIMsg = feature3.addAIMsg;
   window.sendClarityMsg = feature3.sendClarityMsg;
+  window.clearTutorHistory = feature3.clearTutorHistory;
   window.handleChatKey = feature3.handleChatKey;
   window.startVoice = feature4.startVoice;
   window.toggleVoice = feature4.toggleVoice;
