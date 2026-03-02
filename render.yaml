@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: speedup-api
+    runtime: node
+    plan: free
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: OPENAI_BASE_URL
+        value: https://api.openai.com/v1
+      - key: FIREBASE_RAG_COLLECTION
+        value: speedup_rag_notes
+      - key: ENABLE_FILE_STORAGE
+        value: "true"
+      - key: ALLOWED_ORIGINS
+        value: https://greymatter-dlweek.github.io,http://localhost:3000
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false

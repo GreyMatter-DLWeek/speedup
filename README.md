@@ -62,6 +62,29 @@ Then enable in GitHub:
 2. Source: `GitHub Actions`
 3. Push to `main` and wait for workflow completion.
 
+## Deploy Backend on Render
+This repo includes Render Blueprint config:
+- [render.yaml](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/render.yaml)
+
+Steps:
+1. Go to Render Dashboard -> `New` -> `Blueprint`.
+2. Connect this GitHub repo and deploy.
+3. In Render service `Environment`, fill secret values:
+   - `OPENAI_API_KEY`
+   - `FIREBASE_SERVICE_ACCOUNT_JSON`
+   - `CLOUDINARY_CLOUD_NAME`
+   - `CLOUDINARY_API_KEY`
+   - `CLOUDINARY_API_SECRET`
+4. Keep non-secret env defaults from `render.yaml` (or copy from [.env.example](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/.env.example)).
+5. After deploy, copy backend URL:
+   - Example: `https://speedup-api.onrender.com`
+6. Update [site-config.js](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/site-config.js):
+   - Set `window.SPEEDUP_API_BASE = "https://<your-render-url>";`
+7. Commit + push `main` so GitHub Pages frontend calls Render backend.
+
+Quick health check:
+- Open `https://<your-render-url>/api/health` and verify `ok: true`.
+
 ## Main APIs
 - `GET /api/health`
 - `GET /api/user/profile` (auth)

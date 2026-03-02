@@ -1,4 +1,6 @@
 (function bootstrapSiteConfig() {
+  // Optional: set this after backend deploy, e.g. "https://speedup-api.onrender.com"
+  var configuredApiBase = "";
   var path = String(window.location.pathname || "/");
   var segments = path.split("/").filter(Boolean);
   var repoBase = "";
@@ -14,8 +16,15 @@
     return v;
   }
 
+  var apiFromStorage = "";
+  try {
+    apiFromStorage = window.localStorage.getItem("speedup_api_base") || "";
+  } catch {
+    apiFromStorage = "";
+  }
+
   window.SPEEDUP_SITE_BASE = window.SPEEDUP_SITE_BASE || repoBase;
-  window.SPEEDUP_API_BASE = window.SPEEDUP_API_BASE || "";
+  window.SPEEDUP_API_BASE = window.SPEEDUP_API_BASE || configuredApiBase || apiFromStorage || "";
 
   window.toAppPath = function toAppPath(p) {
     var rel = normalizePath(p);
