@@ -904,7 +904,6 @@ async function syncSchoolTimetableForWeek(db, studentId, weekStart, profile, sch
     [studentId, weekStart]
   );
 
-  if (String(profile?.mode || "") !== "school_blocks") return;
   const blocks = dedupeSchoolBlocks(schoolBlocks || profile?.schoolBlocks || []);
   if (!blocks.length) return;
 
@@ -1185,6 +1184,42 @@ function taskRelatesToConcept(task, concept) {
   const c = String(concept || "").toLowerCase().trim();
   if (!c) return false;
   return t.includes(c);
+}
+
+function taskIdentityKey(task) {
+  const title = normalizeConceptLabel(task?.title || "").toLowerCase();
+  const topic = normalizeConceptLabel(task?.topic || "").toLowerCase();
+  const type = normalizeConceptLabel(task?.type || "").toLowerCase();
+  const subject = normalizeConceptLabel(task?.subject || "").toLowerCase();
+  return `${title}|${topic}|${type}|${subject}`;
+}
+
+function topUpTasksToTarget(primaryTasks, fallbackTasks, targetCount) {
+  const out = Array.isArray(primaryTasks) ? [...primaryTasks] : [];
+  const seen = new Set(out.map((task) => taskIdentityKey(task)));
+
+  (fallbackTasks || []).forEach((task) => {
+    if (out.length >= targetCount) return;
+    const key = taskIdentityKey(task);
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(task);
+  });
+
+  // Final safety net: never return fewer than requested count.
+  while (out.length < targetCount) {
+    out.push({
+      title: `Focused revision block ${out.length + 1}`,
+      subject: "Revision",
+      topic: "Revision",
+      type: "study",
+      priority: 55,
+      estimatedMinutes: 60,
+      source: "ai"
+    });
+  }
+
+  return out.slice(0, targetCount);
 }
 
 function injectExistingCoverageTasks(tasks, signals, availableBlockCount) {
@@ -1796,11 +1831,30 @@ async function getProfile(db, studentId) {
 }
 
 async function saveProfile(db, studentId, input) {
-  const mode = input.mode === "school_blocks" ? "school_blocks" : "productive_hours";
-  const schoolBlocks = parseSchoolBlocksInput(input.schoolBlocks, input.schoolBlocksText);
-  const productiveHours = parseHourRangesInput(input.productiveHours, input.productiveHoursText);
-  const examDates = parseExamDates(input.examDates, input.examDatesText);
-  const weeklyGoalsHours = clampInt(input.weeklyGoalsHours, 1, 60, 14);
+  const existing = await getProfile(db, studentId);
+  const hasOwn = (key) => Object.prototype.hasOwnProperty.call(input || {}, key);
+
+  const mode = input.mode === "school_blocks"
+    ? "school_blocks"
+    : input.mode === "productive_hours"
+      ? "productive_hours"
+      : (existing.mode || "productive_hours");
+
+  const schoolBlocks = (hasOwn("schoolBlocks") || hasOwn("schoolBlocksText"))
+    ? parseSchoolBlocksInput(input.schoolBlocks, input.schoolBlocksText)
+    : (existing.schoolBlocks || []);
+
+  const productiveHours = (hasOwn("productiveHours") || hasOwn("productiveHoursText"))
+    ? parseHourRangesInput(input.productiveHours, input.productiveHoursText)
+    : (existing.productiveHours || []);
+
+  const examDates = (hasOwn("examDates") || hasOwn("examDatesText"))
+    ? parseExamDates(input.examDates, input.examDatesText)
+    : (existing.examDates || []);
+
+  const weeklyGoalsHours = hasOwn("weeklyGoalsHours")
+    ? clampInt(input.weeklyGoalsHours, 1, 60, 14)
+    : clampInt(existing.weeklyGoalsHours, 1, 60, 14);
 
   const configured = Boolean(schoolBlocks.length || productiveHours.length || examDates.length || weeklyGoalsHours);
 
@@ -2113,8 +2167,10 @@ async function generatePlanPayload({
     availableBlockCount
   });
 
-  let tasks = (Array.isArray(ai.tasks) && ai.tasks.length ? ai.tasks : baselineTasks).slice(0, availableBlockCount);
+  const aiTasks = (Array.isArray(ai.tasks) && ai.tasks.length ? ai.tasks : baselineTasks).slice(0, availableBlockCount);
+  let tasks = topUpTasksToTarget(aiTasks, baselineTasks, availableBlockCount);
   tasks = injectExistingCoverageTasks(tasks, existingTaskSignals, availableBlockCount);
+  tasks = topUpTasksToTarget(tasks, baselineTasks, availableBlockCount);
 
   const blockedSlots = replaceExisting
     ? []
