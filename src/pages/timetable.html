@@ -1,156 +1,71 @@
-    <div id="page-timetable" class="page">
-      <div class="topbar">
-        <div>
-          <div class="topbar-title">Study Timetable</div>
-          <div class="topbar-sub">Personalized to your peak productivity hours</div>
-        </div>
-        <div class="topbar-actions">
-          <button class="btn btn-secondary" onclick="openModal('add-session')">+ Add Session</button>
-          <button class="btn btn-primary">⚡ AI Optimize Schedule</button>
+<div id="page-timetable" class="page">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">Study Timetable</div>
+      <div class="topbar-sub">Personalized to your peak productivity hours</div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-secondary" onclick="openTimetableTaskModal()">+ Add Session</button>
+      <button class="btn btn-primary" id="tm-optimize-btn" onclick="generateTimeManagementPlan()">⚡ AI Optimize Schedule</button>
+    </div>
+  </div>
+  <div class="content">
+    <div class="ai-trust-banner" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),rgba(244,114,182,0.05));border-color:rgba(251,191,36,0.2);">
+      <div class="trust-icon">⚡</div>
+      <div class="trust-text">
+        <div class="trust-title" id="tm-peak-title" style="color:var(--accent4)">Peak Productivity: 9:00–11:00 and 20:00–22:00</div>
+        <div class="trust-sub" id="tm-peak-sub">Set onboarding preferences to get a personalized weekly study timetable.</div>
+      </div>
+      <div class="feedback-btn" onclick="generateTimeManagementPlan()" style="width:auto;padding:4px 10px;">🔄 Refresh</div>
+      <div class="feedback-btn" onclick="openTimeManagementOnboarding()" style="width:auto;padding:4px 10px;margin-left:6px;">✏️ Onboarding</div>
+    </div>
+
+    <div class="card mb-20">
+      <div class="card-title">
+        <span id="tm-week-label">Week of --</span>
+        <div id="tm-legend" style="display:flex;gap:8px;text-transform:none;font-weight:400;font-size:12px;"></div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
+        <div style="font-size:12px;color:var(--text3);">Drag tasks into time slots. Double-click a slot to clear assignment.</div>
+        <button class="btn btn-ghost" style="padding:6px 10px;font-size:12px;" onclick="clearTimetableWeek()">Clear Week</button>
+      </div>
+
+      <div id="tm-task-pool" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
+
+      <div style="overflow-x:auto;">
+        <div class="timetable-grid" id="tm-timetable-grid" style="min-width:600px;"></div>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <div class="card">
+        <div class="card-title" id="tm-agenda-title">Today's Agenda</div>
+        <div id="tm-today-agenda" style="display:flex;flex-direction:column;gap:10px;"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Weekly Study Target</div>
+        <div style="text-align:center;padding:8px 0;">
+          <div class="donut-wrap" style="margin:0 auto 10px;">
+            <svg width="100" height="100" viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="40" fill="none" stroke="var(--surface2)" stroke-width="8"></circle>
+              <circle id="tm-weekly-donut" cx="50" cy="50" r="40" fill="none" stroke="var(--accent2)" stroke-width="8" stroke-dasharray="251" stroke-dashoffset="251" stroke-linecap="round" transform="rotate(-90 50 50)"></circle>
+            </svg>
+            <div class="donut-label">
+              <div class="donut-val" id="tm-weekly-percent" style="color:var(--accent2);font-size:18px;">0%</div>
+              <div class="donut-sub">Done</div>
+            </div>
+          </div>
+          <div id="tm-weekly-sub" style="font-size:12px;color:var(--text3);">0h of 0h target</div>
         </div>
       </div>
-      <div class="content">
 
-        <div class="ai-trust-banner" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),rgba(244,114,182,0.05));border-color:rgba(251,191,36,0.2);">
-          <div class="trust-icon">⚡</div>
-          <div class="trust-text">
-            <div class="trust-title" style="color:var(--accent4)">Peak Productivity: 9–11 AM & 8–10 PM</div>
-            <div class="trust-sub">AI detected from 45 past study sessions. Your focus score is 34% higher during these windows. Schedule adjusted accordingly.</div>
-          </div>
-          <div class="feedback-btn" onclick="toggleFeedback(this,'up')" style="width:auto;padding:4px 10px;">👍 Correct</div>
-          <div class="feedback-btn" onclick="openModal('productivity-override')" style="width:auto;padding:4px 10px;margin-left:6px;">✏️ Override</div>
-        </div>
-
-        <div class="card mb-20">
-          <div class="card-title">
-            Week of March 2 – 7
-            <div style="display:flex;gap:8px;text-transform:none;font-weight:400;font-size:12px;">
-              <span class="chip chip-green">📗 Math</span>
-              <span class="chip chip-purple">📘 Algorithms</span>
-              <span class="chip chip-pink">💻 OS</span>
-              <span class="chip chip-yellow">⚗️ Discrete</span>
-            </div>
-          </div>
-          <div style="overflow-x:auto;">
-            <div class="timetable-grid" style="min-width:600px;">
-              <div class="tt-header"></div>
-              <div class="tt-header">MON 3</div>
-              <div class="tt-header">TUE 4</div>
-              <div class="tt-header">WED 5</div>
-              <div class="tt-header">THU 6</div>
-              <div class="tt-header">FRI 7</div>
-
-              <!-- 9 AM -->
-              <div class="tt-time">9:00</div>
-              <div class="tt-slot"><div class="tt-event tt-math">📗 Lin. Algebra</div></div>
-              <div class="tt-slot"><div class="tt-event tt-physics">📘 Algorithms</div></div>
-              <div class="tt-slot"><div class="tt-event tt-math">📗 Lin. Algebra</div></div>
-              <div class="tt-slot"><div class="tt-event tt-cs">💻 OS Review</div></div>
-              <div class="tt-slot"></div>
-
-              <!-- 10 AM -->
-              <div class="tt-time">10:00</div>
-              <div class="tt-slot"><div class="tt-event tt-math">📗 Lin. Algebra</div></div>
-              <div class="tt-slot"><div class="tt-event tt-physics">📘 Algorithms</div></div>
-              <div class="tt-slot"><div class="tt-event tt-chem">⚗️ Discrete Math</div></div>
-              <div class="tt-slot"><div class="tt-event tt-cs">💻 OS Review</div></div>
-              <div class="tt-slot"></div>
-
-              <!-- 11 AM -->
-              <div class="tt-time">11:00</div>
-              <div class="tt-slot"><div class="tt-event tt-break">☕ Break</div></div>
-              <div class="tt-slot"><div class="tt-event tt-break">☕ Break</div></div>
-              <div class="tt-slot"><div class="tt-event tt-chem">⚗️ Discrete Math</div></div>
-              <div class="tt-slot"><div class="tt-event tt-break">☕ Break</div></div>
-              <div class="tt-slot"></div>
-
-              <!-- 2 PM -->
-              <div class="tt-time">14:00</div>
-              <div class="tt-slot"></div>
-              <div class="tt-slot"></div>
-              <div class="tt-slot"><div class="tt-event tt-physics">📘 Practice Paper</div></div>
-              <div class="tt-slot"></div>
-              <div class="tt-slot"><div class="tt-event tt-chem">⚗️ Discrete Math</div></div>
-
-              <!-- 8 PM -->
-              <div class="tt-time">20:00</div>
-              <div class="tt-slot"><div class="tt-event tt-physics">📘 DP Chapter</div></div>
-              <div class="tt-slot"><div class="tt-event tt-cs">💻 Processes</div></div>
-              <div class="tt-slot"></div>
-              <div class="tt-slot"><div class="tt-event tt-physics">📘 Algorithms</div></div>
-              <div class="tt-slot"></div>
-
-              <!-- 9 PM -->
-              <div class="tt-time">21:00</div>
-              <div class="tt-slot"><div class="tt-event tt-physics">📘 DP Chapter</div></div>
-              <div class="tt-slot"><div class="tt-event tt-cs">💻 Processes</div></div>
-              <div class="tt-slot"><div class="tt-event tt-math">📗 Revision</div></div>
-              <div class="tt-slot"><div class="tt-event tt-physics">📘 Algorithms</div></div>
-              <div class="tt-slot"><div class="tt-event tt-chem">⚗️ Review</div></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="grid-3">
-          <div class="card">
-            <div class="card-title">Today's Agenda · Mon Mar 3</div>
-            <div style="display:flex;flex-direction:column;gap:10px;">
-              <div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(110,231,183,0.07);border:1px solid rgba(110,231,183,0.15);border-radius:9px;">
-                <div style="font-size:20px;">📗</div>
-                <div>
-                  <div style="font-size:13px;font-weight:600;">Linear Algebra</div>
-                  <div style="font-size:11px;color:var(--text3);">9:00 – 11:00 AM · 2 hours</div>
-                </div>
-                <div style="margin-left:auto;">
-                  <div class="toggle on" onclick="this.classList.toggle('on')"></div>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(129,140,248,0.07);border:1px solid rgba(129,140,248,0.15);border-radius:9px;">
-                <div style="font-size:20px;">📘</div>
-                <div>
-                  <div style="font-size:13px;font-weight:600;">DP Chapter Review</div>
-                  <div style="font-size:11px;color:var(--text3);">8:00 – 10:00 PM · 2 hours</div>
-                </div>
-                <div style="margin-left:auto;">
-                  <div class="toggle" onclick="this.classList.toggle('on')"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Weekly Study Target</div>
-            <div style="text-align:center;padding:8px 0;">
-              <div class="donut-wrap" style="margin:0 auto 10px;">
-                <svg width="100" height="100" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="var(--surface2)" stroke-width="8"/>
-                  <circle cx="50" cy="50" r="40" fill="none" stroke="var(--accent2)" stroke-width="8"
-                    stroke-dasharray="251" stroke-dashoffset="100" stroke-linecap="round"
-                    transform="rotate(-90 50 50)"/>
-                </svg>
-                <div class="donut-label">
-                  <div class="donut-val" style="color:var(--accent2);font-size:18px;">60%</div>
-                  <div class="donut-sub">Done</div>
-                </div>
-              </div>
-              <div style="font-size:12px;color:var(--text3);">12h of 20h target · 4 days remaining</div>
-            </div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">Smart Suggestions</div>
-            <div style="display:flex;flex-direction:column;gap:8px;">
-              <div style="padding:10px;background:rgba(248,113,113,0.07);border:1px solid rgba(248,113,113,0.15);border-radius:9px;">
-                <div style="font-size:11px;color:var(--danger);font-weight:700;margin-bottom:4px;">⚠ URGENT</div>
-                <div style="font-size:12px;">Discrete Math is 41% mastery with exam in 18 days — needs 3h more this week</div>
-              </div>
-              <div style="padding:10px;background:rgba(110,231,183,0.07);border:1px solid rgba(110,231,183,0.15);border-radius:9px;">
-                <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px;">✓ ON TRACK</div>
-                <div style="font-size:12px;">Data Structures at 84% — light review sessions sufficient</div>
-              </div>
-            </div>
-          </div>
-        </div>
-
+      <div class="card">
+        <div class="card-title">Smart Suggestions</div>
+        <div id="tm-smart-suggestions" style="display:flex;flex-direction:column;gap:8px;"></div>
       </div>
-    </div><!-- END TIMETABLE -->
+    </div>
+  </div>
+</div>
+<!-- END TIMETABLE -->

@@ -4,6 +4,7 @@ const express = require("express");
 const cors = require("cors");
 const path = require("path");
 const { BlobServiceClient } = require("@azure/storage-blob");
+const { registerTimeManagementRoutes } = require("./time-management");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -41,7 +42,8 @@ app.get("/api/health", async (req, res) => {
     services: {
       openaiConfigured: Boolean(config.openai.apiKey && config.openai.model),
       searchConfigured: Boolean(config.azureSearch.endpoint && config.azureSearch.key && config.azureSearch.indexName),
-      blobConfigured: Boolean(blobClient)
+      blobConfigured: Boolean(blobClient),
+      sqliteConfigured: true
     },
     timestamp: new Date().toISOString()
   });
@@ -299,6 +301,13 @@ app.post("/api/recommendations", async (req, res) => {
   } catch (error) {
     handleError(res, "Failed to generate recommendations", error);
   }
+});
+
+registerTimeManagementRoutes(app, {
+  callOpenAIChat,
+  safeParseJson,
+  isOpenAIConfigured,
+  normalizeStudentId
 });
 
 app.get("*", (req, res) => {
