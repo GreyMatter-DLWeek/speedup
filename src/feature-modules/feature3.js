@@ -8,6 +8,15 @@ export function initFeature3(ctx) {
   }
 
   async function tutorResponse(question, attempt = 0, feedback = "") {
+    const normalized = String(question || "").trim().toLowerCase();
+    if (/^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized)) {
+      return {
+        html: "Hi. I am your SpeedUp tutor. Tell me what concept you want to learn, and I will explain it step-by-step with an example.",
+        provider: "assistant-local",
+        raw: {}
+      };
+    }
+
     const prompt = `Student asked: ${question}. Explain clearly with short steps and one example.`;
     try {
       const out = await apiPost(API.explain, {
