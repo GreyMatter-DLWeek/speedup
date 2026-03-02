@@ -16,6 +16,12 @@ export function initFeature7(ctx) {
     return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
   }
 
+  function latestContext() {
+    const latest = runtime.state.practiceUploads?.[0];
+    if (!latest) return "";
+    return String(latest.sourceTextSnippet || latest.analysis?.summary || "").trim();
+  }
+
   function renderExamHistory() {
     const wrap = document.getElementById("examHistoryList");
     if (!wrap) return;
@@ -113,6 +119,40 @@ export function initFeature7(ctx) {
     `;
   }
 
+  function renderQuiz(out) {
+    const wrap = document.getElementById("quizOutput");
+    if (!wrap) return;
+    const questions = out?.quiz?.questions || [];
+    if (!questions.length) {
+      wrap.textContent = "No quiz generated yet.";
+      return;
+    }
+    wrap.innerHTML = `
+      <div style="font-weight:600;margin-bottom:8px;">${escapeHtml(out.quiz.title || "Generated Quiz")}</div>
+      ${questions
+        .map((q, idx) => {
+          const options = Array.isArray(q.options) && q.options.length
+            ? `<ul style="margin:6px 0 6px 18px;">${q.options.map((o) => `<li>${escapeHtml(o)}</li>`).join("")}</ul>`
+            : "";
+          return `<div style="margin-bottom:10px;"><strong>Q${idx + 1}:</strong> ${escapeHtml(q.question || "")}${options}<div style="font-size:12px;color:var(--text3);">Answer: ${escapeHtml(q.answer || "")}</div></div>`;
+        })
+        .join("")}
+    `;
+  }
+
+  function renderFlashcards(out) {
+    const wrap = document.getElementById("flashcardOutput");
+    if (!wrap) return;
+    const cards = out?.flashcards?.cards || [];
+    if (!cards.length) {
+      wrap.textContent = "No flashcards generated yet.";
+      return;
+    }
+    wrap.innerHTML = cards
+      .map((c, idx) => `<div style="padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;"><strong>${idx + 1}. ${escapeHtml(c.question || "")}</strong><div style="margin-top:4px;color:var(--text3);">${escapeHtml(c.answer || "")}</div></div>`)
+      .join("");
+  }
+
   async function refreshUserState() {
     try {
       const out = await apiGet(API.userState);
@@ -164,7 +204,8 @@ export function initFeature7(ctx) {
         date: new Date().toISOString().slice(0, 10),
         url: fileMeta.url || "",
         storagePath: fileMeta.storagePath || "",
-        fileProvider: fileMeta.provider || ""
+        fileProvider: fileMeta.provider || "",
+        sourceTextSnippet: out.sourceTextSnippet || ""
       };
 
       runtime.state.practiceUploads = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
@@ -177,6 +218,58 @@ export function initFeature7(ctx) {
       await refreshUserState();
     } catch (error) {
       if (statusEl) statusEl.textContent = error.message || "Upload/analysis failed.";
+    }
+  }
+
+  async function onGenerateQuiz() {
+    const status = document.getElementById("quizStatus");
+    const difficulty = String(document.getElementById("quizDifficulty")?.value || "medium");
+    const numQuestions = Number(document.getElementById("quizCount")?.value || 5);
+    const questionType = String(document.getElementById("quizType")?.value || "mcq");
+    const sourceText = latestContext();
+
+    if (!sourceText) {
+      if (status) status.textContent = "Upload or analyze a paper first so quiz can be grounded in your content.";
+      return;
+    }
+
+    if (status) status.textContent = "Generating quiz...";
+    try {
+      const out = await apiPost(API.practiceGenerateQuiz, {
+        difficulty,
+        numQuestions,
+        questionType,
+        sourceText
+      });
+      renderQuiz(out);
+      if (status) status.textContent = "Quiz generated.";
+      logAudit("Practice quiz generated.");
+    } catch (error) {
+      if (status) status.textContent = error.message || "Failed to generate quiz.";
+    }
+  }
+
+  async function onGenerateFlashcards() {
+    const status = document.getElementById("flashcardStatus");
+    const count = Number(document.getElementById("flashcardCount")?.value || 8);
+    const sourceText = latestContext();
+
+    if (!sourceText) {
+      if (status) status.textContent = "Upload or analyze a paper first so flashcards can be grounded in your content.";
+      return;
+    }
+
+    if (status) status.textContent = "Generating flashcards...";
+    try {
+      const out = await apiPost(API.practiceGenerateFlashcards, {
+        count,
+        sourceText
+      });
+      renderFlashcards(out);
+      if (status) status.textContent = "Flashcards generated.";
+      logAudit("Practice flashcards generated.");
+    } catch (error) {
+      if (status) status.textContent = error.message || "Failed to generate flashcards.";
     }
   }
 
@@ -212,6 +305,8 @@ export function initFeature7(ctx) {
     initialized = true;
 
     document.getElementById("practiceAnalyzeBtn")?.addEventListener("click", onAnalyzePaper);
+    document.getElementById("generateQuizBtn")?.addEventListener("click", onGenerateQuiz);
+    document.getElementById("generateFlashcardsBtn")?.addEventListener("click", onGenerateFlashcards);
     document.getElementById("addExamBtn")?.addEventListener("click", onAddExam);
 
     renderAnalysis(null, "");

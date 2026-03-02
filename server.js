@@ -626,6 +626,7 @@ app.post("/api/practice/analyze", withRateLimit("practice", 15, 60 * 1000), uplo
       size: Number(fileMeta?.size || pastedText.length || 0),
       source,
       textLength: extractedText.length,
+      sourceTextSnippet: snippet(extractedText, 10000),
       analysis,
       date: new Date().toISOString().slice(0, 10),
       url: fileMeta?.url || "",
@@ -639,10 +640,140 @@ app.post("/api/practice/analyze", withRateLimit("practice", 15, 60 * 1000), uplo
       source,
       file: fileMeta,
       textLength: extractedText.length,
+      sourceTextSnippet: snippet(extractedText, 10000),
       analysis
     });
   } catch (error) {
     handleError(res, "Failed to analyze practice paper", error);
+  }
+});
+
+app.post("/api/practice/generate-quiz", withRateLimit("practice_quiz", 20, 60 * 1000), async (req, res) => {
+  try {
+    const authUser = await tryGetFirebaseUser(req);
+    const uid = authUser?.uid || "";
+    const difficulty = cleanText(req.body?.difficulty || "medium", 20).toLowerCase();
+    const questionType = cleanText(req.body?.questionType || "mcq", 30).toLowerCase();
+    const numQuestions = Math.max(1, Math.min(15, Number(req.body?.numQuestions || 5)));
+    const sourceText = cleanText(req.body?.sourceText, 20000) || await resolvePracticeContext(uid);
+
+    if (!sourceText) {
+      return res.status(400).json({ error: "No practice context found. Upload/analyze a paper first." });
+    }
+
+    const prompt = [
+      "You are an educational assessment generator.",
+      "Return strict JSON with keys: title, questions.",
+      "questions must be an array with exactly requested count.",
+      "Each question object keys: question, options, answer, explanation.",
+      "If type is short-answer, options can be empty array."
+    ].join(" ");
+
+    let quiz = null;
+    try {
+      const out = await callOpenAIChat(
+        [
+          { role: "system", content: prompt },
+          {
+            role: "user",
+            content: JSON.stringify({
+              difficulty,
+              questionType,
+              numQuestions,
+              context: snippet(sourceText, 12000)
+            })
+          }
+        ],
+        0.2
+      );
+      quiz = safeParseJson(out);
+    } catch {
+      quiz = null;
+    }
+
+    if (!quiz || !Array.isArray(quiz.questions) || !quiz.questions.length) {
+      quiz = buildFallbackQuiz(sourceText, numQuestions, questionType, difficulty);
+    }
+
+    const questions = quiz.questions
+      .slice(0, numQuestions)
+      .map((q, i) => ({
+        question: cleanText(q?.question || `Question ${i + 1}`, 500),
+        options: Array.isArray(q?.options) ? q.options.slice(0, 6).map((o) => cleanText(o, 180)) : [],
+        answer: cleanText(q?.answer || "", 280),
+        explanation: cleanText(q?.explanation || "", 500)
+      }));
+
+    return res.json({
+      ok: true,
+      provider: quiz?.provider || "openai-api",
+      quiz: {
+        title: cleanText(quiz?.title || `Generated ${difficulty} quiz`, 120),
+        questions
+      }
+    });
+  } catch (error) {
+    handleError(res, "Failed to generate quiz", error);
+  }
+});
+
+app.post("/api/practice/generate-flashcards", withRateLimit("practice_flashcards", 20, 60 * 1000), async (req, res) => {
+  try {
+    const authUser = await tryGetFirebaseUser(req);
+    const uid = authUser?.uid || "";
+    const count = Math.max(3, Math.min(20, Number(req.body?.count || 8)));
+    const sourceText = cleanText(req.body?.sourceText, 20000) || await resolvePracticeContext(uid);
+
+    if (!sourceText) {
+      return res.status(400).json({ error: "No practice context found. Upload/analyze a paper first." });
+    }
+
+    const prompt = [
+      "You are an educational flashcard generator.",
+      "Return strict JSON with keys: title, cards.",
+      "cards must be array of objects with keys: question, answer.",
+      "Generate concise and exam-focused flashcards."
+    ].join(" ");
+
+    let flashcards = null;
+    try {
+      const out = await callOpenAIChat(
+        [
+          { role: "system", content: prompt },
+          {
+            role: "user",
+            content: JSON.stringify({
+              count,
+              context: snippet(sourceText, 12000)
+            })
+          }
+        ],
+        0.2
+      );
+      flashcards = safeParseJson(out);
+    } catch {
+      flashcards = null;
+    }
+
+    if (!flashcards || !Array.isArray(flashcards.cards) || !flashcards.cards.length) {
+      flashcards = buildFallbackFlashcards(sourceText, count);
+    }
+
+    const cards = flashcards.cards.slice(0, count).map((c, i) => ({
+      question: cleanText(c?.question || `Card ${i + 1}`, 320),
+      answer: cleanText(c?.answer || "", 400)
+    }));
+
+    return res.json({
+      ok: true,
+      provider: flashcards?.provider || "openai-api",
+      flashcards: {
+        title: cleanText(flashcards?.title || "Generated Flashcards", 120),
+        cards
+      }
+    });
+  } catch (error) {
+    handleError(res, "Failed to generate flashcards", error);
   }
 });
 
@@ -944,6 +1075,65 @@ function snippet(text, max = 260) {
   const value = String(text || "").trim();
   if (value.length <= max) return value;
   return value.slice(0, Math.max(1, max - 3)) + "...";
+}
+
+async function resolvePracticeContext(uid) {
+  if (!uid || !isFirebaseConfigured()) return "";
+  const state = await getUserState(uid).catch(() => ({}));
+  const latest = Array.isArray(state?.practiceUploads) ? state.practiceUploads[0] : null;
+  return cleanText(latest?.sourceTextSnippet || latest?.analysis?.summary || "", 20000);
+}
+
+function buildFallbackQuiz(text, numQuestions, questionType, difficulty) {
+  const lines = String(text || "")
+    .split(/[.\n]/)
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .slice(0, Math.max(numQuestions, 5));
+
+  const questions = Array.from({ length: numQuestions }).map((_, i) => {
+    const seed = lines[i % Math.max(1, lines.length)] || `Concept ${i + 1}`;
+    const isMcq = questionType === "mcq" || questionType === "mixed";
+    return {
+      question: `(${difficulty}) Explain this concept: ${seed}`,
+      options: isMcq ? [
+        `Definition of ${seed}`,
+        `Unrelated concept`,
+        `Opposite meaning`,
+        `None of the above`
+      ] : [],
+      answer: isMcq ? `Definition of ${seed}` : `A clear explanation of ${seed} with one example.`,
+      explanation: "Answer should be grounded in the uploaded context."
+    };
+  });
+
+  return {
+    provider: "fallback",
+    title: `Generated ${difficulty} quiz`,
+    questions
+  };
+}
+
+function buildFallbackFlashcards(text, count) {
+  const lines = String(text || "")
+    .split(/[.\n]/)
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .slice(0, Math.max(count, 5));
+
+  const cards = Array.from({ length: count }).map((_, i) => {
+    const seed = lines[i % Math.max(1, lines.length)] || `Concept ${i + 1}`;
+    return {
+      question: `What is the key idea of: ${seed}?`,
+      answer: seed
+    };
+  });
+
+  return {
+    provider: "fallback",
+    title: "Generated Flashcards",
+    cards
+  };
 }
 
 async function loadStateWithFallback(studentId) {
