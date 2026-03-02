@@ -20,6 +20,7 @@ const cloudinary = cloudinaryModule?.v2 || null;
 const { isFirebaseConfigured, getFirestore } = require("./firebase/firebaseAdmin");
 const { requireFirebaseAuth, tryGetFirebaseUser } = require("./firebase/firebaseAuth");
 const { getUserState, setUserState, appendAuditEvent } = require("./firebase/firebaseStore");
+const { registerTimeManagementRoutes } = require("../time-management");
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -483,6 +484,13 @@ app.post("/api/recommendations", withRateLimit("recommend", 20, 60 * 1000), asyn
   } catch (error) {
     handleError(res, "Failed to generate recommendations", error);
   }
+});
+
+registerTimeManagementRoutes(app, {
+  callOpenAIChat,
+  safeParseJson,
+  isOpenAIConfigured,
+  normalizeStudentId
 });
 
 app.post("/api/live/event/:studentId", async (req, res) => {
