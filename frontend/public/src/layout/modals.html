@@ -4,14 +4,20 @@
   </div>
 </div>
 
-<button class="tutor-fab" id="tutorFabBtn" type="button" onclick="openTutorPanel()" title="Ask Tutor (/)">🤖 Ask Tutor</button>
+<button class="tutor-fab" id="tutorFabBtn" type="button" onclick="openTutorPanel()" title="Ask Tutor (/)">
+  <span class="tutor-fab-icon" aria-hidden="true">🤖</span>
+  <span>Ask Tutor</span>
+</button>
 
-<button class="tutor-peek-robot" id="tutorPeekRobot" type="button" aria-label="Re-open tutor" title="Open Tutor" onclick="restoreTutorPanel()">🤖</button>
+<button class="tutor-peek-robot" id="tutorPeekRobot" type="button" aria-label="Re-open tutor" title="Open Tutor" onclick="restoreTutorPanel()">
+  <span class="tutor-peek-icon" aria-hidden="true">🤖</span>
+  <span class="tutor-peek-text">Ask Tutor</span>
+</button>
 
 <aside class="tutor-panel" id="tutorPanel" aria-hidden="true">
   <div class="tutor-panel-header" id="tutorDragHandle">
     <div>
-      <div class="tutor-panel-title">AI Tutor</div>
+      <div class="tutor-panel-title"><span aria-hidden="true">🤖</span> Ask Tutor</div>
       <div class="tutor-panel-sub" id="tutorScopeLabel">Context: Active Reading</div>
     </div>
     <div class="tutor-panel-controls">

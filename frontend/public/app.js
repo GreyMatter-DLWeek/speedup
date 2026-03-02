@@ -27,7 +27,17 @@ const API = {
   highlightAnalyze: "/api/highlight/analyze",
   ragQuery: "/api/rag/query",
   ragIndexNote: "/api/rag/index-note",
-  recommendations: "/api/recommendations"
+  recommendations: "/api/recommendations",
+  timeManagementState: (studentId, weekStart) => {
+    const base = `/api/time-management/${encodeURIComponent(studentId)}`;
+    return weekStart ? `${base}?weekStart=${encodeURIComponent(weekStart)}` : base;
+  },
+  timeManagementProfile: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/profile`,
+  timeManagementGeneratePlan: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/generate-plan`,
+  timeManagementTasks: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks`,
+  timeManagementTask: (studentId, taskId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks/${encodeURIComponent(taskId)}`,
+  timeManagementSlot: (studentId, day, hour) => `/api/time-management/${encodeURIComponent(studentId)}/slots/${encodeURIComponent(day)}/${encodeURIComponent(hour)}`,
+  timeManagementClearWeek: (studentId, weekStart) => `/api/time-management/${encodeURIComponent(studentId)}/week/${encodeURIComponent(weekStart)}`
 };
 
 const defaultState = {
@@ -97,9 +107,9 @@ const runtime = {
   authUser: null,
   flashcards,
   tutorPanelOpen: false,
-  tutorPanelDocked: false,
+  tutorPanelDocked: true,
   tutorPanelPosition: null,
-  tutorPeekTop: 160,
+  tutorPeekTop: 132,
   tutorDragState: null,
   tutorInteractionsBound: false,
   tutorContextType: "active-reading",
@@ -115,6 +125,7 @@ const ctx = {
   apiPost,
   apiPostForm,
   apiPut,
+  apiDelete,
   parseMaybeJson,
   escapeHtml,
   timeNow,
@@ -160,6 +171,7 @@ async function init() {
   feature7.initPracticeFeature();
 
   renderTutorPanel();
+  feature4.initTimeManagement();
 }
 
 function initSidebarOrdering() {
@@ -656,6 +668,10 @@ function navigate(page) {
   });
 
   syncTutorContextFromPage(page);
+
+  if (page === "timetable") {
+    feature4.refreshTimeManagement();
+  }
 }
 
 function inferCurrentPage() {
@@ -1038,11 +1054,7 @@ function openTutorPanel(type = null) {
 }
 
 function closeTutorPanel() {
-  runtime.tutorPanelDocked = false;
-  runtime.tutorPanelOpen = false;
-  runtime.tutorDragState = null;
-  document.getElementById("tutorPanel")?.classList.remove("dragging");
-  renderTutorPanel();
+  dockTutorPanel();
 }
 
 function askTutorQuick(question) {
@@ -1368,6 +1380,16 @@ async function apiPut(url, body) {
   return payload;
 }
 
+async function apiDelete(url) {
+  const res = await fetch(apiUrl(url), {
+    method: "DELETE",
+    headers: await authHeaders()
+  });
+  const payload = await parseMaybeJson(res);
+  if (!res.ok) throw new Error(payload.error || `DELETE ${url} failed`);
+  return payload;
+}
+
 async function authHeaders(base = {}) {
   const headers = { ...base };
   const token = await window.firebaseAuthClient?.getIdToken?.();
@@ -1398,6 +1420,16 @@ export function bootstrapApp() {
   window.handleChatKey = feature3.handleChatKey;
   window.startVoice = feature4.startVoice;
   window.toggleVoice = feature4.toggleVoice;
+  window.openTimeManagementOnboarding = feature4.openTimeManagementOnboarding;
+  window.saveTimeManagementOnboarding = feature4.saveTimeManagementOnboarding;
+  window.generateTimeManagementPlan = feature4.generateTimeManagementPlan;
+  window.refreshTimeManagement = feature4.refreshTimeManagement;
+  window.openTimetableTaskModal = feature4.openTimetableTaskModal;
+  window.saveTimetableTask = feature4.saveTimetableTask;
+  window.deleteTimetableTask = feature4.deleteTimetableTask;
+  window.clearTimetableWeek = feature4.clearTimetableWeek;
+  window.toggleTimetableTaskCompletion = feature4.toggleTimetableTaskCompletion;
+  window.clearTimetableSlot = feature4.clearTimetableSlot;
   window.toggleFeedback = feature8.toggleFeedback;
   window.openModal = feature8.openModal;
   window.closeModal = feature8.closeModal;

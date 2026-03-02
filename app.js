@@ -21,7 +21,17 @@ const API = {
   highlightAnalyze: "/api/highlight/analyze",
   ragQuery: "/api/rag/query",
   ragIndexNote: "/api/rag/index-note",
-  recommendations: "/api/recommendations"
+  recommendations: "/api/recommendations",
+  timeManagementState: (studentId, weekStart) => {
+    const base = `/api/time-management/${encodeURIComponent(studentId)}`;
+    return weekStart ? `${base}?weekStart=${encodeURIComponent(weekStart)}` : base;
+  },
+  timeManagementProfile: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/profile`,
+  timeManagementGeneratePlan: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/generate-plan`,
+  timeManagementTasks: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks`,
+  timeManagementTask: (studentId, taskId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks/${encodeURIComponent(taskId)}`,
+  timeManagementSlot: (studentId, day, hour) => `/api/time-management/${encodeURIComponent(studentId)}/slots/${encodeURIComponent(day)}/${encodeURIComponent(hour)}`,
+  timeManagementClearWeek: (studentId, weekStart) => `/api/time-management/${encodeURIComponent(studentId)}/week/${encodeURIComponent(weekStart)}`
 };
 
 const defaultState = {
@@ -93,6 +103,7 @@ const ctx = {
   apiPost,
   apiPostForm,
   apiPut,
+  apiDelete,
   parseMaybeJson,
   escapeHtml,
   timeNow,
@@ -132,6 +143,7 @@ async function init() {
   feature6.initWeeklyChart();
   feature6.initHeatmap();
   feature7.initPracticeFeature();
+  feature4.initTimeManagement();
 }
 
 function ensureDynamicContainers() {
@@ -200,6 +212,10 @@ function navigate(page) {
     const onclick = item.getAttribute("onclick") || "";
     if (onclick.includes(`'${page}'`)) item.classList.add("active");
   });
+
+  if (page === "timetable") {
+    feature4.refreshTimeManagement();
+  }
 }
 
 async function loadCloudHealth() {
@@ -338,7 +354,7 @@ function bindSidebarActions() {
 async function apiGet(url) {
   const res = await fetch(apiUrl(url), { headers: await authHeaders() });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `GET ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `GET ${url} failed`));
   return payload;
 }
 
@@ -349,7 +365,7 @@ async function apiPost(url, body) {
     body: JSON.stringify(body)
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `POST ${url} failed`));
   return payload;
 }
 
@@ -360,7 +376,7 @@ async function apiPostForm(url, formData) {
     body: formData
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `POST ${url} failed`));
   return payload;
 }
 
@@ -371,7 +387,17 @@ async function apiPut(url, body) {
     body: JSON.stringify(body)
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `PUT ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `PUT ${url} failed`));
+  return payload;
+}
+
+async function apiDelete(url) {
+  const res = await fetch(apiUrl(url), {
+    method: "DELETE",
+    headers: await authHeaders()
+  });
+  const payload = await parseMaybeJson(res);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `DELETE ${url} failed`));
   return payload;
 }
 
@@ -384,10 +410,21 @@ async function authHeaders(base = {}) {
 
 async function parseMaybeJson(res) {
   try {
-    return await res.json();
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { details: text.slice(0, 500) };
+    }
   } catch {
     return {};
   }
+}
+
+function extractErrorMessage(payload, fallback) {
+  if (!payload || typeof payload !== "object") return fallback;
+  return payload.error || payload.details || payload.message || fallback;
 }
 
 export function bootstrapApp() {
@@ -406,6 +443,16 @@ export function bootstrapApp() {
   window.handleChatKey = feature3.handleChatKey;
   window.startVoice = feature4.startVoice;
   window.toggleVoice = feature4.toggleVoice;
+  window.openTimeManagementOnboarding = feature4.openTimeManagementOnboarding;
+  window.saveTimeManagementOnboarding = feature4.saveTimeManagementOnboarding;
+  window.generateTimeManagementPlan = feature4.generateTimeManagementPlan;
+  window.refreshTimeManagement = feature4.refreshTimeManagement;
+  window.openTimetableTaskModal = feature4.openTimetableTaskModal;
+  window.saveTimetableTask = feature4.saveTimetableTask;
+  window.deleteTimetableTask = feature4.deleteTimetableTask;
+  window.clearTimetableWeek = feature4.clearTimetableWeek;
+  window.toggleTimetableTaskCompletion = feature4.toggleTimetableTaskCompletion;
+  window.clearTimetableSlot = feature4.clearTimetableSlot;
   window.toggleFeedback = feature8.toggleFeedback;
   window.openModal = feature8.openModal;
   window.closeModal = feature8.closeModal;

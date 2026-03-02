@@ -20,6 +20,8 @@ const cloudinary = cloudinaryModule?.v2 || null;
 const { isFirebaseConfigured, getFirestore } = require("./firebase/firebaseAdmin");
 const { requireFirebaseAuth, tryGetFirebaseUser } = require("./firebase/firebaseAuth");
 const { getUserState, setUserState, appendAuditEvent } = require("./firebase/firebaseStore");
+const timeManagementModule = tryRequire("../time-management");
+const registerTimeManagementRoutes = timeManagementModule?.registerTimeManagementRoutes || null;
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -564,6 +566,17 @@ app.post("/api/recommendations", withRateLimit("recommend", 20, 60 * 1000), asyn
     handleError(res, "Failed to generate recommendations", error);
   }
 });
+
+if (registerTimeManagementRoutes) {
+  registerTimeManagementRoutes(app, {
+    callOpenAIChat,
+    safeParseJson,
+    isOpenAIConfigured,
+    normalizeStudentId
+  });
+} else {
+  console.warn("Time management routes disabled: optional dependency `sqlite3` is missing.");
+}
 
 app.post("/api/live/event/:studentId", async (req, res) => {
   try {
