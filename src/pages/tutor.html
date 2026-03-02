@@ -1,129 +1,68 @@
-    <div id="page-tutor" class="page">
-      <div class="topbar">
-        <div>
-          <div class="topbar-title">AI Tutor</div>
-          <div class="topbar-sub">Doubt resolution · Explanations · Simplification</div>
-        </div>
-        <div class="topbar-actions">
-          <button class="btn btn-ghost">📋 Conversation History</button>
-          <button class="btn btn-secondary" onclick="openModal('visual')">🎨 Visualize Concept</button>
-        </div>
-      </div>
-      <div class="content">
-        <div class="grid-2-1">
-          <div>
-            <div class="chat-container">
-              <div class="chat-header">
-                <div class="ai-avatar">🤖</div>
-                <div>
-                  <div style="font-size:13px;font-weight:600;">SpeedUp AI</div>
-                  <div class="ai-status">Online · Ready to help</div>
-                </div>
-                <div style="margin-left:auto;display:flex;gap:8px;">
-                  <button class="toolbar-btn" onclick="startVoice()">🔊</button>
-                  <button class="toolbar-btn" data-tip="Clear chat">🗑</button>
-                </div>
-              </div>
-
-              <div class="chat-messages" id="chatMessages">
-                <div class="msg ai">
-                  <div class="msg-avatar msg-ai-avatar">🤖</div>
-                  <div>
-                    <div class="msg-bubble">
-                      Hi Alex! I'm your SpeedUp AI Tutor. I can see you're currently studying <strong>Dynamic Programming</strong>. What would you like me to explain? I'll always tell you <em>why</em> I'm giving each explanation so you can trust my reasoning.
-                    </div>
-                    <div style="font-size:11px;color:var(--text3);margin-top:4px;padding-left:4px;">10:42 AM</div>
-                  </div>
-                </div>
-
-                <div class="msg user">
-                  <div class="msg-avatar msg-user-avatar">AK</div>
-                  <div>
-                    <div class="msg-bubble">I don't understand the difference between memoization and tabulation</div>
-                    <div style="font-size:11px;color:var(--text3);margin-top:4px;text-align:right;padding-right:4px;">10:43 AM</div>
-                  </div>
-                </div>
-
-                <div class="msg ai">
-                  <div class="msg-avatar msg-ai-avatar">🤖</div>
-                  <div>
-                    <div class="msg-bubble">
-                      <div style="font-size:11px;color:var(--accent);margin-bottom:8px;font-weight:600;">📊 Why I'm explaining this way: Based on your reading history, you learn well with analogies (92% clarity rate on analogy-based explanations)</div>
-                      <strong>Think of a recipe book:</strong><br><br>
-                      🗒 <strong>Memoization (Top-Down)</strong> = You start cooking a dish. Every time you figure out a sub-step, you write it in the book. Next time you need that step, you look it up instead of re-figuring.<br><br>
-                      📋 <strong>Tabulation (Bottom-Up)</strong> = Before cooking anything, you fill in every possible sub-step in a big table, then use that table when you need to cook.<br><br>
-                      <strong>Key difference:</strong> Memo only computes what's needed. Tabulation computes everything upfront.
-                    </div>
-                    <div class="msg-clarity">
-                      <button class="clarity-btn clarity-yes" onclick="sendClarityMsg(true)">✓ That's clear!</button>
-                      <button class="clarity-btn clarity-no" onclick="sendClarityMsg(false)">✗ Still confused</button>
-                    </div>
-                    <div style="font-size:11px;color:var(--text3);margin-top:6px;padding-left:4px;">10:43 AM</div>
-                  </div>
-                </div>
-              </div>
-
-              <div class="chat-input-area">
-                <textarea class="chat-input" id="chatInput" placeholder="Ask any doubt about your notes…" rows="1" onkeydown="handleChatKey(event)"></textarea>
-                <button class="send-btn" onclick="sendMessage()">➤</button>
-                <button class="toolbar-btn" onclick="startVoice()" style="height:36px;padding:0 10px;">🎙</button>
-              </div>
+<div id="page-tutor" class="page">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">AI Tutor</div>
+      <div class="topbar-sub">Doubt resolution | Explanations | Simplification</div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost" onclick="navigate('tutor')">Conversation History</button>
+      <button class="btn btn-secondary" onclick="openModal('visual')">Visualize Concept</button>
+    </div>
+  </div>
+  <div class="content">
+    <div class="grid-2-1">
+      <div>
+        <div class="chat-container">
+          <div class="chat-header">
+            <div class="ai-avatar">AI</div>
+            <div>
+              <div style="font-size:13px;font-weight:600;">SpeedUp AI</div>
+              <div class="ai-status">Online | Ready to help</div>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:8px;">
+              <button class="toolbar-btn" onclick="startVoice()">Audio</button>
+              <button class="toolbar-btn" data-tip="Clear chat" onclick="clearTutorHistory()">Clear</button>
             </div>
           </div>
 
-          <!-- SIDEBAR -->
-          <div style="display:flex;flex-direction:column;gap:16px;">
-            <div class="card">
-              <div class="card-title">Tutor Context</div>
-              <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">The AI uses this context to personalize explanations</div>
-              <div class="override-row">
-                <div><div class="override-label" style="font-size:12px;">Current topic</div><div class="override-meta">Dynamic Programming</div></div>
-              </div>
-              <div class="override-row">
-                <div><div class="override-label" style="font-size:12px;">Learning style</div><div class="override-meta">Analogy-based · Visual</div></div>
-              </div>
-              <div class="override-row">
-                <div><div class="override-label" style="font-size:12px;">Mastery level</div><div class="override-meta">Intermediate (67%)</div></div>
-              </div>
-              <div class="override-row">
-                <div><div class="override-label" style="font-size:12px;">Weak areas</div><div class="override-meta">DP recurrences, LCS</div></div>
-              </div>
-              <button class="btn btn-secondary" style="width:100%;margin-top:12px;" onclick="openModal('context-override')">✏️ Override Context</button>
-            </div>
+          <div class="chat-messages" id="chatMessages"></div>
 
-            <div class="card">
-              <div class="card-title">Quick Questions</div>
-              <div style="display:flex;flex-direction:column;gap:8px;" id="quickQuestions">
-                <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="quickAsk('Explain the Longest Common Subsequence problem')">
-                  → Explain LCS problem
-                </div>
-                <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="quickAsk('What is the Coin Change DP problem?')">
-                  → What is Coin Change DP?
-                </div>
-                <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="quickAsk('How does the 0/1 Knapsack DP work?')">
-                  → How does 0/1 Knapsack work?
-                </div>
-                <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="quickAsk('Give me a simpler explanation of optimal substructure')">
-                  → Simplify optimal substructure
-                </div>
-              </div>
-            </div>
+          <div class="chat-input-area">
+            <textarea class="chat-input" id="chatInput" placeholder="Ask any doubt about your notes..." rows="1" onkeydown="handleChatKey(event)"></textarea>
+            <button class="send-btn" onclick="sendMessage()">Send</button>
+            <button class="toolbar-btn" onclick="startVoice()" style="height:36px;padding:0 10px;">Voice</button>
+          </div>
+        </div>
+      </div>
 
-            <div class="card">
-              <div class="card-title">Tutor Stats</div>
-              <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;">
-                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
-                  <span style="color:var(--text3)">Doubts resolved today</span><span style="color:var(--accent);font-family:'JetBrains Mono',monospace;">7</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
-                  <span style="color:var(--text3)">Avg clarity rate</span><span style="color:var(--accent2);font-family:'JetBrains Mono',monospace;">89%</span>
-                </div>
-                <div style="display:flex;justify-content:space-between;padding:6px 0;">
-                  <span style="color:var(--text3)">Simplifications needed</span><span style="color:var(--accent4);font-family:'JetBrains Mono',monospace;">2</span>
-                </div>
-              </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="card">
+          <div class="card-title">Tutor Context</div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">The AI uses this context to personalize explanations</div>
+          <div class="override-row">
+            <div><div class="override-label" style="font-size:12px;">Current topic</div><div class="override-meta">From your recent notes/questions</div></div>
+          </div>
+          <div class="override-row">
+            <div><div class="override-label" style="font-size:12px;">Learning style</div><div class="override-meta">Adaptive | Simplification on demand</div></div>
+          </div>
+          <button class="btn btn-secondary" style="width:100%;margin-top:12px;" onclick="openModal('context-override')">Override Context</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Quick Questions</div>
+          <div style="display:flex;flex-direction:column;gap:8px;" id="quickQuestions">
+            <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;" onclick="quickAsk('Explain the Longest Common Subsequence problem')">
+              Explain LCS problem
+            </div>
+            <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;" onclick="quickAsk('What is the Coin Change DP problem?')">
+              What is Coin Change DP?
+            </div>
+            <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;" onclick="quickAsk('How does the 0/1 Knapsack DP work?')">
+              How does 0/1 Knapsack work?
             </div>
           </div>
         </div>
       </div>
-    </div><!-- END TUTOR -->
+    </div>
+  </div>
+</div><!-- END TUTOR -->
