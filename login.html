@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpeedUp | Login</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#0a0a0f;--surface:#13131a;--surface2:#1c1c27;--border:rgba(255,255,255,.08);
+      --text:#f0f0f8;--text2:#9898b0;--accent:#6ee7b7;--accent2:#818cf8;--danger:#f87171;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;padding:20px;background:
+      radial-gradient(1200px 600px at 10% -20%, rgba(129,140,248,.2), transparent 60%),
+      radial-gradient(900px 500px at 100% 120%, rgba(110,231,183,.18), transparent 60%),var(--bg);
+      color:var(--text);font-family:"DM Sans",sans-serif}
+    .card{width:min(460px,100%);background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px}
+    .brand{font-family:"Syne",sans-serif;font-size:26px;font-weight:800;margin:0 0 8px;background:linear-gradient(135deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .title{font-family:"Syne",sans-serif;font-size:22px;font-weight:700;margin:0 0 4px}
+    .sub{font-size:13px;color:var(--text2);margin:0 0 18px}
+    .group{display:grid;gap:8px;margin-bottom:12px}
+    .label{font-size:12px;color:var(--text2)}
+    .input{width:100%;padding:11px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);color:var(--text)}
+    .btn{width:100%;padding:11px 12px;border:none;border-radius:10px;background:var(--accent);color:#0a0a0f;font-weight:700;cursor:pointer}
+    .error{min-height:18px;color:var(--danger);font-size:12px;margin-top:8px}
+    .foot{margin-top:12px;font-size:13px;color:var(--text2)}
+    .foot a{color:var(--accent);text-decoration:none}
+  </style>
+</head>
+<body data-mode="login">
+  <main class="card">
+    <h1 class="brand">SpeedUp</h1>
+    <h2 class="title" id="authTitle">Welcome back</h2>
+    <p class="sub" id="authSubtitle">Sign in to continue.</p>
+    <form id="authForm">
+      <div class="group">
+        <label class="label" for="authEmail">Email</label>
+        <input class="input" id="authEmail" type="email" autocomplete="email" required>
+      </div>
+      <div class="group">
+        <label class="label" for="authPassword">Password</label>
+        <input class="input" id="authPassword" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="group" id="confirmWrap" style="display:none;">
+        <label class="label" for="authConfirmPassword">Confirm Password</label>
+        <input class="input" id="authConfirmPassword" type="password" autocomplete="new-password">
+      </div>
+      <button id="authSubmit" class="btn" type="submit">Login</button>
+      <div class="error" id="authError"></div>
+    </form>
+    <p class="foot">New here? <a href="./signup.html">Create an account</a></p>
+  </main>
+
+  <script src="./site-config.js"></script>
+  <script src="./firebase-config.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+  <script src="./firebase-auth-client.js"></script>
+  <script src="./auth-pages.js"></script>
+</body>
+</html>
