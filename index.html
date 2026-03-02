@@ -1,0 +1,2438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpeedUp — AI Study Companion</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #13131a;
+    --surface2: #1c1c27;
+    --surface3: #24243300;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --accent: #6ee7b7;
+    --accent2: #818cf8;
+    --accent3: #f472b6;
+    --accent4: #fbbf24;
+    --text: #f0f0f8;
+    --text2: #9898b0;
+    --text3: #5a5a72;
+    --danger: #f87171;
+    --success: #6ee7b7;
+    --warn: #fbbf24;
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    overflow-x: hidden;
+    min-height: 100vh;
+  }
+
+  /* LAYOUT */
+  .app { display: flex; height: 100vh; overflow: hidden; }
+
+  /* SIDEBAR */
+  .sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 24px 0;
+    z-index: 100;
+    position: relative;
+  }
+
+  .logo {
+    padding: 0 20px 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+
+  .logo-mark {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .logo-sub { font-size: 11px; color: var(--text3); letter-spacing: 1px; text-transform: uppercase; margin-top: 2px; }
+
+  .nav-section { padding: 8px 12px; }
+  .nav-label { font-size: 10px; color: var(--text3); letter-spacing: 1.5px; text-transform: uppercase; padding: 4px 8px 8px; }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    color: var(--text2);
+    font-size: 13.5px;
+    font-weight: 500;
+    transition: all 0.2s;
+    position: relative;
+    user-select: none;
+  }
+
+  .nav-item:hover { background: var(--surface2); color: var(--text); }
+  .nav-item.active { background: rgba(110,231,183,0.1); color: var(--accent); }
+  .nav-item.active .nav-icon { color: var(--accent); }
+
+  .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+  .nav-badge {
+    margin-left: auto;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 20px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .sidebar-bottom {
+    margin-top: auto;
+    padding: 16px 12px 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .user-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .user-card:hover { background: var(--surface2); }
+
+  .avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent2), var(--accent3));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Syne', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    color: white;
+    flex-shrink: 0;
+  }
+
+  .user-name { font-size: 13px; font-weight: 600; }
+  .user-level { font-size: 11px; color: var(--text3); }
+
+  /* MAIN */
+  .main {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: var(--bg);
+  }
+
+  .main::-webkit-scrollbar { width: 4px; }
+  .main::-webkit-scrollbar-track { background: transparent; }
+  .main::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+  /* PAGES */
+  .page { display: none; animation: fadeIn 0.3s ease; }
+  .page.active { display: block; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* TOP BAR */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(10,10,15,0.8);
+    backdrop-filter: blur(20px);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+
+  .topbar-title { font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 700; }
+  .topbar-sub { font-size: 12px; color: var(--text3); margin-top: 1px; }
+
+  .topbar-actions { display: flex; align-items: center; gap: 10px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    border-radius: 9px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s;
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  .btn-primary { background: var(--accent); color: var(--bg); }
+  .btn-primary:hover { background: #4dd4a0; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(110,231,183,0.3); }
+
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border2); }
+  .btn-secondary:hover { background: var(--surface); border-color: var(--border2); }
+
+  .btn-ghost { background: transparent; color: var(--text2); }
+  .btn-ghost:hover { background: var(--surface2); color: var(--text); }
+
+  /* CONTENT */
+  .content { padding: 28px 32px; }
+
+  /* CARDS */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: var(--border2); }
+
+  .card-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* GRID LAYOUTS */
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+  .grid-1-2 { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; }
+
+  .mb-16 { margin-bottom: 16px; }
+  .mb-20 { margin-bottom: 20px; }
+  .mb-24 { margin-bottom: 24px; }
+
+  /* STAT CARDS */
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .stat-card.green::before { background: linear-gradient(90deg, var(--accent), transparent); }
+  .stat-card.purple::before { background: linear-gradient(90deg, var(--accent2), transparent); }
+  .stat-card.pink::before { background: linear-gradient(90deg, var(--accent3), transparent); }
+  .stat-card.yellow::before { background: linear-gradient(90deg, var(--accent4), transparent); }
+
+  .stat-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+  .stat-value { font-family: 'Syne', sans-serif; font-size: 28px; font-weight: 800; line-height: 1; margin-bottom: 6px; }
+  .stat-change { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+  .stat-change.up { color: var(--accent); }
+  .stat-change.down { color: var(--danger); }
+  .stat-change.neutral { color: var(--text3); }
+
+  .stat-icon {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    font-size: 28px;
+    opacity: 0.15;
+  }
+
+  /* PROGRESS BARS */
+  .progress-wrap { margin-bottom: 14px; }
+  .progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .progress-label { font-size: 13px; font-weight: 500; }
+  .progress-val { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text2); }
+  .progress-bar { height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 3px; transition: width 1s ease; }
+  .fill-green { background: linear-gradient(90deg, var(--accent), #34d399); }
+  .fill-purple { background: linear-gradient(90deg, var(--accent2), #a78bfa); }
+  .fill-pink { background: linear-gradient(90deg, var(--accent3), #f9a8d4); }
+  .fill-yellow { background: linear-gradient(90deg, var(--accent4), #fcd34d); }
+  .fill-red { background: linear-gradient(90deg, var(--danger), #fca5a5); }
+
+  /* CHART PLACEHOLDER */
+  .chart-area {
+    position: relative;
+    height: 160px;
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    padding-bottom: 20px;
+  }
+
+  .chart-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; justify-content: flex-end; }
+
+  .chart-bar {
+    width: 100%;
+    border-radius: 4px 4px 0 0;
+    transition: height 0.8s cubic-bezier(0.4,0,0.2,1);
+    position: relative;
+    cursor: pointer;
+  }
+
+  .chart-bar:hover { opacity: 0.85; }
+
+  .chart-label { font-size: 10px; color: var(--text3); font-family: 'JetBrains Mono', monospace; }
+
+  /* SPARKLINE */
+  .sparkline { width: 100%; height: 50px; }
+
+  /* TOPIC CHIPS */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+  }
+
+  .chip-green { background: rgba(110,231,183,0.1); color: var(--accent); border-color: rgba(110,231,183,0.2); }
+  .chip-purple { background: rgba(129,140,248,0.1); color: var(--accent2); border-color: rgba(129,140,248,0.2); }
+  .chip-pink { background: rgba(244,114,182,0.1); color: var(--accent3); border-color: rgba(244,114,182,0.2); }
+  .chip-yellow { background: rgba(251,191,36,0.1); color: var(--accent4); border-color: rgba(251,191,36,0.2); }
+  .chip-red { background: rgba(248,113,113,0.1); color: var(--danger); border-color: rgba(248,113,113,0.2); }
+
+  /* ACTIVITY FEED */
+  .activity-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .activity-item:last-child { border-bottom: none; }
+
+  .activity-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-top: 6px;
+    flex-shrink: 0;
+  }
+
+  .activity-content { flex: 1; }
+  .activity-title { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+  .activity-meta { font-size: 11px; color: var(--text3); }
+
+  /* AI CHAT */
+  .chat-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    height: 500px;
+  }
+
+  .chat-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .ai-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+  }
+
+  .ai-status { font-size: 11px; color: var(--accent); display: flex; align-items: center; gap: 5px; }
+  .ai-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .chat-messages::-webkit-scrollbar { width: 3px; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border2); }
+
+  .msg {
+    display: flex;
+    gap: 10px;
+    animation: msgIn 0.3s ease;
+  }
+
+  @keyframes msgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  .msg.user { flex-direction: row-reverse; }
+
+  .msg-avatar {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .msg-ai-avatar { background: linear-gradient(135deg, var(--accent), var(--accent2)); }
+  .msg-user-avatar { background: linear-gradient(135deg, var(--accent2), var(--accent3)); }
+
+  .msg-bubble {
+    max-width: 75%;
+    padding: 10px 14px;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .msg.ai .msg-bubble {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+
+  .msg.user .msg-bubble {
+    background: rgba(110,231,183,0.12);
+    border: 1px solid rgba(110,231,183,0.2);
+    color: var(--text);
+    border-bottom-right-radius: 4px;
+  }
+
+  .msg-clarity {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .clarity-btn {
+    padding: 5px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid;
+    transition: all 0.2s;
+    background: transparent;
+  }
+
+  .clarity-yes { color: var(--accent); border-color: rgba(110,231,183,0.3); }
+  .clarity-yes:hover { background: rgba(110,231,183,0.1); }
+  .clarity-no { color: var(--danger); border-color: rgba(248,113,113,0.3); }
+  .clarity-no:hover { background: rgba(248,113,113,0.1); }
+
+  .chat-input-area {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .chat-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+    resize: none;
+  }
+
+  .chat-input:focus { border-color: var(--accent); }
+  .chat-input::placeholder { color: var(--text3); }
+
+  .send-btn {
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    background: var(--accent);
+    border: none;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--bg);
+    font-size: 16px;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .send-btn:hover { background: #4dd4a0; transform: scale(1.05); }
+
+  /* NOTES READER */
+  .notes-content {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .notes-toolbar {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface2);
+    flex-wrap: wrap;
+  }
+
+  .toolbar-btn {
+    padding: 5px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text2);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex; align-items: center; gap: 5px;
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  .toolbar-btn:hover { background: var(--surface2); color: var(--text); }
+  .toolbar-btn.active { background: rgba(110,231,183,0.1); color: var(--accent); border-color: rgba(110,231,183,0.3); }
+
+  .notes-body {
+    padding: 24px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .notes-body::-webkit-scrollbar { width: 3px; }
+  .notes-body::-webkit-scrollbar-thumb { background: var(--border2); }
+
+  .paragraph-wrap {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+    align-items: flex-start;
+  }
+
+  .para-checkbox {
+    width: 20px; height: 20px;
+    border: 1.5px solid var(--border2);
+    border-radius: 5px;
+    flex-shrink: 0;
+    margin-top: 2px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .para-checkbox.checked { background: var(--accent); border-color: var(--accent); color: var(--bg); font-size: 12px; }
+
+  .para-text {
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--text2);
+    cursor: text;
+    transition: color 0.2s;
+  }
+
+  .para-text:hover { color: var(--text); }
+  .para-text.highlighted { background: rgba(251,191,36,0.15); border-radius: 4px; padding: 0 2px; color: var(--text); }
+
+  .para-ai-box {
+    margin-top: 10px;
+    background: linear-gradient(135deg, rgba(110,231,183,0.05), rgba(129,140,248,0.05));
+    border: 1px solid rgba(110,231,183,0.15);
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 13px;
+    color: var(--text2);
+    animation: fadeIn 0.4s ease;
+    display: none;
+  }
+
+  .para-ai-box.visible { display: block; }
+
+  .para-ai-header {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; color: var(--accent); font-weight: 600;
+    text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+
+  /* TIMETABLE */
+  .timetable-grid {
+    display: grid;
+    grid-template-columns: 60px repeat(5, 1fr);
+    gap: 2px;
+  }
+
+  .tt-header {
+    background: var(--surface2);
+    padding: 8px;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-radius: 6px;
+  }
+
+  .tt-time {
+    padding: 4px 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text3);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .tt-slot {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    min-height: 40px;
+    padding: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .tt-slot:hover { border-color: var(--border2); }
+
+  .tt-event {
+    border-radius: 5px;
+    padding: 4px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    height: 100%;
+    display: flex;
+    align-items: center;
+  }
+
+  .tt-math { background: rgba(110,231,183,0.15); color: var(--accent); }
+  .tt-physics { background: rgba(129,140,248,0.15); color: var(--accent2); }
+  .tt-cs { background: rgba(244,114,182,0.15); color: var(--accent3); }
+  .tt-chem { background: rgba(251,191,36,0.15); color: var(--accent4); }
+  .tt-break { background: rgba(255,255,255,0.04); color: var(--text3); font-style: italic; }
+
+  /* HIGHLIGHTS DOC */
+  .highlight-item {
+    display: flex;
+    gap: 12px;
+    padding: 12px;
+    background: var(--surface2);
+    border-radius: 10px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    transition: border-color 0.2s;
+  }
+  .highlight-item:hover { border-color: var(--border2); }
+
+  .highlight-color {
+    width: 4px;
+    border-radius: 2px;
+    flex-shrink: 0;
+  }
+
+  .highlight-body { flex: 1; }
+  .highlight-text { font-size: 13px; line-height: 1.6; margin-bottom: 6px; color: var(--text); }
+  .highlight-context { font-size: 11px; color: var(--text3); }
+  .highlight-tags { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+
+  /* MASTERY RADAR */
+  .radar-wrap {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 10px;
+  }
+
+  /* EXAM UPLOAD */
+  .upload-zone {
+    border: 2px dashed var(--border2);
+    border-radius: var(--radius);
+    padding: 40px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    background: var(--surface2);
+  }
+
+  .upload-zone:hover {
+    border-color: var(--accent);
+    background: rgba(110,231,183,0.05);
+  }
+
+  .upload-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.6; }
+  .upload-title { font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .upload-sub { font-size: 13px; color: var(--text3); }
+
+  /* EXAM HISTORY */
+  .exam-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .exam-row:last-child { border-bottom: none; }
+
+  .exam-score {
+    width: 44px; height: 44px;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Syne', sans-serif;
+    font-size: 15px;
+    font-weight: 800;
+    flex-shrink: 0;
+  }
+
+  .score-a { background: rgba(110,231,183,0.15); color: var(--accent); }
+  .score-b { background: rgba(129,140,248,0.15); color: var(--accent2); }
+  .score-c { background: rgba(251,191,36,0.15); color: var(--accent4); }
+  .score-d { background: rgba(248,113,113,0.15); color: var(--danger); }
+
+  .exam-info { flex: 1; }
+  .exam-name { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  .exam-date { font-size: 11px; color: var(--text3); }
+  .exam-trend { font-size: 12px; display: flex; align-items: center; gap: 4px; }
+
+  /* RECOMMENDATION CARDS */
+  .rec-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 14px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .rec-card:hover { border-color: var(--accent); background: rgba(110,231,183,0.04); }
+
+  .rec-icon {
+    width: 36px; height: 36px;
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .rec-priority { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  .rec-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .rec-desc { font-size: 12px; color: var(--text3); line-height: 1.5; }
+  .rec-time { font-size: 11px; color: var(--text2); margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+
+  /* HEATMAP */
+  .heatmap { display: flex; gap: 3px; flex-wrap: wrap; }
+  .heat-cell {
+    width: 12px; height: 12px;
+    border-radius: 2px;
+    background: var(--surface2);
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+  .heat-cell:hover { transform: scale(1.3); }
+  .heat-1 { background: rgba(110,231,183,0.2); }
+  .heat-2 { background: rgba(110,231,183,0.4); }
+  .heat-3 { background: rgba(110,231,183,0.6); }
+  .heat-4 { background: rgba(110,231,183,0.85); }
+
+  /* MODAL */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 20px;
+    padding: 28px;
+    max-width: 480px;
+    width: 90%;
+    animation: fadeIn 0.3s ease;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.6);
+  }
+
+  .modal-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .modal-sub { font-size: 13px; color: var(--text3); margin-bottom: 20px; line-height: 1.6; }
+
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+  /* TOOLTIP */
+  [data-tip] { position: relative; }
+  [data-tip]:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    white-space: nowrap;
+    border: 1px solid var(--border2);
+    z-index: 100;
+    pointer-events: none;
+  }
+
+  /* TAGS INPUT */
+  .input {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .input:focus { border-color: var(--accent); }
+  .input::placeholder { color: var(--text3); }
+
+  .select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+  }
+  .select:focus { border-color: var(--accent); }
+
+  .form-group { margin-bottom: 14px; }
+  .form-label { font-size: 12px; color: var(--text3); margin-bottom: 6px; display: block; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* RESPONSIBLE AI BANNER */
+  .ai-trust-banner {
+    background: linear-gradient(135deg, rgba(129,140,248,0.08), rgba(110,231,183,0.05));
+    border: 1px solid rgba(129,140,248,0.2);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+
+  .trust-icon { font-size: 24px; }
+  .trust-text { flex: 1; }
+  .trust-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+  .trust-sub { font-size: 12px; color: var(--text3); }
+
+  /* OVERRIDE FLAG */
+  .override-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .override-row:last-child { border-bottom: none; }
+
+  .override-label { font-size: 13px; }
+  .override-meta { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+  .toggle {
+    width: 40px; height: 22px;
+    background: var(--surface2);
+    border-radius: 11px;
+    position: relative;
+    cursor: pointer;
+    border: 1px solid var(--border2);
+    transition: background 0.3s;
+  }
+
+  .toggle.on { background: var(--accent); border-color: var(--accent); }
+
+  .toggle::after {
+    content: '';
+    position: absolute;
+    top: 3px; left: 3px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: white;
+    transition: left 0.3s;
+  }
+
+  .toggle.on::after { left: 21px; }
+
+  /* LOADING SPINNER */
+  .spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    display: inline-block;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* DONUT CHART */
+  .donut-wrap { position: relative; width: 120px; height: 120px; }
+  .donut-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  .donut-val { font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 800; }
+  .donut-sub { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* VOICE BUTTON */
+  .voice-btn {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent2), var(--accent3));
+    border: none;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+    color: white;
+    transition: all 0.3s;
+    box-shadow: 0 4px 20px rgba(129,140,248,0.4);
+    animation: voiceGlow 2s ease-in-out infinite;
+  }
+
+  @keyframes voiceGlow {
+    0%, 100% { box-shadow: 0 4px 20px rgba(129,140,248,0.4); }
+    50% { box-shadow: 0 4px 32px rgba(129,140,248,0.7); transform: scale(1.03); }
+  }
+
+  .voice-btn:hover { transform: scale(1.08); }
+  .voice-btn.listening { background: linear-gradient(135deg, var(--accent3), var(--danger)); animation: voiceListening 0.8s ease-in-out infinite; }
+
+  @keyframes voiceListening {
+    0%, 100% { transform: scale(1); box-shadow: 0 4px 20px rgba(244,114,182,0.5); }
+    50% { transform: scale(1.06); box-shadow: 0 4px 40px rgba(244,114,182,0.9); }
+  }
+
+  /* INSIGHT CARD */
+  .insight-card {
+    background: linear-gradient(135deg, rgba(110,231,183,0.08), rgba(129,140,248,0.05));
+    border: 1px solid rgba(110,231,183,0.15);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 12px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .insight-card::after {
+    content: '✦';
+    position: absolute;
+    top: 12px; right: 12px;
+    color: var(--accent);
+    opacity: 0.5;
+    font-size: 14px;
+  }
+
+  .insight-type { font-size: 10px; color: var(--accent); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .insight-text { font-size: 13px; line-height: 1.6; }
+  .insight-action {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 5px;
+  }
+
+  /* FEEDBACK ROW */
+  .feedback-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+
+  .feedback-label { font-size: 11px; color: var(--text3); }
+
+  .feedback-btn {
+    width: 28px; height: 28px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text3);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+
+  .feedback-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--border2); }
+  .feedback-btn.active-up { background: rgba(110,231,183,0.1); color: var(--accent); border-color: rgba(110,231,183,0.3); }
+  .feedback-btn.active-down { background: rgba(248,113,113,0.1); color: var(--danger); border-color: rgba(248,113,113,0.3); }
+
+  /* SECTION DIVIDER */
+  .section-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .section-title { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; }
+  .section-link { font-size: 12px; color: var(--accent); cursor: pointer; }
+
+  /* GLOW ACCENTS */
+  .glow-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    display: inline-block;
+    animation: pulse 2s infinite;
+  }
+
+  /* SCROLL INDICATOR */
+  .scroll-progress {
+    height: 2px;
+    background: var(--border);
+    position: relative;
+    overflow: hidden;
+    border-radius: 1px;
+    margin-bottom: 2px;
+  }
+
+  .scroll-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width 0.3s;
+  }
+
+  /* ================================================
+     RESPONSIVE ADJUSTMENTS
+  ================================================ */
+  @media (max-width: 1200px) {
+    .grid-4 { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-mark">⚡ SpeedUp</div>
+      <div class="logo-sub">AI Study Companion</div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">Main</div>
+      <div class="nav-item active" onclick="navigate('dashboard')">
+        <span class="nav-icon">⬡</span> Dashboard
+      </div>
+      <div class="nav-item" onclick="navigate('notes')">
+        <span class="nav-icon">📄</span> Active Reading
+      </div>
+      <div class="nav-item" onclick="navigate('highlights')">
+        <span class="nav-icon">🖊</span> My Highlights
+        <span class="nav-badge">12</span>
+      </div>
+      <div class="nav-item" onclick="navigate('tutor')">
+        <span class="nav-icon">🤖</span> AI Tutor
+        <div class="glow-dot" style="margin-left:auto;"></div>
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">Planning</div>
+      <div class="nav-item" onclick="navigate('timetable')">
+        <span class="nav-icon">📅</span> Study Timetable
+      </div>
+      <div class="nav-item" onclick="navigate('practice')">
+        <span class="nav-icon">📝</span> Practice Papers
+      </div>
+    </div>
+
+    <div class="nav-section">
+      <div class="nav-label">Insights</div>
+      <div class="nav-item" onclick="navigate('progress')">
+        <span class="nav-icon">📈</span> Progress & Mastery
+      </div>
+      <div class="nav-item" onclick="navigate('recommendations')">
+        <span class="nav-icon">🎯</span> Recommendations
+        <span class="nav-badge" style="background:var(--accent3);color:white;">3</span>
+      </div>
+      <div class="nav-item" onclick="navigate('responsible')">
+        <span class="nav-icon">🛡</span> AI Transparency
+      </div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <div class="user-card">
+        <div class="avatar">AK</div>
+        <div>
+          <div class="user-name">Alex Kim</div>
+          <div class="user-level">Level 7 · Computer Science</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="main">
+
+    <!-- ============================
+         PAGE: DASHBOARD
+    ============================= -->
+    <div id="page-dashboard" class="page active">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">Good morning, Alex 👋</div>
+          <div class="topbar-sub">Monday, March 2 · Finals in 18 days</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" onclick="navigate('timetable')">📅 Today's Plan</button>
+          <button class="btn btn-primary" onclick="openModal('focus')">▶ Start Focus Session</button>
+        </div>
+      </div>
+
+      <div class="content">
+
+        <!-- AI TRUST BANNER -->
+        <div class="ai-trust-banner">
+          <div class="trust-icon">🛡</div>
+          <div class="trust-text">
+            <div class="trust-title">Responsible AI — All recommendations are explainable</div>
+            <div class="trust-sub">SpeedUp shows you exactly why each insight is generated. You can always override, flag, or dismiss any recommendation.</div>
+          </div>
+          <button class="btn btn-ghost" onclick="navigate('responsible')">Learn more →</button>
+        </div>
+
+        <!-- STAT CARDS -->
+        <div class="grid-4 mb-20">
+          <div class="stat-card green">
+            <div class="stat-icon">🔥</div>
+            <div class="stat-label">Study Streak</div>
+            <div class="stat-value" style="color:var(--accent)">14d</div>
+            <div class="stat-change up">↑ Personal best</div>
+          </div>
+          <div class="stat-card purple">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-label">Overall Mastery</div>
+            <div class="stat-value" style="color:var(--accent2)">72%</div>
+            <div class="stat-change up">↑ +4% this week</div>
+          </div>
+          <div class="stat-card pink">
+            <div class="stat-icon">🎯</div>
+            <div class="stat-label">Topics Reviewed</div>
+            <div class="stat-value" style="color:var(--accent3)">34</div>
+            <div class="stat-change neutral">→ 6 pending</div>
+          </div>
+          <div class="stat-card yellow">
+            <div class="stat-icon">⏱</div>
+            <div class="stat-label">Study Time Today</div>
+            <div class="stat-value" style="color:var(--accent4)">2h 14m</div>
+            <div class="stat-change down">↓ Below target</div>
+          </div>
+        </div>
+
+        <div class="grid-2-1 mb-20">
+          <!-- ACTIVITY + WEEKLY CHART -->
+          <div>
+            <div class="card mb-16">
+              <div class="card-title">
+                Weekly Study Activity
+                <span class="chip chip-green" style="font-size:11px;">This Week</span>
+              </div>
+              <div class="chart-area" id="weeklyChart"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Subject Mastery Overview</div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Data Structures</span><span class="progress-val">84%</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-green" style="width:84%"></div></div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Algorithms</span><span class="progress-val">67%</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-purple" style="width:67%"></div></div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Linear Algebra</span><span class="progress-val">52%</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-yellow" style="width:52%"></div></div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Operating Systems</span><span class="progress-val">78%</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-pink" style="width:78%"></div></div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Discrete Mathematics</span><span class="progress-val">41%</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-red" style="width:41%"></div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT COL -->
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="card">
+              <div class="card-title">AI Insights</div>
+              <div class="insight-card">
+                <div class="insight-type">Knowledge Gap Detected</div>
+                <div class="insight-text">You've answered 7/10 Discrete Math questions incorrectly across 3 sessions — this is a genuine gap, not careless errors.</div>
+                <div class="insight-action" onclick="navigate('recommendations')">→ Get study plan</div>
+                <div class="feedback-row">
+                  <span class="feedback-label">Accurate?</span>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')" data-tip="Agree">👍</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')" data-tip="Disagree">👎</button>
+                </div>
+              </div>
+              <div class="insight-card" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),rgba(244,114,182,0.05));border-color:rgba(251,191,36,0.15);">
+                <div class="insight-type" style="color:var(--accent4)">Optimal Study Window</div>
+                <div class="insight-text">Based on your past 30 sessions, you perform best on weekdays 9–11 AM and 8–10 PM. Today's 3 PM slot may be suboptimal.</div>
+                <div class="insight-action" style="color:var(--accent4)" onclick="openModal('reschedule')">→ Reschedule session</div>
+                <div class="feedback-row">
+                  <span class="feedback-label">Accurate?</span>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')">👍</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')">👎</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Recent Activity</div>
+              <div class="activity-item">
+                <div class="activity-dot" style="background:var(--accent)"></div>
+                <div class="activity-content">
+                  <div class="activity-title">Completed Algorithms Quiz · 8/10</div>
+                  <div class="activity-meta">2 hours ago · 28 minutes</div>
+                </div>
+              </div>
+              <div class="activity-item">
+                <div class="activity-dot" style="background:var(--accent2)"></div>
+                <div class="activity-content">
+                  <div class="activity-title">Read Chapter 5: Recursion</div>
+                  <div class="activity-meta">Yesterday · 3 paragraphs explained</div>
+                </div>
+              </div>
+              <div class="activity-item">
+                <div class="activity-dot" style="background:var(--accent4)"></div>
+                <div class="activity-content">
+                  <div class="activity-title">Highlighted 4 concepts in Linear Algebra</div>
+                  <div class="activity-meta">Yesterday · Auto-saved to Highlights</div>
+                </div>
+              </div>
+              <div class="activity-item">
+                <div class="activity-dot" style="background:var(--accent3)"></div>
+                <div class="activity-content">
+                  <div class="activity-title">Uploaded Mid-term Past Paper 2023</div>
+                  <div class="activity-meta">2 days ago · AI analyzed 24 questions</div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- HEATMAP -->
+        <div class="card">
+          <div class="card-title">Study Heatmap — Past 16 Weeks
+            <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text3);text-transform:none;font-weight:400;">
+              <span>Less</span>
+              <div class="heat-cell"></div>
+              <div class="heat-cell heat-1"></div>
+              <div class="heat-cell heat-2"></div>
+              <div class="heat-cell heat-3"></div>
+              <div class="heat-cell heat-4"></div>
+              <span>More</span>
+            </div>
+          </div>
+          <div class="heatmap" id="heatmap"></div>
+        </div>
+
+      </div>
+    </div><!-- END DASHBOARD -->
+
+
+    <!-- ============================
+         PAGE: ACTIVE READING / NOTES
+    ============================= -->
+    <div id="page-notes" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">Active Reading</div>
+          <div class="topbar-sub">Algorithms — Chapter 7: Dynamic Programming</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost" onclick="startVoice()">🔊 Audio Mode</button>
+          <button class="btn btn-secondary" onclick="navigate('highlights')">📌 View Highlights</button>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="grid-2-1">
+          <div>
+            <div class="notes-content">
+              <div class="notes-toolbar">
+                <button class="toolbar-btn active" id="tb-read">📖 Read Mode</button>
+                <button class="toolbar-btn" id="tb-highlight" onclick="toggleHighlightMode()">🖊 Highlight</button>
+                <button class="toolbar-btn" id="tb-visual" onclick="openModal('visual')">🎨 Visualize</button>
+                <button class="toolbar-btn" onclick="startVoice()">🔊 Audio Explain</button>
+                <button class="toolbar-btn" onclick="openModal('own-words')">✏️ My Own Words</button>
+              </div>
+              <div class="notes-body" id="notesBody">
+
+                <div style="margin-bottom:24px;">
+                  <h2 style="font-family:'Syne',sans-serif;font-size:18px;font-weight:700;margin-bottom:4px;">7.1 Introduction to Dynamic Programming</h2>
+                  <p style="font-size:12px;color:var(--text3);">Estimated read: 8 min · 5 paragraphs</p>
+                </div>
+
+                <!-- PARAGRAPH 1 -->
+                <div class="paragraph-wrap" id="para-1">
+                  <div class="para-checkbox" onclick="explainPara(1)" data-tip="Click to get AI explanation">✓</div>
+                  <div style="flex:1;">
+                    <p class="para-text">Dynamic Programming (DP) is a method for solving complex problems by breaking them down into simpler subproblems. It is applicable when subproblems overlap and the solution to each subproblem can be computed once and stored for future use, avoiding redundant computations. This technique was pioneered by Richard Bellman in the 1950s.</p>
+                    <div class="para-ai-box visible" id="ai-box-1">
+                      <div class="para-ai-header">🤖 SpeedUp AI · Explanation</div>
+                      <p style="margin-bottom:10px;">Think of DP like a <strong style="color:var(--accent)">smart notebook</strong>. Instead of solving the same math problem over and over (like Fibonacci), you write down the answer the first time and look it up later. <br><br>
+                      <strong>Real example:</strong> Finding the cheapest flight route. Instead of recalculating every possible path from scratch, DP stores the cheapest known cost to each intermediate city.</p>
+                      <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">📌 Connected to: Memoization, Recursion (Ch.5), Bellman-Ford Algorithm</div>
+                      <div class="msg-clarity">
+                        <button class="clarity-btn clarity-yes" onclick="markClear(1, true)">✓ Clear!</button>
+                        <button class="clarity-btn clarity-no" onclick="markClear(1, false)">✗ Still confused</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- PARAGRAPH 2 -->
+                <div class="paragraph-wrap" id="para-2">
+                  <div class="para-checkbox" onclick="explainPara(2)" data-tip="Tick to get AI explanation">+</div>
+                  <div style="flex:1;">
+                    <p class="para-text">The two key properties that make a problem suitable for dynamic programming are <em>optimal substructure</em> and <em>overlapping subproblems</em>. Optimal substructure means the optimal solution to the problem can be constructed from optimal solutions of its subproblems. Overlapping subproblems means the same subproblems are encountered multiple times during the computation.</p>
+                    <div class="para-ai-box" id="ai-box-2"></div>
+                  </div>
+                </div>
+
+                <!-- PARAGRAPH 3 -->
+                <div class="paragraph-wrap" id="para-3">
+                  <div class="para-checkbox" onclick="explainPara(3)" data-tip="Tick to get AI explanation">+</div>
+                  <div style="flex:1;">
+                    <p class="para-text">There are two main approaches to implementing dynamic programming: <em>top-down with memoization</em> and <em>bottom-up tabulation</em>. In the top-down approach, the problem is solved recursively, but results of subproblems are cached (memoized). In the bottom-up approach, subproblems are solved iteratively, starting from the smallest and building up.</p>
+                    <div class="para-ai-box" id="ai-box-3"></div>
+                  </div>
+                </div>
+
+                <!-- PARAGRAPH 4 -->
+                <div class="paragraph-wrap" id="para-4">
+                  <div class="para-checkbox" onclick="explainPara(4)" data-tip="Tick to get AI explanation">+</div>
+                  <div style="flex:1;">
+                    <p class="para-text">The time complexity of DP solutions depends on the number of unique subproblems and the time taken to solve each. For instance, the classic 0/1 Knapsack problem has O(nW) complexity where n is the number of items and W is the maximum weight capacity. Space complexity can often be optimized by only storing relevant rows of the DP table.</p>
+                    <div class="para-ai-box" id="ai-box-4"></div>
+                  </div>
+                </div>
+
+                <!-- PARAGRAPH 5 -->
+                <div class="paragraph-wrap" id="para-5">
+                  <div class="para-checkbox" onclick="explainPara(5)" data-tip="Tick to get AI explanation">+</div>
+                  <div style="flex:1;">
+                    <p class="para-text">Classic DP problems include the Fibonacci sequence, Longest Common Subsequence (LCS), Matrix Chain Multiplication, Coin Change problem, and Shortest Path algorithms like Bellman-Ford. Mastering these canonical problems provides a framework for recognizing and solving new DP problems in competitive programming and technical interviews.</p>
+                    <div class="para-ai-box" id="ai-box-5"></div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+          <!-- SIDEBAR: READING PROGRESS -->
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="card">
+              <div class="card-title">Reading Progress</div>
+              <div style="text-align:center;padding:10px 0;">
+                <div class="donut-wrap" style="margin:0 auto 12px;">
+                  <svg width="120" height="120" viewBox="0 0 120 120">
+                    <circle cx="60" cy="60" r="50" fill="none" stroke="var(--surface2)" stroke-width="10"/>
+                    <circle cx="60" cy="60" r="50" fill="none" stroke="var(--accent)" stroke-width="10"
+                      stroke-dasharray="314" stroke-dashoffset="220" stroke-linecap="round"
+                      transform="rotate(-90 60 60)" style="transition:stroke-dashoffset 1s"/>
+                  </svg>
+                  <div class="donut-label">
+                    <div class="donut-val" style="color:var(--accent)">30%</div>
+                    <div class="donut-sub">Complete</div>
+                  </div>
+                </div>
+                <div style="font-size:12px;color:var(--text3);">1 of 5 paragraphs explained</div>
+              </div>
+              <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+                <div style="font-size:12px;color:var(--text3);margin-bottom:8px;">Comprehension Status</div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                  <span class="chip chip-green">✓ Para 1 — Clear</span>
+                  <span class="chip" style="color:var(--text3)">⬡ Para 2</span>
+                  <span class="chip" style="color:var(--text3)">⬡ Para 3</span>
+                  <span class="chip" style="color:var(--text3)">⬡ Para 4</span>
+                  <span class="chip" style="color:var(--text3)">⬡ Para 5</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Voice Assistant</div>
+              <div style="text-align:center;padding:16px 0;">
+                <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()">🔊</button>
+                <div style="margin-top:14px;font-size:13px;color:var(--text2)" id="voiceStatus">Tap to listen to AI audio explanation</div>
+                <div style="margin-top:8px;font-size:11px;color:var(--text3);">Plays explanation of last ticked paragraph</div>
+              </div>
+              <div style="border-top:1px solid var(--border);padding-top:12px;">
+                <div style="font-size:12px;color:var(--text3);margin-bottom:6px;">Voice Settings</div>
+                <div class="override-row">
+                  <div><div class="override-label" style="font-size:12px;">Slow mode</div></div>
+                  <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+                </div>
+                <div class="override-row">
+                  <div><div class="override-label" style="font-size:12px;">Auto-play next paragraph</div></div>
+                  <div class="toggle" onclick="this.classList.toggle('on')"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Related Topics</div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                <span class="chip chip-purple">Recursion</span>
+                <span class="chip chip-green">Memoization</span>
+                <span class="chip chip-yellow">Graph Theory</span>
+                <span class="chip chip-pink">Greedy Algorithms</span>
+                <span class="chip chip-green">Tree DP</span>
+                <span class="chip chip-purple">Bellman-Ford</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- END NOTES -->
+
+
+    <!-- ============================
+         PAGE: HIGHLIGHTS
+    ============================= -->
+    <div id="page-highlights" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">My Highlights</div>
+          <div class="topbar-sub">12 saved · Auto-organized by topic</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" onclick="openModal('export')">⬇ Export as PDF</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="grid-2-1">
+          <div>
+            <div class="section-head">
+              <div class="section-title">All Highlights</div>
+              <div style="display:flex;gap:6px;">
+                <span class="chip chip-green" style="cursor:pointer;">Algorithms</span>
+                <span class="chip chip-purple" style="cursor:pointer;">Linear Algebra</span>
+                <span class="chip chip-yellow" style="cursor:pointer;">Discrete Math</span>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent4)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"Optimal substructure means the optimal solution to the problem can be constructed from optimal solutions of its subproblems."</div>
+                <div class="highlight-context">Algorithms · Ch.7 Dynamic Programming · 2 hours ago</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-purple" style="font-size:11px;">DP</span>
+                  <span class="chip chip-green" style="font-size:11px;">Key Concept</span>
+                </div>
+                <div class="para-ai-box visible" style="margin-top:10px;">
+                  <div class="para-ai-header">🤖 Auto Context</div>
+                  <div style="font-size:12px;color:var(--text2);line-height:1.7;">This is one of the two required conditions for DP. It means you can build the "big answer" from smaller answers — like how the cheapest journey A→C is built from cheapest A→B + cheapest B→C.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent2)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"The time complexity depends on the number of unique subproblems and the time taken to solve each."</div>
+                <div class="highlight-context">Algorithms · Ch.7 Dynamic Programming · 2 hours ago</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-purple" style="font-size:11px;">Time Complexity</span>
+                  <span class="chip chip-pink" style="font-size:11px;">Exam Likely</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"Eigenvalues are scalar values λ such that for a matrix A, there exists a non-zero vector v where Av = λv."</div>
+                <div class="highlight-context">Linear Algebra · Ch.4 Eigenvalues · Yesterday</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-green" style="font-size:11px;">Eigenvalues</span>
+                  <span class="chip chip-yellow" style="font-size:11px;">Formula</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent3)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"A graph is bipartite if and only if it contains no odd-length cycles."</div>
+                <div class="highlight-context">Discrete Math · Ch.10 Graph Theory · 2 days ago</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-pink" style="font-size:11px;">Graph Theory</span>
+                  <span class="chip chip-red" style="font-size:11px;">Weak Area</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent4)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"The Master Theorem provides a recipe for solving recurrences of the form T(n) = aT(n/b) + f(n)."</div>
+                <div class="highlight-context">Algorithms · Ch.3 Recurrences · 3 days ago</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-yellow" style="font-size:11px;">Master Theorem</span>
+                  <span class="chip chip-green" style="font-size:11px;">Formula</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="card">
+              <div class="card-title">Highlights Summary</div>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span>Total highlights</span><span style="font-family:'JetBrains Mono',monospace;color:var(--accent)">12</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span>With AI context</span><span style="font-family:'JetBrains Mono',monospace;color:var(--accent2)">8</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span>Marked weak area</span><span style="font-family:'JetBrains Mono',monospace;color:var(--danger)">3</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;">
+                  <span>Marked exam likely</span><span style="font-family:'JetBrains Mono',monospace;color:var(--accent4)">5</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Quick Flashcards</div>
+              <div style="background:var(--surface2);border:1px solid var(--border2);border-radius:12px;padding:20px;text-align:center;min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;" id="flashcard">
+                <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Algorithms · Flashcard 1/5</div>
+                <div style="font-size:15px;font-weight:600;line-height:1.5;" id="flashcard-q">What are the two key properties needed for a problem to be solvable with Dynamic Programming?</div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="flipCard()">🔄 Reveal Answer</button>
+                <button class="btn btn-ghost" onclick="nextCard()">→ Next</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Topics Coverage</div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Algorithms</span><span class="progress-val">7</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-purple" style="width:58%"></div></div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Linear Algebra</span><span class="progress-val">3</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-green" style="width:25%"></div></div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Discrete Math</span><span class="progress-val">2</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-pink" style="width:17%"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- END HIGHLIGHTS -->
+
+
+    <!-- ============================
+         PAGE: AI TUTOR
+    ============================= -->
+    <div id="page-tutor" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">AI Tutor</div>
+          <div class="topbar-sub">Doubt resolution · Explanations · Simplification</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost">📋 Conversation History</button>
+          <button class="btn btn-secondary" onclick="openModal('visual')">🎨 Visualize Concept</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="grid-2-1">
+          <div>
+            <div class="chat-container">
+              <div class="chat-header">
+                <div class="ai-avatar">🤖</div>
+                <div>
+                  <div style="font-size:13px;font-weight:600;">SpeedUp AI</div>
+                  <div class="ai-status">Online · Ready to help</div>
+                </div>
+                <div style="margin-left:auto;display:flex;gap:8px;">
+                  <button class="toolbar-btn" onclick="startVoice()">🔊</button>
+                  <button class="toolbar-btn" data-tip="Clear chat">🗑</button>
+                </div>
+              </div>
+
+              <div class="chat-messages" id="chatMessages">
+                <div class="msg ai">
+                  <div class="msg-avatar msg-ai-avatar">🤖</div>
+                  <div>
+                    <div class="msg-bubble">
+                      Hi Alex! I'm your SpeedUp AI Tutor. I can see you're currently studying <strong>Dynamic Programming</strong>. What would you like me to explain? I'll always tell you <em>why</em> I'm giving each explanation so you can trust my reasoning.
+                    </div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:4px;padding-left:4px;">10:42 AM</div>
+                  </div>
+                </div>
+
+                <div class="msg user">
+                  <div class="msg-avatar msg-user-avatar">AK</div>
+                  <div>
+                    <div class="msg-bubble">I don't understand the difference between memoization and tabulation</div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:4px;text-align:right;padding-right:4px;">10:43 AM</div>
+                  </div>
+                </div>
+
+                <div class="msg ai">
+                  <div class="msg-avatar msg-ai-avatar">🤖</div>
+                  <div>
+                    <div class="msg-bubble">
+                      <div style="font-size:11px;color:var(--accent);margin-bottom:8px;font-weight:600;">📊 Why I'm explaining this way: Based on your reading history, you learn well with analogies (92% clarity rate on analogy-based explanations)</div>
+                      <strong>Think of a recipe book:</strong><br><br>
+                      🗒 <strong>Memoization (Top-Down)</strong> = You start cooking a dish. Every time you figure out a sub-step, you write it in the book. Next time you need that step, you look it up instead of re-figuring.<br><br>
+                      📋 <strong>Tabulation (Bottom-Up)</strong> = Before cooking anything, you fill in every possible sub-step in a big table, then use that table when you need to cook.<br><br>
+                      <strong>Key difference:</strong> Memo only computes what's needed. Tabulation computes everything upfront.
+                    </div>
+                    <div class="msg-clarity">
+                      <button class="clarity-btn clarity-yes" onclick="sendClarityMsg(true)">✓ That's clear!</button>
+                      <button class="clarity-btn clarity-no" onclick="sendClarityMsg(false)">✗ Still confused</button>
+                    </div>
+                    <div style="font-size:11px;color:var(--text3);margin-top:6px;padding-left:4px;">10:43 AM</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="chat-input-area">
+                <textarea class="chat-input" id="chatInput" placeholder="Ask any doubt about your notes…" rows="1" onkeydown="handleChatKey(event)"></textarea>
+                <button class="send-btn" onclick="sendMessage()">➤</button>
+                <button class="toolbar-btn" onclick="startVoice()" style="height:36px;padding:0 10px;">🎙</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SIDEBAR -->
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="card">
+              <div class="card-title">Tutor Context</div>
+              <div style="font-size:12px;color:var(--text3);margin-bottom:10px;">The AI uses this context to personalize explanations</div>
+              <div class="override-row">
+                <div><div class="override-label" style="font-size:12px;">Current topic</div><div class="override-meta">Dynamic Programming</div></div>
+              </div>
+              <div class="override-row">
+                <div><div class="override-label" style="font-size:12px;">Learning style</div><div class="override-meta">Analogy-based · Visual</div></div>
+              </div>
+              <div class="override-row">
+                <div><div class="override-label" style="font-size:12px;">Mastery level</div><div class="override-meta">Intermediate (67%)</div></div>
+              </div>
+              <div class="override-row">
+                <div><div class="override-label" style="font-size:12px;">Weak areas</div><div class="override-meta">DP recurrences, LCS</div></div>
+              </div>
+              <button class="btn btn-secondary" style="width:100%;margin-top:12px;" onclick="openModal('context-override')">✏️ Override Context</button>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Quick Questions</div>
+              <div style="display:flex;flex-direction:column;gap:8px;" id="quickQuestions">
+                <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="quickAsk('Explain the Longest Common Subsequence problem')">
+                  → Explain LCS problem
+                </div>
+                <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="quickAsk('What is the Coin Change DP problem?')">
+                  → What is Coin Change DP?
+                </div>
+                <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="quickAsk('How does the 0/1 Knapsack DP work?')">
+                  → How does 0/1 Knapsack work?
+                </div>
+                <div style="padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;font-size:12px;cursor:pointer;transition:border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="quickAsk('Give me a simpler explanation of optimal substructure')">
+                  → Simplify optimal substructure
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Tutor Stats</div>
+              <div style="display:flex;flex-direction:column;gap:8px;font-size:13px;">
+                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span style="color:var(--text3)">Doubts resolved today</span><span style="color:var(--accent);font-family:'JetBrains Mono',monospace;">7</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span style="color:var(--text3)">Avg clarity rate</span><span style="color:var(--accent2);font-family:'JetBrains Mono',monospace;">89%</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;padding:6px 0;">
+                  <span style="color:var(--text3)">Simplifications needed</span><span style="color:var(--accent4);font-family:'JetBrains Mono',monospace;">2</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- END TUTOR -->
+
+
+    <!-- ============================
+         PAGE: TIMETABLE
+    ============================= -->
+    <div id="page-timetable" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">Study Timetable</div>
+          <div class="topbar-sub">Personalized to your peak productivity hours</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" onclick="openModal('add-session')">+ Add Session</button>
+          <button class="btn btn-primary">⚡ AI Optimize Schedule</button>
+        </div>
+      </div>
+      <div class="content">
+
+        <div class="ai-trust-banner" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),rgba(244,114,182,0.05));border-color:rgba(251,191,36,0.2);">
+          <div class="trust-icon">⚡</div>
+          <div class="trust-text">
+            <div class="trust-title" style="color:var(--accent4)">Peak Productivity: 9–11 AM & 8–10 PM</div>
+            <div class="trust-sub">AI detected from 45 past study sessions. Your focus score is 34% higher during these windows. Schedule adjusted accordingly.</div>
+          </div>
+          <div class="feedback-btn" onclick="toggleFeedback(this,'up')" style="width:auto;padding:4px 10px;">👍 Correct</div>
+          <div class="feedback-btn" onclick="openModal('productivity-override')" style="width:auto;padding:4px 10px;margin-left:6px;">✏️ Override</div>
+        </div>
+
+        <div class="card mb-20">
+          <div class="card-title">
+            Week of March 2 – 7
+            <div style="display:flex;gap:8px;text-transform:none;font-weight:400;font-size:12px;">
+              <span class="chip chip-green">📗 Math</span>
+              <span class="chip chip-purple">📘 Algorithms</span>
+              <span class="chip chip-pink">💻 OS</span>
+              <span class="chip chip-yellow">⚗️ Discrete</span>
+            </div>
+          </div>
+          <div style="overflow-x:auto;">
+            <div class="timetable-grid" style="min-width:600px;">
+              <div class="tt-header"></div>
+              <div class="tt-header">MON 3</div>
+              <div class="tt-header">TUE 4</div>
+              <div class="tt-header">WED 5</div>
+              <div class="tt-header">THU 6</div>
+              <div class="tt-header">FRI 7</div>
+
+              <!-- 9 AM -->
+              <div class="tt-time">9:00</div>
+              <div class="tt-slot"><div class="tt-event tt-math">📗 Lin. Algebra</div></div>
+              <div class="tt-slot"><div class="tt-event tt-physics">📘 Algorithms</div></div>
+              <div class="tt-slot"><div class="tt-event tt-math">📗 Lin. Algebra</div></div>
+              <div class="tt-slot"><div class="tt-event tt-cs">💻 OS Review</div></div>
+              <div class="tt-slot"></div>
+
+              <!-- 10 AM -->
+              <div class="tt-time">10:00</div>
+              <div class="tt-slot"><div class="tt-event tt-math">📗 Lin. Algebra</div></div>
+              <div class="tt-slot"><div class="tt-event tt-physics">📘 Algorithms</div></div>
+              <div class="tt-slot"><div class="tt-event tt-chem">⚗️ Discrete Math</div></div>
+              <div class="tt-slot"><div class="tt-event tt-cs">💻 OS Review</div></div>
+              <div class="tt-slot"></div>
+
+              <!-- 11 AM -->
+              <div class="tt-time">11:00</div>
+              <div class="tt-slot"><div class="tt-event tt-break">☕ Break</div></div>
+              <div class="tt-slot"><div class="tt-event tt-break">☕ Break</div></div>
+              <div class="tt-slot"><div class="tt-event tt-chem">⚗️ Discrete Math</div></div>
+              <div class="tt-slot"><div class="tt-event tt-break">☕ Break</div></div>
+              <div class="tt-slot"></div>
+
+              <!-- 2 PM -->
+              <div class="tt-time">14:00</div>
+              <div class="tt-slot"></div>
+              <div class="tt-slot"></div>
+              <div class="tt-slot"><div class="tt-event tt-physics">📘 Practice Paper</div></div>
+              <div class="tt-slot"></div>
+              <div class="tt-slot"><div class="tt-event tt-chem">⚗️ Discrete Math</div></div>
+
+              <!-- 8 PM -->
+              <div class="tt-time">20:00</div>
+              <div class="tt-slot"><div class="tt-event tt-physics">📘 DP Chapter</div></div>
+              <div class="tt-slot"><div class="tt-event tt-cs">💻 Processes</div></div>
+              <div class="tt-slot"></div>
+              <div class="tt-slot"><div class="tt-event tt-physics">📘 Algorithms</div></div>
+              <div class="tt-slot"></div>
+
+              <!-- 9 PM -->
+              <div class="tt-time">21:00</div>
+              <div class="tt-slot"><div class="tt-event tt-physics">📘 DP Chapter</div></div>
+              <div class="tt-slot"><div class="tt-event tt-cs">💻 Processes</div></div>
+              <div class="tt-slot"><div class="tt-event tt-math">📗 Revision</div></div>
+              <div class="tt-slot"><div class="tt-event tt-physics">📘 Algorithms</div></div>
+              <div class="tt-slot"><div class="tt-event tt-chem">⚗️ Review</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid-3">
+          <div class="card">
+            <div class="card-title">Today's Agenda · Mon Mar 3</div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(110,231,183,0.07);border:1px solid rgba(110,231,183,0.15);border-radius:9px;">
+                <div style="font-size:20px;">📗</div>
+                <div>
+                  <div style="font-size:13px;font-weight:600;">Linear Algebra</div>
+                  <div style="font-size:11px;color:var(--text3);">9:00 – 11:00 AM · 2 hours</div>
+                </div>
+                <div style="margin-left:auto;">
+                  <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px;background:rgba(129,140,248,0.07);border:1px solid rgba(129,140,248,0.15);border-radius:9px;">
+                <div style="font-size:20px;">📘</div>
+                <div>
+                  <div style="font-size:13px;font-weight:600;">DP Chapter Review</div>
+                  <div style="font-size:11px;color:var(--text3);">8:00 – 10:00 PM · 2 hours</div>
+                </div>
+                <div style="margin-left:auto;">
+                  <div class="toggle" onclick="this.classList.toggle('on')"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Weekly Study Target</div>
+            <div style="text-align:center;padding:8px 0;">
+              <div class="donut-wrap" style="margin:0 auto 10px;">
+                <svg width="100" height="100" viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="var(--surface2)" stroke-width="8"/>
+                  <circle cx="50" cy="50" r="40" fill="none" stroke="var(--accent2)" stroke-width="8"
+                    stroke-dasharray="251" stroke-dashoffset="100" stroke-linecap="round"
+                    transform="rotate(-90 50 50)"/>
+                </svg>
+                <div class="donut-label">
+                  <div class="donut-val" style="color:var(--accent2);font-size:18px;">60%</div>
+                  <div class="donut-sub">Done</div>
+                </div>
+              </div>
+              <div style="font-size:12px;color:var(--text3);">12h of 20h target · 4 days remaining</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Smart Suggestions</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="padding:10px;background:rgba(248,113,113,0.07);border:1px solid rgba(248,113,113,0.15);border-radius:9px;">
+                <div style="font-size:11px;color:var(--danger);font-weight:700;margin-bottom:4px;">⚠ URGENT</div>
+                <div style="font-size:12px;">Discrete Math is 41% mastery with exam in 18 days — needs 3h more this week</div>
+              </div>
+              <div style="padding:10px;background:rgba(110,231,183,0.07);border:1px solid rgba(110,231,183,0.15);border-radius:9px;">
+                <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:4px;">✓ ON TRACK</div>
+                <div style="font-size:12px;">Data Structures at 84% — light review sessions sufficient</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- END TIMETABLE -->
+
+
+    <!-- ============================
+         PAGE: PRACTICE PAPERS
+    ============================= -->
+    <div id="page-practice" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">Practice Papers</div>
+          <div class="topbar-sub">Upload, analyze, and track your exam performance</div>
+        </div>
+      </div>
+      <div class="content">
+        <div class="grid-2-1">
+          <div>
+            <div class="upload-zone mb-20" onclick="openModal('upload-paper')">
+              <div class="upload-icon">📄</div>
+              <div class="upload-title">Upload Practice Paper or Past Exam</div>
+              <div class="upload-sub">PDF, DOCX, or image · AI will analyze and categorize all questions</div>
+              <div style="margin-top:14px;">
+                <span class="btn btn-primary">Choose File</span>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Exam History & Learning Correlation</div>
+              <div class="exam-row">
+                <div class="exam-score score-a">A</div>
+                <div class="exam-info">
+                  <div class="exam-name">Algorithms Mid-Term 2024</div>
+                  <div class="exam-date">Score: 87% · Feb 15, 2025 · Studied 14h over 2 weeks</div>
+                </div>
+                <div class="exam-trend" style="color:var(--accent)">↑ +12% vs prev</div>
+              </div>
+              <div class="exam-row">
+                <div class="exam-score score-b">B+</div>
+                <div class="exam-info">
+                  <div class="exam-name">Linear Algebra Quiz 3</div>
+                  <div class="exam-date">Score: 74% · Jan 22, 2025 · Studied 8h</div>
+                </div>
+                <div class="exam-trend" style="color:var(--accent2)">↑ +5% vs prev</div>
+              </div>
+              <div class="exam-row">
+                <div class="exam-score score-c">C+</div>
+                <div class="exam-info">
+                  <div class="exam-name">Discrete Math Mid-Term</div>
+                  <div class="exam-date">Score: 61% · Jan 10, 2025 · Studied 5h</div>
+                </div>
+                <div class="exam-trend" style="color:var(--danger)">↓ -3% vs prev</div>
+              </div>
+              <div class="exam-row">
+                <div class="exam-score score-a">A-</div>
+                <div class="exam-info">
+                  <div class="exam-name">Data Structures Final 2024</div>
+                  <div class="exam-date">Score: 91% · Dec 5, 2024 · Studied 20h over 3 weeks</div>
+                </div>
+                <div class="exam-trend" style="color:var(--accent)">↑ Best performance</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="card">
+              <div class="card-title">AI Learning Pattern Analysis</div>
+              <div class="insight-card">
+                <div class="insight-type">Study Behavior → Score Correlation</div>
+                <div class="insight-text">When you study <strong style="color:var(--accent)">14+ hours spread over 2+ weeks</strong>, your scores average 85%+. Short cramming sessions (under 5h) correlate with 60% average.</div>
+                <div class="insight-action">→ Plan your next exam study window</div>
+              </div>
+              <div class="insight-card" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),transparent);border-color:rgba(251,191,36,0.15);">
+                <div class="insight-type" style="color:var(--accent4)">Style Insight</div>
+                <div class="insight-text">You perform best when you <strong style="color:var(--accent4)">practice past papers in the last 3 days</strong> before an exam — this pattern correlates with 15% score improvement.</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Uploaded Papers</div>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                  <div style="font-size:20px;">📄</div>
+                  <div style="flex:1;">
+                    <div style="font-size:13px;font-weight:600;">Algorithms Past Paper 2023</div>
+                    <div style="font-size:11px;color:var(--text3);">24 questions · AI analyzed · Topics tagged</div>
+                  </div>
+                  <span class="chip chip-green" style="font-size:11px;">✓ Done</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--surface2);border:1px solid var(--border);border-radius:9px;cursor:pointer;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+                  <div style="font-size:20px;">📄</div>
+                  <div style="flex:1;">
+                    <div style="font-size:13px;font-weight:600;">Discrete Math Mid-Term 2023</div>
+                    <div style="font-size:11px;color:var(--text3);">18 questions · Processing…</div>
+                  </div>
+                  <div class="spinner"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Add Exam Mark</div>
+              <div class="form-group">
+                <label class="form-label">Subject</label>
+                <select class="select">
+                  <option>Algorithms</option>
+                  <option>Linear Algebra</option>
+                  <option>Discrete Mathematics</option>
+                  <option>Operating Systems</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Score (%)</label>
+                <input class="input" type="number" placeholder="e.g. 78" min="0" max="100">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Study hours before exam</label>
+                <input class="input" type="number" placeholder="e.g. 12">
+              </div>
+              <button class="btn btn-primary" style="width:100%;">📊 Submit & Train AI</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- END PRACTICE -->
+
+
+    <!-- ============================
+         PAGE: PROGRESS & MASTERY
+    ============================= -->
+    <div id="page-progress" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">Progress & Mastery</div>
+          <div class="topbar-sub">Your evolving knowledge state over time</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary">⬇ Export Report</button>
+        </div>
+      </div>
+      <div class="content">
+
+        <div class="grid-4 mb-20">
+          <div class="stat-card green">
+            <div class="stat-icon">🏆</div>
+            <div class="stat-label">Overall Level</div>
+            <div class="stat-value" style="color:var(--accent)">Lv.7</div>
+            <div class="stat-change up">↑ Up from Lv.6</div>
+          </div>
+          <div class="stat-card purple">
+            <div class="stat-icon">📚</div>
+            <div class="stat-label">Concepts Mastered</div>
+            <div class="stat-value" style="color:var(--accent2)">48</div>
+            <div class="stat-change up">↑ +6 this month</div>
+          </div>
+          <div class="stat-card yellow">
+            <div class="stat-icon">🔍</div>
+            <div class="stat-label">Gaps Identified</div>
+            <div class="stat-value" style="color:var(--accent4)">7</div>
+            <div class="stat-change neutral">→ 3 critical</div>
+          </div>
+          <div class="stat-card pink">
+            <div class="stat-icon">⏳</div>
+            <div class="stat-label">Avg. Mastery Decay</div>
+            <div class="stat-value" style="color:var(--accent3)">–3%</div>
+            <div class="stat-change down">↓ After 14 day gap</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <div class="card">
+            <div class="card-title">Mastery Over Time — Algorithms</div>
+            <div style="position:relative;height:180px;padding:10px 0;">
+              <svg width="100%" height="160" viewBox="0 0 500 160" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="lineGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.3"/>
+                    <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <path d="M0,140 L60,120 L120,110 L180,90 L220,100 L260,80 L320,70 L380,60 L440,50 L500,45" stroke="var(--accent)" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M0,140 L60,120 L120,110 L180,90 L220,100 L260,80 L320,70 L380,60 L440,50 L500,45 L500,160 L0,160 Z" fill="url(#lineGrad)"/>
+                <!-- Gap annotation -->
+                <rect x="185" y="0" width="55" height="160" fill="rgba(248,113,113,0.05)"/>
+                <text x="212" y="15" text-anchor="middle" fill="var(--danger)" font-size="10" font-family="JetBrains Mono">GAP</text>
+              </svg>
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text3);font-family:'JetBrains Mono',monospace;margin-top:-10px;">
+                <span>Sep</span><span>Oct</span><span>Nov</span><span>Dec</span><span>Jan</span><span>Feb</span><span>Mar</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:12px;font-size:11px;color:var(--text3);margin-top:6px;">
+              <span style="display:flex;align-items:center;gap:4px;"><span style="width:12px;height:2px;background:var(--accent);border-radius:1px;display:inline-block;"></span> Mastery</span>
+              <span style="display:flex;align-items:center;gap:4px;"><span style="width:12px;height:2px;background:var(--danger);border-radius:1px;display:inline-block;"></span> Inactivity gap</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Mistake Analysis — Careless vs Knowledge Gap</div>
+            <div style="display:flex;gap:16px;align-items:center;padding:10px 0;">
+              <svg width="130" height="130" viewBox="0 0 130 130">
+                <circle cx="65" cy="65" r="52" fill="none" stroke="var(--surface2)" stroke-width="14"/>
+                <!-- Careless = 35% -->
+                <circle cx="65" cy="65" r="52" fill="none" stroke="var(--accent4)" stroke-width="14"
+                  stroke-dasharray="326" stroke-dashoffset="212" stroke-linecap="round"
+                  transform="rotate(-90 65 65)"/>
+                <!-- Gap = 65% -->
+                <circle cx="65" cy="65" r="52" fill="none" stroke="var(--danger)" stroke-width="14"
+                  stroke-dasharray="326" stroke-dashoffset="326" stroke-linecap="round"
+                  transform="rotate(-90 65 65)" style="stroke-dashoffset:212">
+                </circle>
+                <text x="65" y="60" text-anchor="middle" fill="var(--text)" font-family="Syne" font-size="18" font-weight="800">65%</text>
+                <text x="65" y="76" text-anchor="middle" fill="var(--text3)" font-family="DM Sans" font-size="10">True gaps</text>
+              </svg>
+              <div style="flex:1;">
+                <div style="margin-bottom:14px;">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                    <div style="width:10px;height:10px;border-radius:2px;background:var(--danger);flex-shrink:0;"></div>
+                    <span style="font-size:13px;font-weight:600;">65% — Knowledge Gaps</span>
+                  </div>
+                  <div style="font-size:12px;color:var(--text3);">Wrong on ≥3 attempts, consistent errors across sessions</div>
+                </div>
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                    <div style="width:10px;height:10px;border-radius:2px;background:var(--accent4);flex-shrink:0;"></div>
+                    <span style="font-size:13px;font-weight:600;">35% — Careless Mistakes</span>
+                  </div>
+                  <div style="font-size:12px;color:var(--text3);">Got right on retry, likely attention/time pressure issues</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-20">
+          <div class="card-title">Topic-Level Mastery Breakdown</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px;">📘 Algorithms</div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Sorting Algorithms</span><span class="progress-val">92%</span></div><div class="progress-bar"><div class="progress-fill fill-green" style="width:92%"></div></div></div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Graph Traversal</span><span class="progress-val">78%</span></div><div class="progress-bar"><div class="progress-fill fill-green" style="width:78%"></div></div></div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Dynamic Programming</span><span class="progress-val">67%</span></div><div class="progress-bar"><div class="progress-fill fill-purple" style="width:67%"></div></div></div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Divide & Conquer</span><span class="progress-val">55%</span></div><div class="progress-bar"><div class="progress-fill fill-yellow" style="width:55%"></div></div></div>
+            </div>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px;">📐 Linear Algebra</div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Matrix Operations</span><span class="progress-val">70%</span></div><div class="progress-bar"><div class="progress-fill fill-purple" style="width:70%"></div></div></div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Eigenvalues/Vectors</span><span class="progress-val">48%</span></div><div class="progress-bar"><div class="progress-fill fill-yellow" style="width:48%"></div></div></div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Vector Spaces</span><span class="progress-val">35%</span></div><div class="progress-bar"><div class="progress-fill fill-red" style="width:35%"></div></div></div>
+            </div>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:10px;">🔢 Discrete Math</div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Propositional Logic</span><span class="progress-val">60%</span></div><div class="progress-bar"><div class="progress-fill fill-yellow" style="width:60%"></div></div></div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Graph Theory</span><span class="progress-val">33%</span></div><div class="progress-bar"><div class="progress-fill fill-red" style="width:33%"></div></div></div>
+              <div class="progress-wrap"><div class="progress-header"><span class="progress-label">Counting / Combinatorics</span><span class="progress-val">45%</span></div><div class="progress-bar"><div class="progress-fill fill-red" style="width:45%"></div></div></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- END PROGRESS -->
+
+
+    <!-- ============================
+         PAGE: RECOMMENDATIONS
+    ============================= -->
+    <div id="page-recommendations" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">Smart Recommendations</div>
+          <div class="topbar-sub">AI-generated · Fully explainable · All reasons shown</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" onclick="openModal('time-input')">⏱ I have 30 minutes</button>
+          <button class="btn btn-primary" onclick="openModal('full-plan')">📋 Generate Full Plan</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="ai-trust-banner">
+          <div class="trust-icon">🤖</div>
+          <div class="trust-text">
+            <div class="trust-title">Every recommendation below shows its reasoning</div>
+            <div class="trust-sub">Recommendations are based on your mastery data, study history, exam schedule, and behavioral patterns. You can always disagree and override.</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <div>
+            <div class="section-head">
+              <div class="section-title">🚨 High Priority</div>
+            </div>
+
+            <div class="rec-card mb-16" style="border-color:rgba(248,113,113,0.3);background:rgba(248,113,113,0.04);">
+              <div class="rec-icon" style="background:rgba(248,113,113,0.15);">📉</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--danger);">Critical Gap</div>
+                <div class="rec-title">Study Graph Theory (Discrete Math)</div>
+                <div class="rec-desc">You've answered 8/12 Graph Theory questions incorrectly across 4 sessions. This is a persistent gap, not careless errors. Exam is in 18 days.</div>
+                <div style="background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.15);border-radius:7px;padding:8px 10px;margin-top:8px;">
+                  <div style="font-size:10px;color:var(--danger);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Why this recommendation</div>
+                  <div style="font-size:12px;color:var(--text2);line-height:1.6;">Mastery: 33% → Well below 70% target. Error pattern shows conceptual misunderstanding (not time pressure). 3 incorrect on bipartite graphs specifically.</div>
+                </div>
+                <div class="rec-time">⏱ Recommended: 3h this week · Start with bipartite graphs</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-primary" style="padding:6px 12px;font-size:12px;" onclick="navigate('tutor')">Start Learning</button>
+                  <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="openModal('override-rec')">Disagree</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="rec-card mb-16" style="border-color:rgba(251,191,36,0.25);background:rgba(251,191,36,0.03);">
+              <div class="rec-icon" style="background:rgba(251,191,36,0.15);">📐</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--accent4);">High Priority</div>
+                <div class="rec-title">Vector Spaces — Linear Algebra</div>
+                <div class="rec-desc">Only 35% mastery. You haven't revisited this topic in 21 days, and mastery has likely decayed further.</div>
+                <div style="background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.15);border-radius:7px;padding:8px 10px;margin-top:8px;">
+                  <div style="font-size:10px;color:var(--accent4);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Why this recommendation</div>
+                  <div style="font-size:12px;color:var(--text2);line-height:1.6;">21-day gap detected. Based on your decay model, mastery likely dropped from 35% to ~28%. Mid-term has 20% weighting on this topic.</div>
+                </div>
+                <div class="rec-time">⏱ Recommended: 2h this week</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px;" onclick="navigate('tutor')">Start Learning</button>
+                  <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="openModal('override-rec')">Disagree</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="section-head">
+              <div class="section-title">✅ Maintenance & Reinforcement</div>
+            </div>
+
+            <div class="rec-card mb-16">
+              <div class="rec-icon" style="background:rgba(110,231,183,0.15);">🔁</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--accent);">Spaced Repetition</div>
+                <div class="rec-title">Review Dynamic Programming concepts</div>
+                <div class="rec-desc">You learned DP 5 days ago. Spaced repetition suggests a review now to lock in retention before decay sets in.</div>
+                <div class="rec-time">⏱ 30 minutes · Today or tomorrow</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px;">Quick Review</button>
+                  <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="openModal('snooze')">Snooze 3 days</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="rec-card mb-16">
+              <div class="rec-icon" style="background:rgba(129,140,248,0.15);">📝</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--accent2);">Exam Prep</div>
+                <div class="rec-title">Practice past paper: Algorithms 2022</div>
+                <div class="rec-desc">Based on your pattern, practicing papers 3–4 days before exams improves scores by ~15%. Finals are in 18 days.</div>
+                <div class="rec-time">⏱ 2 hours · Optimal window: this week</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px;" onclick="navigate('practice')">Open Practice</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="rec-card mb-16">
+              <div class="rec-icon" style="background:rgba(110,231,183,0.15);">⚡</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--accent);">If you only have 30 min</div>
+                <div class="rec-title">Flashcard drill: Graph Theory terms</div>
+                <div class="rec-desc">Even a short focused session on key terms (bipartite, Euler path, tree vs graph) will help your weakest identified area.</div>
+                <div class="rec-time">⏱ 30 minutes · High ROI</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-primary" style="padding:6px 12px;font-size:12px;" onclick="navigate('highlights')">Open Flashcards</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- END RECOMMENDATIONS -->
+
+
+    <!-- ============================
+         PAGE: RESPONSIBLE AI
+    ============================= -->
+    <div id="page-responsible" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">AI Transparency & Responsible AI</div>
+          <div class="topbar-sub">How SpeedUp's AI works, what it knows, and how to control it</div>
+        </div>
+      </div>
+      <div class="content">
+
+        <div class="grid-3 mb-20">
+          <div class="card" style="border-color:rgba(110,231,183,0.2);">
+            <div style="font-size:28px;margin-bottom:10px;">🔍</div>
+            <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin-bottom:6px;">Explainable Recommendations</div>
+            <div style="font-size:13px;color:var(--text3);line-height:1.7;">Every recommendation shows exactly why it was made — the data points, patterns, and reasoning used. Nothing is a black box.</div>
+          </div>
+          <div class="card" style="border-color:rgba(129,140,248,0.2);">
+            <div style="font-size:28px;margin-bottom:10px;">✋</div>
+            <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin-bottom:6px;">Human Override</div>
+            <div style="font-size:13px;color:var(--text3);line-height:1.7;">You are always in control. Disagree with any recommendation, override your profile, or flag incorrect AI assessments at any time.</div>
+          </div>
+          <div class="card" style="border-color:rgba(244,114,182,0.2);">
+            <div style="font-size:28px;margin-bottom:10px;">🔒</div>
+            <div style="font-family:'Syne',sans-serif;font-size:14px;font-weight:700;margin-bottom:6px;">Privacy First</div>
+            <div style="font-size:13px;color:var(--text3);line-height:1.7;">All learning data is anonymized, stored locally, and never shared. You can delete your learning profile at any time.</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <div class="card">
+            <div class="card-title">Your AI Profile Settings</div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Show reasoning for all recommendations</div>
+                <div class="override-meta">Always explain why each suggestion is made</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Personalized learning style detection</div>
+                <div class="override-meta">AI learns your optimal study patterns</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Mastery decay modeling</div>
+                <div class="override-meta">Adjust mastery scores during inactivity gaps</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Careless vs gap error detection</div>
+                <div class="override-meta">Distinguish error types from attempt history</div>
+              </div>
+              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">External study credit</div>
+                <div class="override-meta">Allow manual logging of offline study sessions</div>
+              </div>
+              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">AI Architecture — How It Works</div>
+            <div style="display:flex;flex-direction:column;gap:12px;font-size:13px;">
+              <div style="padding:12px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);">
+                <div style="font-weight:600;color:var(--accent);margin-bottom:4px;">1. Knowledge State Modeling</div>
+                <div style="color:var(--text3);line-height:1.6;">Uses Bayesian Knowledge Tracing (BKT) per topic to model your evolving mastery. Updates after every question attempt and reading session.</div>
+              </div>
+              <div style="padding:12px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);">
+                <div style="font-weight:600;color:var(--accent2);margin-bottom:4px;">2. Pattern Detection Agent</div>
+                <div style="color:var(--text3);line-height:1.6;">Analyzes error patterns across sessions to distinguish genuine knowledge gaps from careless errors using attempt history and time signals.</div>
+              </div>
+              <div style="padding:12px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);">
+                <div style="font-weight:600;color:var(--accent3);margin-bottom:4px;">3. Recommendation Agent</div>
+                <div style="color:var(--text3);line-height:1.6;">Generates personalized study plans based on mastery gaps, exam proximity, time availability, and your historically effective study patterns.</div>
+              </div>
+              <div style="padding:12px;background:var(--surface2);border-radius:9px;border:1px solid var(--border);">
+                <div style="font-weight:600;color:var(--accent4);margin-bottom:4px;">4. Evaluator Loop (Maker-Checker)</div>
+                <div style="color:var(--text3);line-height:1.6;">Each recommendation is checked for bias, fairness, and consistency before display. The student's disagree feedback is used to improve future recommendations.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-20">
+          <div class="card-title">Bias & Fairness Commitment</div>
+          <div class="grid-3" style="margin-top:8px;">
+            <div style="padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+              <div style="font-size:20px;margin-bottom:8px;">⚖️</div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Equitable Treatment</div>
+              <div style="font-size:12px;color:var(--text3);line-height:1.6;">Recommendations do not vary based on demographic factors. The AI only uses your individual interaction data to generate personalized guidance.</div>
+            </div>
+            <div style="padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+              <div style="font-size:20px;margin-bottom:8px;">📊</div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Consistency</div>
+              <div style="font-size:12px;color:var(--text3);line-height:1.6;">The same learning data will always produce the same recommendations. AI outputs are deterministic and auditable, not random.</div>
+            </div>
+            <div style="padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+              <div style="font-size:20px;margin-bottom:8px;">🗑</div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:6px;">Data Minimization</div>
+              <div style="font-size:12px;color:var(--text3);line-height:1.6;">SpeedUp only stores what's needed: attempt counts, timestamps, mastery scores, and topic tags. No keystroke logging, no screen recording.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Data Usage & Control</div>
+          <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap;">
+            <button class="btn btn-secondary">📥 Download My Data</button>
+            <button class="btn btn-secondary">🔄 Reset AI Profile</button>
+            <button class="btn btn-secondary" style="color:var(--danger);border-color:rgba(248,113,113,0.3);">🗑 Delete All Data</button>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- END RESPONSIBLE AI -->
+
+  </main>
+</div><!-- END APP -->
+
+
+<!-- ============================
+     MODALS
+============================= -->
+
+<div class="modal-overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" id="modal-content">
+    <!-- Content injected by JS -->
+  </div>
+</div>
+
+
+<script src="./app.js"></script>
+</body>
+</html>
+
