@@ -8,7 +8,7 @@ import { initFeature7 } from "./src/feature-modules/feature7.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
 
 const STORAGE_KEY = "speedup_dashboard_reference_v1";
-const STUDENT_ID = "anonymous";
+const STUDENT_ID = "";
 const SIDEBAR_ORDER_KEY = "speedup_sidebar_order_v1";
 
 let defaultSidebarOrder = null;
@@ -1293,7 +1293,7 @@ async function ensureAuthenticated() {
       return false;
     }
     runtime.authUser = user;
-    runtime.state.student.id = user.uid || runtime.state.student.id || STUDENT_ID;
+    runtime.state.student.id = user.uid || runtime.state.student.id || "";
     if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
     authClient.onAuthChanged((nextUser) => {
       if (!nextUser) window.location.replace(appPath("/login.html"));
@@ -1342,60 +1342,52 @@ function bindSidebarActions() {
 }
 
 async function apiGet(url) {
-  const res = await fetch(apiUrl(url), { headers: await authHeaders() });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(extractErrorMessage(payload, `GET ${url} failed`));
-  return payload;
+  return requestJson("GET", url);
 }
 
 async function apiPost(url, body) {
-  const res = await fetch(apiUrl(url), {
-    method: "POST",
-    headers: await authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(extractErrorMessage(payload, `POST ${url} failed`));
-  return payload;
+  return requestJson("POST", url, body);
 }
 
 async function apiPostForm(url, formData) {
-  const res = await fetch(apiUrl(url), {
-    method: "POST",
-    headers: await authHeaders(),
-    body: formData
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(extractErrorMessage(payload, `POST ${url} failed`));
-  return payload;
+  return requestJson("POST", url, formData, true);
 }
 
 async function apiPut(url, body) {
-  const res = await fetch(apiUrl(url), {
-    method: "PUT",
-    headers: await authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(extractErrorMessage(payload, `PUT ${url} failed`));
-  return payload;
+  return requestJson("PUT", url, body);
 }
 
 async function apiDelete(url) {
-  const res = await fetch(apiUrl(url), {
-    method: "DELETE",
-    headers: await authHeaders()
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(extractErrorMessage(payload, `DELETE ${url} failed`));
-  return payload;
+  return requestJson("DELETE", url);
 }
 
-async function authHeaders(base = {}) {
+async function authHeaders(base = {}, forceRefresh = false) {
   const headers = { ...base };
-  const token = await window.firebaseAuthClient?.getIdToken?.();
+  const token = await window.firebaseAuthClient?.getIdToken?.(forceRefresh);
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
+}
+
+async function requestJson(method, url, body = undefined, isForm = false) {
+  const attempt = async (forceRefresh = false) => {
+    const headers = isForm
+      ? await authHeaders({}, forceRefresh)
+      : await authHeaders({ "Content-Type": "application/json" }, forceRefresh);
+    const options = { method, headers };
+    if (method !== "GET" && method !== "DELETE" && body !== undefined) {
+      options.body = isForm ? body : JSON.stringify(body);
+    }
+    const res = await fetch(apiUrl(url), options);
+    const payload = await parseMaybeJson(res);
+    return { res, payload };
+  };
+
+  let { res, payload } = await attempt(false);
+  if (!res.ok && res.status === 401 && /invalid firebase token/i.test(String(payload?.error || ""))) {
+    ({ res, payload } = await attempt(true));
+  }
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `${method} ${url} failed`));
+  return payload;
 }
 
 async function parseMaybeJson(res) {
