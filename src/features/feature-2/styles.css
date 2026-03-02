@@ -1,0 +1,15 @@
+.f2-note {
+  min-height: 140px;
+  line-height: 1.6;
+}
+
+.f2-note mark {
+  background: #fde68a;
+  color: #111827;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
+.f2-vault-item {
+  margin-bottom: 10px;
+}

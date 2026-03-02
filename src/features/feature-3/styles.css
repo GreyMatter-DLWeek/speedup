@@ -1,0 +1,7 @@
+.f3-svg-wrap {
+  background: #0f172a;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  min-height: 220px;
+}

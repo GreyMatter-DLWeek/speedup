@@ -1,0 +1,62 @@
+.f4-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr 280px;
+  gap: 12px;
+}
+
+.f4-field { margin-bottom: 10px; }
+.f4-field label { display: block; font-size: 12px; margin-bottom: 4px; color: var(--text-dim); }
+
+.f4-task-pool {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.f4-task {
+  background: rgba(34, 197, 94, 0.2);
+  border: 1px solid rgba(34, 197, 94, 0.5);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: grab;
+}
+
+.f4-table {
+  display: grid;
+  grid-template-columns: 60px repeat(5, minmax(110px, 1fr));
+  gap: 2px;
+  max-height: 500px;
+  overflow: auto;
+}
+
+.f4-cell,
+.f4-head,
+.f4-time {
+  min-height: 40px;
+  padding: 8px;
+  border-radius: 6px;
+}
+
+.f4-head { background: #1f2937; text-align: center; font-size: 12px; }
+.f4-time { color: var(--text-dim); font-size: 11px; text-align: right; }
+.f4-cell { border: 1px dashed var(--line); }
+.f4-cell.hover { border-color: var(--accent); background: rgba(34, 197, 94, 0.08); }
+
+.f4-placed {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid #3b82f6;
+  background: rgba(59, 130, 246, 0.15);
+  border-radius: 8px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .f4-grid {
+    grid-template-columns: 1fr;
+  }
+}
