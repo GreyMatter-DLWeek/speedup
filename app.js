@@ -105,6 +105,8 @@ const feature5 = initFeature5(ctx);
 const feature6 = initFeature6(ctx);
 const feature7 = initFeature7(ctx);
 const feature8 = initFeature8(ctx);
+const appPath = (p) => (window.toAppPath ? window.toAppPath(p) : p);
+const apiUrl = (p) => (window.toApiUrl ? window.toApiUrl(p) : p);
 
 async function init() {
   const authed = await ensureAuthenticated();
@@ -276,25 +278,25 @@ async function ensureAuthenticated() {
   try {
     const authClient = window.firebaseAuthClient;
     if (!authClient?.initFirebaseClient) {
-      window.location.replace("/login.html");
+      window.location.replace(appPath("/login.html"));
       return false;
     }
     await authClient.initFirebaseClient();
     await authClient.waitForAuthReady();
     const user = await authClient.getUser();
     if (!user) {
-      window.location.replace("/login.html");
+      window.location.replace(appPath("/login.html"));
       return false;
     }
     runtime.authUser = user;
     runtime.state.student.id = user.uid || runtime.state.student.id || STUDENT_ID;
     if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
     authClient.onAuthChanged((nextUser) => {
-      if (!nextUser) window.location.replace("/login.html");
+      if (!nextUser) window.location.replace(appPath("/login.html"));
     });
     return true;
   } catch {
-    window.location.replace("/login.html");
+    window.location.replace(appPath("/login.html"));
     return false;
   }
 }
@@ -324,20 +326,20 @@ function bindSidebarActions() {
     try {
       await window.firebaseAuthClient?.signOutUser?.();
     } finally {
-      window.location.replace("/login.html");
+      window.location.replace(appPath("/login.html"));
     }
   });
 }
 
 async function apiGet(url) {
-  const res = await fetch(url, { headers: await authHeaders() });
+  const res = await fetch(apiUrl(url), { headers: await authHeaders() });
   const payload = await parseMaybeJson(res);
   if (!res.ok) throw new Error(payload.error || `GET ${url} failed`);
   return payload;
 }
 
 async function apiPost(url, body) {
-  const res = await fetch(url, {
+  const res = await fetch(apiUrl(url), {
     method: "POST",
     headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body)
@@ -348,7 +350,7 @@ async function apiPost(url, body) {
 }
 
 async function apiPostForm(url, formData) {
-  const res = await fetch(url, {
+  const res = await fetch(apiUrl(url), {
     method: "POST",
     headers: await authHeaders(),
     body: formData
@@ -359,7 +361,7 @@ async function apiPostForm(url, formData) {
 }
 
 async function apiPut(url, body) {
-  const res = await fetch(url, {
+  const res = await fetch(apiUrl(url), {
     method: "PUT",
     headers: await authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body)

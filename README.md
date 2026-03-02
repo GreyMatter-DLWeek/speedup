@@ -43,6 +43,25 @@ npm start
 Open `http://localhost:3000`.
 You will be redirected to `/login.html` until authenticated.
 
+## GitHub Pages Hosting (Frontend)
+This repo can auto-deploy static frontend to GitHub Pages via:
+- [deploy-pages.yml](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/.github/workflows/deploy-pages.yml)
+
+Important:
+- GitHub Pages hosts frontend only (no Node/Express backend).
+- Your backend must be deployed separately (Render/Railway/Fly/VM).
+
+Set backend URL for Pages:
+1. Open [site-config.js](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/site-config.js)
+2. Set:
+   - `window.SPEEDUP_API_BASE = "https://<your-backend-domain>";`
+3. Commit + push to `main`.
+
+Then enable in GitHub:
+1. `Repo -> Settings -> Pages`
+2. Source: `GitHub Actions`
+3. Push to `main` and wait for workflow completion.
+
 ## Main APIs
 - `GET /api/health`
 - `GET /api/user/profile` (auth)
