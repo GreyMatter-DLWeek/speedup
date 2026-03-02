@@ -128,19 +128,6 @@ async function init() {
   ensureDynamicContainers();
   feature2.bindNotesSelectionCapture();
 
-  loadCloudHealth()
-    .then(() => hydrateStateFromBackend())
-    .then(() => {
-      hydrateFromDom();
-      feature2.renderHighlights();
-      feature5.renderRecommendations();
-      renderCloudStatus();
-      feature2.renderFlashcard();
-      feature6.initWeeklyChart();
-      feature6.initHeatmap();
-      feature7.initPracticeFeature();
-      feature4.initTimeManagement();
-    });
   await loadCloudHealth();
   await hydrateStateFromBackend();
 
@@ -152,6 +139,7 @@ async function init() {
   feature6.initWeeklyChart();
   feature6.initHeatmap();
   feature7.initPracticeFeature();
+  feature4.initTimeManagement();
 }
 
 function ensureDynamicContainers() {
@@ -362,7 +350,7 @@ function bindSidebarActions() {
 async function apiGet(url) {
   const res = await fetch(apiUrl(url), { headers: await authHeaders() });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `GET ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `GET ${url} failed`));
   return payload;
 }
 
@@ -373,7 +361,7 @@ async function apiPost(url, body) {
     body: JSON.stringify(body)
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `POST ${url} failed`));
   return payload;
 }
 
@@ -384,7 +372,7 @@ async function apiPostForm(url, formData) {
     body: formData
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `POST ${url} failed`));
   return payload;
 }
 
@@ -395,7 +383,7 @@ async function apiPut(url, body) {
     body: JSON.stringify(body)
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `PUT ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `PUT ${url} failed`));
   return payload;
 }
 
@@ -405,7 +393,7 @@ async function apiDelete(url) {
     headers: await authHeaders()
   });
   const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `DELETE ${url} failed`);
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `DELETE ${url} failed`));
   return payload;
 }
 
@@ -418,10 +406,21 @@ async function authHeaders(base = {}) {
 
 async function parseMaybeJson(res) {
   try {
-    return await res.json();
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { details: text.slice(0, 500) };
+    }
   } catch {
     return {};
   }
+}
+
+function extractErrorMessage(payload, fallback) {
+  if (!payload || typeof payload !== "object") return fallback;
+  return payload.error || payload.details || payload.message || fallback;
 }
 
 export function bootstrapApp() {

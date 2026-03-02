@@ -3,7 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
-const { BlobServiceClient } = require("@azure/storage-blob");
 const { registerTimeManagementRoutes } = require("./time-management");
 const multer = require("multer");
 const mammoth = require("mammoth");
@@ -75,8 +74,6 @@ app.get("/api/health", async (req, res) => {
     ok: true,
     services: {
       openaiConfigured: Boolean(config.openai.apiKey && config.openai.model),
-      searchConfigured: Boolean(config.azureSearch.endpoint && config.azureSearch.key && config.azureSearch.indexName),
-      blobConfigured: Boolean(blobClient),
       sqliteConfigured: true,
       ragConfigured: Boolean(isFirebaseConfigured()),
       firebaseConfigured: Boolean(isFirebaseConfigured()),

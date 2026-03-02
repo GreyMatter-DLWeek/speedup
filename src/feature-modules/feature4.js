@@ -57,6 +57,16 @@ function parseList(input) {
     .filter(Boolean);
 }
 
+function normalizeDay(value) {
+  const v = String(value || "").trim().slice(0, 3).toUpperCase();
+  return DAYS.includes(v) ? v : "";
+}
+
+function normalizeHour(value) {
+  const v = String(value || "").trim();
+  return HOURS.includes(v) ? v : "";
+}
+
 function formatHour(hour) {
   const [h, m] = String(hour || "00:00").split(":");
   return `${Number(h)}:${m || "00"}`;
@@ -467,13 +477,20 @@ export function initFeature4(ctx) {
     const weeklyGoalsHours = Number(document.getElementById("tm-ob-goal")?.value || 14);
 
     try {
-      await apiPut(API.timeManagementProfile(getStudentId()), {
+      const payload = {
         mode,
         schoolBlocksText,
         productiveHoursText,
         examDatesText,
         weeklyGoalsHours
-      });
+      };
+
+      try {
+        await apiPut(API.timeManagementProfile(getStudentId()), payload);
+      } catch (putError) {
+        // Some environments/proxies block PUT; fallback to POST alias.
+        await apiPost(API.timeManagementProfile(getStudentId()), payload);
+      }
       hideModal();
       logAudit("Time management onboarding saved.");
       await loadTimeManagement();
@@ -548,7 +565,7 @@ export function initFeature4(ctx) {
         weekStart: activeWeekStart,
         weakConcepts,
         forgettingRiskTopics,
-        replaceExisting: true
+        replaceExisting: false
       });
 
       activeWeekStart = response.weekStart || activeWeekStart;
@@ -571,13 +588,20 @@ export function initFeature4(ctx) {
     return (getStateSafe().tasks || []).find((task) => task.id === taskId) || null;
   }
 
+  function findSlotForTask(taskId) {
+    return (getStateSafe().slots || []).find((slot) => slot.taskId === taskId) || null;
+  }
+
   function openTimetableTaskModal(taskId = "") {
     const editing = Boolean(taskId);
     const task = editing ? findTask(taskId) : null;
+    const slot = editing ? findSlotForTask(taskId) : null;
+    const selectedDay = normalizeDay(slot?.day || "");
+    const selectedHour = normalizeHour(slot?.hour || "");
 
     const html = `
       <div class="modal-title">${editing ? "Edit Session" : "Add Session"}</div>
-      <div class="modal-sub">Create or update a timetable task. Drag it into slots after saving.</div>
+      <div class="modal-sub">Create or update a timetable task. You can assign it to a slot immediately.</div>
 
       <div class="form-group">
         <label class="form-label">Title</label>
@@ -621,6 +645,23 @@ export function initFeature4(ctx) {
         <input class="input" id="tm-task-notes" value="${escapeHtml(task?.notes || "")}" placeholder="Optional">
       </div>
 
+      <div class="grid-2" style="margin-bottom:14px;">
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Assign day (optional)</label>
+          <select class="select" id="tm-task-day">
+            <option value="">No slot yet</option>
+            ${DAYS.map((day) => `<option value="${day}" ${selectedDay === day ? "selected" : ""}>${DAY_LABELS[day]}</option>`).join("")}
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Assign hour (optional)</label>
+          <select class="select" id="tm-task-hour">
+            <option value="">No slot yet</option>
+            ${HOURS.map((hour) => `<option value="${hour}" ${selectedHour === hour ? "selected" : ""}>${formatHour(hour)}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+
       <div id="tm-task-error" style="color:var(--danger);font-size:12px;min-height:18px;"></div>
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -639,10 +680,18 @@ export function initFeature4(ctx) {
     const priority = Number(document.getElementById("tm-task-priority")?.value || 70);
     const estimatedMinutes = Number(document.getElementById("tm-task-duration")?.value || 60);
     const notes = document.getElementById("tm-task-notes")?.value?.trim() || "";
+    const day = normalizeDay(document.getElementById("tm-task-day")?.value || "");
+    const hour = normalizeHour(document.getElementById("tm-task-hour")?.value || "");
 
     if (!title) {
       const err = document.getElementById("tm-task-error");
       if (err) err.textContent = "Task title is required.";
+      return;
+    }
+
+    if ((day && !hour) || (!day && hour)) {
+      const err = document.getElementById("tm-task-error");
+      if (err) err.textContent = "Select both day and hour to assign a slot.";
       return;
     }
 
@@ -655,7 +704,9 @@ export function initFeature4(ctx) {
           type,
           priority,
           estimatedMinutes,
-          notes
+          notes,
+          day,
+          hour
         });
       } else {
         await apiPost(API.timeManagementTasks(getStudentId()), {
@@ -667,6 +718,8 @@ export function initFeature4(ctx) {
           priority,
           estimatedMinutes,
           notes,
+          day,
+          hour,
           source: "manual"
         });
       }

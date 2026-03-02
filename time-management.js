@@ -136,7 +136,7 @@ function parseHourRangesInput(rawList, rawText) {
   return source
     .map((entry) => {
       const raw = String(entry || "").trim();
-      const match = raw.match(/^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/);
+      const match = raw.match(/^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})$/);
       if (!match) return null;
       try {
         const start = normalizeClockTime(match[1]);
@@ -172,7 +172,7 @@ function parseSchoolBlocksInput(rawBlocks, rawText) {
       .filter(Boolean);
 
     textItems.forEach((item) => {
-      const match = item.match(/^([A-Za-z]{3})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/);
+      const match = item.match(/^([A-Za-z]+)\s+(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})$/);
       if (!match) return;
       try {
         const day = normalizeDay(match[1]);
@@ -365,7 +365,17 @@ function normalizeGeneratedTask(task, fallback) {
   };
 }
 
-async function refineTasksWithOpenAI({ callOpenAIChat, safeParseJson, isOpenAIConfigured, profile, weakConcepts, forgettingRiskTopics, baselineTasks }) {
+async function refineTasksWithOpenAI({
+  callOpenAIChat,
+  safeParseJson,
+  isOpenAIConfigured,
+  profile,
+  weakConcepts,
+  forgettingRiskTopics,
+  baselineTasks,
+  existingSummary,
+  availableBlockCount
+}) {
   if (!isOpenAIConfigured()) {
     return { tasks: baselineTasks, notes: [], provider: "heuristic" };
   }
@@ -375,14 +385,17 @@ async function refineTasksWithOpenAI({ callOpenAIChat, safeParseJson, isOpenAICo
     "Return strict JSON with keys: tasks and notes.",
     "tasks must be an array where each item has: title, subject, topic, type, priority, estimatedMinutes.",
     "Do not exceed the same number of tasks as provided in baselineTasks.",
-    "Prioritize weak concepts first, include spaced review and mock tests."
+    "Prioritize weak concepts first, include spaced review and mock tests.",
+    "Consider existing timetable coverage and avoid duplicating already-heavy subjects."
   ].join(" ");
 
   const user = {
     profile,
     weakConcepts,
     forgettingRiskTopics,
-    baselineTasks
+    baselineTasks,
+    existingTimetable: existingSummary,
+    availableBlockCount
   };
 
   try {
@@ -413,11 +426,15 @@ async function refineTasksWithOpenAI({ callOpenAIChat, safeParseJson, isOpenAICo
   }
 }
 
-function scheduleTasks(tasks, profile) {
+function scheduleTasks(tasks, profile, options = {}) {
   const slots = buildScoredSlots(profile);
-  const used = new Set();
+  const used = new Set((options.blockedSlots || []).map((x) => String(x)));
   const topicLastDay = new Map();
   const assignments = [];
+  const seedTopicLastDay = options.seedTopicLastDay || {};
+  Object.keys(seedTopicLastDay).forEach((topic) => {
+    topicLastDay.set(topic, Number(seedTopicLastDay[topic]));
+  });
 
   const sortedTasks = tasks
     .map((task, idx) => ({ ...task, taskIndex: idx }))
@@ -467,7 +484,45 @@ function scheduleTasks(tasks, profile) {
   return assignments;
 }
 
-function buildFallbackNotes(profile, weakConcepts, forgettingRiskTopics) {
+function buildExistingTimetableSummary(tasks, slots) {
+  const taskById = new Map((tasks || []).map((task) => [task.id, task]));
+  const assigned = (slots || []).filter((slot) => slot.taskId);
+  const subjectHours = {};
+
+  assigned.forEach((slot) => {
+    const task = taskById.get(slot.taskId);
+    if (!task) return;
+    const subject = String(task.subject || "Study");
+    subjectHours[subject] = Number(subjectHours[subject] || 0) + 1;
+  });
+
+  const occupiedSlots = assigned.length;
+  const occupiedByDay = {};
+  assigned.forEach((slot) => {
+    occupiedByDay[slot.day] = Number(occupiedByDay[slot.day] || 0) + 1;
+  });
+
+  return { occupiedSlots, occupiedByDay, subjectHours };
+}
+
+function buildSeedTopicLastDay(existingTasks, existingSlots) {
+  const map = {};
+  const taskById = new Map((existingTasks || []).map((task) => [task.id, task]));
+
+  (existingSlots || []).forEach((slot) => {
+    if (!slot.taskId) return;
+    const task = taskById.get(slot.taskId);
+    if (!task?.topic) return;
+    const idx = DAYS.indexOf(slot.day);
+    if (idx < 0) return;
+    const key = String(task.topic);
+    map[key] = Math.max(Number(map[key] ?? -1), idx);
+  });
+
+  return map;
+}
+
+function buildFallbackNotes(profile, weakConcepts, forgettingRiskTopics, existingSummary = null) {
   const notes = [];
   const weak = normalizeTopicList(weakConcepts);
   const risk = normalizeTopicList(forgettingRiskTopics);
@@ -481,6 +536,9 @@ function buildFallbackNotes(profile, weakConcepts, forgettingRiskTopics) {
   }
   if (risk.length) {
     notes.push(`Spaced review added for forgetting-risk topics: ${risk.slice(0, 3).join(", ")}.`);
+  }
+  if (existingSummary && typeof existingSummary.occupiedSlots === "number") {
+    notes.push(`Analyzed your existing timetable: ${existingSummary.occupiedSlots} slot(s) already occupied this week.`);
   }
 
   notes.push("High-priority sessions were placed in productive time windows where possible.");
@@ -804,8 +862,115 @@ async function replaceWeekWithPlan(db, studentId, weekStart, plan) {
   }
 }
 
-async function generatePlanPayload({ callOpenAIChat, safeParseJson, isOpenAIConfigured, profile, weakConcepts, forgettingRiskTopics }) {
-  const baselineTasks = buildHeuristicTasks(profile, weakConcepts, forgettingRiskTopics);
+async function mergeWeekWithPlanPreservingManual(db, studentId, weekStart, plan) {
+  const now = nowIso();
+
+  await run(db, "BEGIN TRANSACTION");
+  try {
+    await run(
+      db,
+      `DELETE FROM timetable_slots
+       WHERE student_id = ? AND week_start = ? AND source = 'ai'`,
+      [studentId, weekStart]
+    );
+    await run(
+      db,
+      `DELETE FROM timetable_tasks
+       WHERE student_id = ? AND week_start = ? AND source = 'ai'`,
+      [studentId, weekStart]
+    );
+
+    const taskIds = [];
+    for (let index = 0; index < plan.tasks.length; index += 1) {
+      const task = normalizeGeneratedTask(plan.tasks[index], plan.tasks[index]);
+      const id = createId("task");
+      taskIds[index] = id;
+
+      await run(
+        db,
+        `INSERT INTO timetable_tasks (
+          id, student_id, week_start, title, subject, topic, type, priority, estimated_minutes, status, source, notes, created_at, updated_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+        [
+          id,
+          studentId,
+          weekStart,
+          task.title,
+          task.subject,
+          task.topic,
+          task.type,
+          task.priority,
+          task.estimatedMinutes,
+          "planned",
+          "ai",
+          "",
+          now,
+          now
+        ]
+      );
+    }
+
+    for (const assignment of plan.assignments || []) {
+      const day = normalizeDay(assignment.day);
+      const hour = normalizeHour(assignment.hour);
+      const taskId = taskIds[Number(assignment.taskIndex)];
+      if (!taskId) continue;
+
+      const occupied = await get(
+        db,
+        `SELECT task_id FROM timetable_slots
+         WHERE student_id = ? AND week_start = ? AND day = ? AND hour = ?`,
+        [studentId, weekStart, day, hour]
+      );
+      if (occupied?.task_id) continue;
+
+      await run(
+        db,
+        `INSERT INTO timetable_slots (
+          student_id, week_start, day, hour, task_id, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(student_id, week_start, day, hour) DO UPDATE SET
+          task_id = excluded.task_id,
+          source = excluded.source,
+          updated_at = excluded.updated_at`,
+        [studentId, weekStart, day, hour, taskId, "ai", now, now]
+      );
+    }
+
+    await run(
+      db,
+      `INSERT INTO timetable_plan_meta (student_id, week_start, provider, notes_json, generated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(student_id, week_start) DO UPDATE SET
+         provider = excluded.provider,
+         notes_json = excluded.notes_json,
+         generated_at = excluded.generated_at`,
+      [studentId, weekStart, plan.provider || "heuristic", JSON.stringify(plan.notes || []), now]
+    );
+
+    await run(db, "COMMIT");
+  } catch (error) {
+    await run(db, "ROLLBACK").catch(() => undefined);
+    throw error;
+  }
+}
+
+async function generatePlanPayload({
+  callOpenAIChat,
+  safeParseJson,
+  isOpenAIConfigured,
+  profile,
+  weakConcepts,
+  forgettingRiskTopics,
+  existingTasks = [],
+  existingSlots = [],
+  replaceExisting = false
+}) {
+  const weeklyGoalHours = clampInt(profile.weeklyGoalsHours, 1, 60, 14);
+  const occupiedSlots = replaceExisting ? 0 : (existingSlots || []).filter((slot) => slot.taskId).length;
+  const availableBlockCount = Math.max(1, weeklyGoalHours - occupiedSlots);
+  const existingSummary = buildExistingTimetableSummary(existingTasks, existingSlots);
+  const baselineTasks = buildHeuristicTasks(profile, weakConcepts, forgettingRiskTopics).slice(0, availableBlockCount);
   const ai = await refineTasksWithOpenAI({
     callOpenAIChat,
     safeParseJson,
@@ -813,12 +978,23 @@ async function generatePlanPayload({ callOpenAIChat, safeParseJson, isOpenAIConf
     profile,
     weakConcepts,
     forgettingRiskTopics,
-    baselineTasks
+    baselineTasks,
+    existingSummary,
+    availableBlockCount
   });
 
-  const tasks = Array.isArray(ai.tasks) && ai.tasks.length ? ai.tasks : baselineTasks;
-  const assignments = scheduleTasks(tasks, profile);
-  const notes = ai.notes?.length ? ai.notes : buildFallbackNotes(profile, weakConcepts, forgettingRiskTopics);
+  const tasks = (Array.isArray(ai.tasks) && ai.tasks.length ? ai.tasks : baselineTasks).slice(0, availableBlockCount);
+  const blockedSlots = replaceExisting
+    ? []
+    : (existingSlots || []).filter((slot) => slot.taskId).map((slot) => `${slot.day}_${slot.hour}`);
+  const assignments = scheduleTasks(tasks, profile, {
+    blockedSlots,
+    seedTopicLastDay: buildSeedTopicLastDay(existingTasks, existingSlots)
+  });
+  const notes = ai.notes?.length
+    ? ai.notes
+    : buildFallbackNotes(profile, weakConcepts, forgettingRiskTopics, existingSummary);
+  notes.unshift(`AI analyzed your current timetable and generated ${tasks.length} additional study block(s).`);
   const provider = ai.provider || "heuristic";
 
   return { tasks, assignments, notes, provider };
@@ -856,6 +1032,17 @@ function registerTimeManagementRoutes(app, deps) {
 
   const { callOpenAIChat, safeParseJson, isOpenAIConfigured, normalizeStudentId } = deps;
 
+  const saveProfileHandler = async (req, res) => {
+    try {
+      await schemaReady;
+      const studentId = normalizeStudentId(req.params.studentId);
+      const profile = await saveProfile(db, studentId, req.body || {});
+      res.json({ ok: true, studentId, profile, updatedAt: nowIso() });
+    } catch (error) {
+      handleRouteError(res, "Failed to save time management profile", error);
+    }
+  };
+
   app.get("/api/time-management/:studentId", async (req, res) => {
     try {
       await schemaReady;
@@ -868,16 +1055,8 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.put("/api/time-management/:studentId/profile", async (req, res) => {
-    try {
-      await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
-      const profile = await saveProfile(db, studentId, req.body || {});
-      res.json({ ok: true, studentId, profile, updatedAt: nowIso() });
-    } catch (error) {
-      handleRouteError(res, "Failed to save time management profile", error);
-    }
-  });
+  app.put("/api/time-management/:studentId/profile", saveProfileHandler);
+  app.post("/api/time-management/:studentId/profile", saveProfileHandler);
 
   app.post("/api/time-management/:studentId/generate-plan", async (req, res) => {
     try {
@@ -886,8 +1065,19 @@ function registerTimeManagementRoutes(app, deps) {
       const weekStart = parseWeekFromRequest(req);
       const profile = await getProfile(db, studentId);
       const payload = req.body || {};
+      const replaceExisting = Boolean(payload.replaceExisting);
       const weakConcepts = normalizeTopicList(payload.weakConcepts);
       const forgettingRiskTopics = normalizeTopicList(payload.forgettingRiskTopics);
+      const currentState = await fetchWeekState(db, studentId, weekStart);
+      const preservedSlots = replaceExisting
+        ? []
+        : (currentState.slots || []).filter((slot) => String(slot.source || "").toLowerCase() !== "ai");
+      const preservedTaskIds = new Set(preservedSlots.map((slot) => slot.taskId).filter(Boolean));
+      const preservedTasks = replaceExisting
+        ? []
+        : (currentState.tasks || []).filter((task) =>
+          String(task.source || "").toLowerCase() !== "ai" || preservedTaskIds.has(task.id)
+        );
 
       const plan = await generatePlanPayload({
         callOpenAIChat,
@@ -895,10 +1085,17 @@ function registerTimeManagementRoutes(app, deps) {
         isOpenAIConfigured,
         profile,
         weakConcepts,
-        forgettingRiskTopics
+        forgettingRiskTopics,
+        existingTasks: preservedTasks,
+        existingSlots: preservedSlots,
+        replaceExisting
       });
 
-      await replaceWeekWithPlan(db, studentId, weekStart, plan);
+      if (replaceExisting) {
+        await replaceWeekWithPlan(db, studentId, weekStart, plan);
+      } else {
+        await mergeWeekWithPlanPreservingManual(db, studentId, weekStart, plan);
+      }
       const state = await fetchWeekState(db, studentId, weekStart);
       res.json(state);
     } catch (error) {
@@ -912,9 +1109,16 @@ function registerTimeManagementRoutes(app, deps) {
       const studentId = normalizeStudentId(req.params.studentId);
       const weekStart = parseWeekFromRequest(req);
       const payload = toTaskPayload(req.body || {});
+      const rawDay = String(req.body?.day || "").trim();
+      const rawHour = String(req.body?.hour || "").trim();
+      const hasDay = Boolean(rawDay);
+      const hasHour = Boolean(rawHour);
 
       if (!payload.title) {
         return res.status(400).json({ error: "title is required" });
+      }
+      if ((hasDay && !hasHour) || (!hasDay && hasHour)) {
+        return res.status(400).json({ error: "day and hour must be provided together" });
       }
 
       const id = createId("task");
@@ -943,6 +1147,29 @@ function registerTimeManagementRoutes(app, deps) {
         ]
       );
 
+      if (hasDay && hasHour) {
+        const day = normalizeDay(rawDay);
+        const hour = normalizeHour(rawHour);
+        const occupied = await get(
+          db,
+          `SELECT task_id FROM timetable_slots
+           WHERE student_id = ? AND week_start = ? AND day = ? AND hour = ?`,
+          [studentId, weekStart, day, hour]
+        );
+        if (occupied?.task_id) {
+          await run(db, `DELETE FROM timetable_tasks WHERE id = ? AND student_id = ?`, [id, studentId]);
+          return res.status(409).json({ error: "Selected slot is already occupied." });
+        }
+
+        await run(
+          db,
+          `INSERT INTO timetable_slots (
+            student_id, week_start, day, hour, task_id, source, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [studentId, weekStart, day, hour, id, "manual", now, now]
+        );
+      }
+
       const row = await get(db, `SELECT * FROM timetable_tasks WHERE id = ?`, [id]);
       res.status(201).json({ ok: true, task: mapTaskRow(row) });
     } catch (error) {
@@ -967,6 +1194,7 @@ function registerTimeManagementRoutes(app, deps) {
       const body = req.body || {};
       const updates = [];
       const params = [];
+      let slotInstruction = null;
 
       if (body.title !== undefined) {
         const title = String(body.title || "").trim();
@@ -1005,6 +1233,21 @@ function registerTimeManagementRoutes(app, deps) {
         params.push(String(body.notes || "").trim());
       }
 
+      if (body.day !== undefined || body.hour !== undefined) {
+        const rawDay = String(body.day || "").trim();
+        const rawHour = String(body.hour || "").trim();
+        const hasDay = Boolean(rawDay);
+        const hasHour = Boolean(rawHour);
+        if ((hasDay && !hasHour) || (!hasDay && hasHour)) {
+          return res.status(400).json({ error: "day and hour must be provided together" });
+        }
+        if (!hasDay && !hasHour) {
+          slotInstruction = { type: "clear" };
+        } else {
+          slotInstruction = { type: "assign", day: normalizeDay(rawDay), hour: normalizeHour(rawHour) };
+        }
+      }
+
       if (body.status !== undefined) {
         const status = validateStatus(body.status);
         updates.push("status = ?");
@@ -1013,15 +1256,66 @@ function registerTimeManagementRoutes(app, deps) {
         params.push(status === "completed" ? nowIso() : null);
       }
 
-      if (!updates.length) {
+      if (!updates.length && !slotInstruction) {
         return res.status(400).json({ error: "No valid fields to update" });
       }
 
-      updates.push("updated_at = ?");
-      params.push(nowIso());
-      params.push(taskId, studentId);
+      const now = nowIso();
+      await run(db, "BEGIN TRANSACTION");
+      try {
+        if (updates.length) {
+          updates.push("updated_at = ?");
+          params.push(now);
+          params.push(taskId, studentId);
+          await run(db, `UPDATE timetable_tasks SET ${updates.join(", ")} WHERE id = ? AND student_id = ?`, params);
+        }
 
-      await run(db, `UPDATE timetable_tasks SET ${updates.join(", ")} WHERE id = ? AND student_id = ?`, params);
+        if (slotInstruction?.type === "clear") {
+          await run(
+            db,
+            `DELETE FROM timetable_slots
+             WHERE student_id = ? AND week_start = ? AND task_id = ?`,
+            [studentId, existing.week_start, taskId]
+          );
+        }
+
+        if (slotInstruction?.type === "assign") {
+          const occupied = await get(
+            db,
+            `SELECT task_id FROM timetable_slots
+             WHERE student_id = ? AND week_start = ? AND day = ? AND hour = ?`,
+            [studentId, existing.week_start, slotInstruction.day, slotInstruction.hour]
+          );
+          if (occupied?.task_id && occupied.task_id !== taskId) {
+            await run(db, "ROLLBACK").catch(() => undefined);
+            return res.status(409).json({ error: "Selected slot is already occupied." });
+          }
+
+          await run(
+            db,
+            `DELETE FROM timetable_slots
+             WHERE student_id = ? AND week_start = ? AND task_id = ?`,
+            [studentId, existing.week_start, taskId]
+          );
+
+          await run(
+            db,
+            `INSERT INTO timetable_slots (
+              student_id, week_start, day, hour, task_id, source, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(student_id, week_start, day, hour) DO UPDATE SET
+              task_id = excluded.task_id,
+              source = excluded.source,
+              updated_at = excluded.updated_at`,
+            [studentId, existing.week_start, slotInstruction.day, slotInstruction.hour, taskId, "manual", now, now]
+          );
+        }
+
+        await run(db, "COMMIT");
+      } catch (error) {
+        await run(db, "ROLLBACK").catch(() => undefined);
+        throw error;
+      }
 
       const row = await get(db, `SELECT * FROM timetable_tasks WHERE id = ? AND student_id = ?`, [taskId, studentId]);
       res.json({ ok: true, task: mapTaskRow(row) });
