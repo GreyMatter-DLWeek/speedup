@@ -517,16 +517,7 @@ export function initFeature4(ctx) {
       `;
     }
 
-    const schoolBlocksText = (profile.schoolBlocks || [])
-      .map((block) => `${block.day} ${block.start}-${block.end}`)
-      .join(", ");
-
     return `
-      <div class="form-group">
-        <label class="form-label">School blocks (optional)</label>
-        <input class="input" id="tm-ob-school" placeholder="MON 08:00-10:00, TUE 10:00-12:00" value="${escapeHtml(schoolBlocksText)}">
-      </div>
-
       <div class="form-group">
         <label class="form-label">Productive hours (optional)</label>
         <input class="input" id="tm-ob-productive" placeholder="09:00-11:00,20:00-22:00" value="${escapeHtml((profile.productiveHours || []).join(","))}">
@@ -571,15 +562,15 @@ export function initFeature4(ctx) {
 
         await apiPostForm(API.timeManagementUploadSchoolTimetable(getStudentId()), form);
       } else {
-        const schoolBlocksText = document.getElementById("tm-ob-school")?.value || "";
-        const productiveHoursText = document.getElementById("tm-ob-productive")?.value || "";
         const payload = {
           mode,
-          schoolBlocksText,
-          productiveHoursText,
           examDatesText,
           weeklyGoalsHours
         };
+        const productiveEl = document.getElementById("tm-ob-productive");
+        if (productiveEl) {
+          payload.productiveHoursText = productiveEl.value || "";
+        }
 
         try {
           await apiPut(API.timeManagementProfile(getStudentId()), payload);
