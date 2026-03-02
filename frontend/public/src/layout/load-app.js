@@ -18,6 +18,22 @@ async function loadText(path) {
 async function render() {
   const root = document.getElementById("app-root");
   if (!root) return;
+  const auth = window.firebaseAuthClient;
+  const toLogin = () => {
+    const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.location.replace(`./login.html?next=${encodeURIComponent(next)}`);
+  };
+  if (!auth?.initFirebaseClient) {
+    toLogin();
+    return;
+  }
+  await auth.initFirebaseClient();
+  await auth.waitForAuthReady();
+  const user = await auth.getUser();
+  if (!user) {
+    toLogin();
+    return;
+  }
 
   const sidebarPromise = loadText("./src/layout/sidebar.html");
   const modalsPromise = loadText("./src/layout/modals.html");

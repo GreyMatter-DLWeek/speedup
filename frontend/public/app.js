@@ -8,7 +8,7 @@ import { initFeature7 } from "./src/feature-modules/feature7.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
 
 const STORAGE_KEY = "speedup_dashboard_reference_v1";
-const STUDENT_ID = "anonymous";
+const STUDENT_ID = "";
 const SIDEBAR_ORDER_KEY = "speedup_sidebar_order_v1";
 
 let defaultSidebarOrder = null;
@@ -1292,7 +1292,7 @@ async function ensureAuthenticated() {
       return false;
     }
     runtime.authUser = user;
-    runtime.state.student.id = user.uid || runtime.state.student.id || STUDENT_ID;
+    runtime.state.student.id = user.uid || runtime.state.student.id || "";
     if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
     authClient.onAuthChanged((nextUser) => {
       if (!nextUser) window.location.replace(appPath("/login.html"));

@@ -1,5 +1,7 @@
 async function initAuthPage() {
   const appPath = (p) => (window.toAppPath ? window.toAppPath(p) : p);
+  const nextParam = new URLSearchParams(window.location.search).get("next");
+  const nextPath = nextParam && nextParam.startsWith("/") ? nextParam : "/index.html";
   const mode = document.body.dataset.mode === "signup" ? "signup" : "login";
   const authClient = window.firebaseAuthClient;
   await authClient?.initFirebaseClient?.();
@@ -7,7 +9,7 @@ async function initAuthPage() {
 
   const existing = await authClient?.getUser?.();
   if (existing) {
-    window.location.replace(appPath("/index.html"));
+    window.location.replace(appPath(nextPath));
     return;
   }
 
@@ -51,7 +53,7 @@ async function initAuthPage() {
       } else {
         await authClient?.signInWithEmail?.(email, password);
       }
-      window.location.replace(appPath("/index.html"));
+      window.location.replace(appPath(nextPath));
     } catch (error) {
       if (errorEl) errorEl.textContent = "Authentication failed. Please try again.";
     } finally {

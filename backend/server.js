@@ -18,7 +18,7 @@ const JSZip = tryRequire("jszip");
 const cloudinaryModule = tryRequire("cloudinary");
 const cloudinary = cloudinaryModule?.v2 || null;
 const { isFirebaseConfigured, getFirestore } = require("./firebase/firebaseAdmin");
-const { requireFirebaseAuth, tryGetFirebaseUser } = require("./firebase/firebaseAuth");
+const { requireFirebaseAuth } = require("./firebase/firebaseAuth");
 const { getUserState, setUserState, appendAuditEvent } = require("./firebase/firebaseStore");
 const timeManagementModule = tryRequire("../time-management");
 const registerTimeManagementRoutes = timeManagementModule?.registerTimeManagementRoutes || null;
@@ -256,9 +256,9 @@ app.post("/api/user/controls", requireFirebaseAuth, async (req, res) => {
   }
 });
 
-app.get("/api/state/:studentId", async (req, res) => {
+app.get("/api/state/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
-    const studentId = normalizeStudentId(req.params.studentId);
+    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
     const state = await loadStateWithFallback(studentId);
     res.json(state || {});
   } catch (error) {
@@ -266,9 +266,9 @@ app.get("/api/state/:studentId", async (req, res) => {
   }
 });
 
-app.put("/api/state/:studentId", async (req, res) => {
+app.put("/api/state/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
-    const studentId = normalizeStudentId(req.params.studentId);
+    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
     const state = req.body;
     if (!state || typeof state !== "object") {
       return res.status(400).json({ error: "Invalid state payload." });
@@ -281,7 +281,7 @@ app.put("/api/state/:studentId", async (req, res) => {
   }
 });
 
-app.post("/api/explain", withRateLimit("explain", 40, 60 * 1000), async (req, res) => {
+app.post("/api/explain", requireFirebaseAuth, withRateLimit("explain", 40, 60 * 1000), async (req, res) => {
   try {
     const paragraph = cleanText(req.body?.paragraph, 4000);
     const attempt = Number(req.body?.attempt || 0);
@@ -332,15 +332,14 @@ app.post("/api/explain", withRateLimit("explain", 40, 60 * 1000), async (req, re
   }
 });
 
-app.post("/api/tutor/query", withRateLimit("tutor_query", 60, 60 * 1000), async (req, res) => {
+app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 60, 60 * 1000), async (req, res) => {
   try {
     const contextType = cleanText(req.body?.contextType || "active-reading", 40).toLowerCase();
     const question = cleanText(req.body?.question, 2000);
     const context = req.body?.context && typeof req.body.context === "object" ? req.body.context : {};
     if (!question) return res.status(400).json({ error: "question is required." });
 
-    const authUser = await tryGetFirebaseUser(req);
-    const ownerId = normalizeStudentId(authUser?.uid || cleanText(req.body?.studentId || "", 80));
+    const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
     const evidence = buildTutorEvidence(contextType, context);
 
     let ragHits = [];
@@ -412,7 +411,7 @@ app.post("/api/tutor/query", withRateLimit("tutor_query", 60, 60 * 1000), async 
   }
 });
 
-app.post("/api/highlight/analyze", withRateLimit("highlight", 50, 60 * 1000), async (req, res) => {
+app.post("/api/highlight/analyze", requireFirebaseAuth, withRateLimit("highlight", 50, 60 * 1000), async (req, res) => {
   try {
     const text = cleanText(req.body?.text, 3000);
     const topic = cleanText(req.body?.topic || "General", 120) || "General";
@@ -447,16 +446,14 @@ app.post("/api/highlight/analyze", withRateLimit("highlight", 50, 60 * 1000), as
   }
 });
 
-app.post("/api/rag/query", withRateLimit("rag_query", 80, 60 * 1000), async (req, res) => {
+app.post("/api/rag/query", requireFirebaseAuth, withRateLimit("rag_query", 80, 60 * 1000), async (req, res) => {
   try {
     const query = cleanText(req.body?.query, 300);
     const topK = Number(req.body?.topK || 5);
-    const studentId = cleanText(req.body?.studentId || "", 80);
     if (!query || typeof query !== "string") {
       return res.status(400).json({ error: "query is required." });
     }
-    const authUser = await tryGetFirebaseUser(req);
-    const ownerId = normalizeStudentId(authUser?.uid || studentId || "");
+    const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
     const hits = await searchDocuments(query, topK, ownerId);
     res.json({ query, hits });
   } catch (error) {
@@ -464,17 +461,15 @@ app.post("/api/rag/query", withRateLimit("rag_query", 80, 60 * 1000), async (req
   }
 });
 
-app.post("/api/rag/index-note", withRateLimit("rag_index", 40, 60 * 1000), async (req, res) => {
+app.post("/api/rag/index-note", requireFirebaseAuth, withRateLimit("rag_index", 40, 60 * 1000), async (req, res) => {
   try {
-    const studentId = cleanText(req.body?.studentId || "", 80);
     const title = cleanText(req.body?.title || "", 200);
     const text = cleanText(req.body?.text, 20000);
     const source = cleanText(req.body?.source || "notes", 80) || "notes";
     if (!text || typeof text !== "string") {
       return res.status(400).json({ error: "text is required." });
     }
-    const authUser = await tryGetFirebaseUser(req);
-    const ownerId = normalizeStudentId(authUser?.uid || studentId);
+    const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
     const docId = await indexRagNote({
       studentId: ownerId,
       title: String(title || ""),
@@ -487,7 +482,7 @@ app.post("/api/rag/index-note", withRateLimit("rag_index", 40, 60 * 1000), async
   }
 });
 
-app.post("/api/recommendations", withRateLimit("recommend", 20, 60 * 1000), async (req, res) => {
+app.post("/api/recommendations", requireFirebaseAuth, withRateLimit("recommend", 20, 60 * 1000), async (req, res) => {
   try {
     const learningState = req.body?.state;
     if (!learningState || typeof learningState !== "object") {
@@ -578,9 +573,9 @@ if (registerTimeManagementRoutes) {
   console.warn("Time management routes disabled: optional dependency `sqlite3` is missing.");
 }
 
-app.post("/api/live/event/:studentId", async (req, res) => {
+app.post("/api/live/event/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
-    const studentId = normalizeStudentId(req.params.studentId);
+    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
     const message = String(req.body?.message || "").trim();
     if (!message) return res.status(400).json({ error: "message is required." });
     const current = await loadStateWithFallback(studentId);
@@ -595,9 +590,9 @@ app.post("/api/live/event/:studentId", async (req, res) => {
   }
 });
 
-app.post("/api/live/exam/:studentId", async (req, res) => {
+app.post("/api/live/exam/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
-    const studentId = normalizeStudentId(req.params.studentId);
+    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
     const name = String(req.body?.name || "").trim();
     const score = Number(req.body?.score);
     const hours = Number(req.body?.hours);
@@ -631,9 +626,9 @@ app.post("/api/live/exam/:studentId", async (req, res) => {
   }
 });
 
-app.post("/api/live/controls/:studentId", async (req, res) => {
+app.post("/api/live/controls/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
-    const studentId = normalizeStudentId(req.params.studentId);
+    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
     const controls = req.body?.controls;
     if (!controls || typeof controls !== "object") {
       return res.status(400).json({ error: "controls object is required." });
@@ -651,7 +646,7 @@ app.post("/api/live/controls/:studentId", async (req, res) => {
   }
 });
 
-app.post("/api/practice/analyze", withRateLimit("practice", 15, 60 * 1000), upload.single("paper"), async (req, res) => {
+app.post("/api/practice/analyze", requireFirebaseAuth, withRateLimit("practice", 15, 60 * 1000), upload.single("paper"), async (req, res) => {
   try {
     const pastedText = String(req.body?.pastedText || "").trim();
     const topic = String(req.body?.topic || "General").trim() || "General";
@@ -665,8 +660,7 @@ app.post("/api/practice/analyze", withRateLimit("practice", 15, 60 * 1000), uplo
     let source = "pasted-text";
     let fileMeta = null;
 
-    const authUser = await tryGetFirebaseUser(req);
-    const uid = authUser?.uid || normalizeStudentId(req.body?.studentId || "anonymous");
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
 
     if (file) {
       extractedText = await extractTextFromFile(file);
@@ -873,9 +867,9 @@ app.post("/api/practice/generate-flashcards", requireFirebaseAuth, withRateLimit
   }
 });
 
-app.get("/api/live/bootstrap/:studentId", async (req, res) => {
+app.get("/api/live/bootstrap/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
-    const studentId = normalizeStudentId(req.params.studentId);
+    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
     const state = await loadStateWithFallback(studentId);
     const hydrated = mergeDeep(createMinimalState(studentId), state);
     const notesPack = await buildNotesPack(hydrated);
@@ -1192,6 +1186,16 @@ function snippet(text, max = 260) {
   const value = String(text || "").trim();
   if (value.length <= max) return value;
   return value.slice(0, Math.max(1, max - 3)) + "...";
+}
+
+function resolveAuthorizedStudentId(req, requestedStudentId) {
+  const tokenUid = normalizeStudentId(req?.firebaseUser?.uid || "");
+  if (!tokenUid) throw new Error("Unauthorized user context.");
+  const requested = normalizeStudentId(requestedStudentId || tokenUid);
+  if (requested && requested !== tokenUid) {
+    throw new Error("Forbidden student scope.");
+  }
+  return tokenUid;
 }
 
 function normalizeDifficulty(value) {
