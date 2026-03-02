@@ -1,0 +1,112 @@
+    <div id="page-recommendations" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">Smart Recommendations</div>
+          <div class="topbar-sub">AI-generated · Fully explainable · All reasons shown</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" onclick="openModal('time-input')">⏱ I have 30 minutes</button>
+          <button class="btn btn-primary" onclick="openModal('full-plan')">📋 Generate Full Plan</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="ai-trust-banner">
+          <div class="trust-icon">🤖</div>
+          <div class="trust-text">
+            <div class="trust-title">Every recommendation below shows its reasoning</div>
+            <div class="trust-sub">Recommendations are based on your mastery data, study history, exam schedule, and behavioral patterns. You can always disagree and override.</div>
+          </div>
+        </div>
+
+        <div class="grid-2 mb-20">
+          <div>
+            <div class="section-head">
+              <div class="section-title">🚨 High Priority</div>
+            </div>
+
+            <div class="rec-card mb-16" style="border-color:rgba(248,113,113,0.3);background:rgba(248,113,113,0.04);">
+              <div class="rec-icon" style="background:rgba(248,113,113,0.15);">📉</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--danger);">Critical Gap</div>
+                <div class="rec-title">Study Graph Theory (Discrete Math)</div>
+                <div class="rec-desc">You've answered 8/12 Graph Theory questions incorrectly across 4 sessions. This is a persistent gap, not careless errors. Exam is in 18 days.</div>
+                <div style="background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.15);border-radius:7px;padding:8px 10px;margin-top:8px;">
+                  <div style="font-size:10px;color:var(--danger);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Why this recommendation</div>
+                  <div style="font-size:12px;color:var(--text2);line-height:1.6;">Mastery: 33% → Well below 70% target. Error pattern shows conceptual misunderstanding (not time pressure). 3 incorrect on bipartite graphs specifically.</div>
+                </div>
+                <div class="rec-time">⏱ Recommended: 3h this week · Start with bipartite graphs</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-primary" style="padding:6px 12px;font-size:12px;" onclick="navigate('tutor')">Start Learning</button>
+                  <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="openModal('override-rec')">Disagree</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="rec-card mb-16" style="border-color:rgba(251,191,36,0.25);background:rgba(251,191,36,0.03);">
+              <div class="rec-icon" style="background:rgba(251,191,36,0.15);">📐</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--accent4);">High Priority</div>
+                <div class="rec-title">Vector Spaces — Linear Algebra</div>
+                <div class="rec-desc">Only 35% mastery. You haven't revisited this topic in 21 days, and mastery has likely decayed further.</div>
+                <div style="background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.15);border-radius:7px;padding:8px 10px;margin-top:8px;">
+                  <div style="font-size:10px;color:var(--accent4);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Why this recommendation</div>
+                  <div style="font-size:12px;color:var(--text2);line-height:1.6;">21-day gap detected. Based on your decay model, mastery likely dropped from 35% to ~28%. Mid-term has 20% weighting on this topic.</div>
+                </div>
+                <div class="rec-time">⏱ Recommended: 2h this week</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px;" onclick="navigate('tutor')">Start Learning</button>
+                  <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="openModal('override-rec')">Disagree</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="section-head">
+              <div class="section-title">✅ Maintenance & Reinforcement</div>
+            </div>
+
+            <div class="rec-card mb-16">
+              <div class="rec-icon" style="background:rgba(110,231,183,0.15);">🔁</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--accent);">Spaced Repetition</div>
+                <div class="rec-title">Review Dynamic Programming concepts</div>
+                <div class="rec-desc">You learned DP 5 days ago. Spaced repetition suggests a review now to lock in retention before decay sets in.</div>
+                <div class="rec-time">⏱ 30 minutes · Today or tomorrow</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px;">Quick Review</button>
+                  <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;" onclick="openModal('snooze')">Snooze 3 days</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="rec-card mb-16">
+              <div class="rec-icon" style="background:rgba(129,140,248,0.15);">📝</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--accent2);">Exam Prep</div>
+                <div class="rec-title">Practice past paper: Algorithms 2022</div>
+                <div class="rec-desc">Based on your pattern, practicing papers 3–4 days before exams improves scores by ~15%. Finals are in 18 days.</div>
+                <div class="rec-time">⏱ 2 hours · Optimal window: this week</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-secondary" style="padding:6px 12px;font-size:12px;" onclick="navigate('practice')">Open Practice</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="rec-card mb-16">
+              <div class="rec-icon" style="background:rgba(110,231,183,0.15);">⚡</div>
+              <div style="flex:1;">
+                <div class="rec-priority" style="color:var(--accent);">If you only have 30 min</div>
+                <div class="rec-title">Flashcard drill: Graph Theory terms</div>
+                <div class="rec-desc">Even a short focused session on key terms (bipartite, Euler path, tree vs graph) will help your weakest identified area.</div>
+                <div class="rec-time">⏱ 30 minutes · High ROI</div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="btn btn-primary" style="padding:6px 12px;font-size:12px;" onclick="navigate('highlights')">Open Flashcards</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- END RECOMMENDATIONS -->

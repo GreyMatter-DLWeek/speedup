@@ -1,0 +1,138 @@
+    <div id="page-highlights" class="page">
+      <div class="topbar">
+        <div>
+          <div class="topbar-title">My Highlights</div>
+          <div class="topbar-sub">12 saved · Auto-organized by topic</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" onclick="openModal('export')">⬇ Export as PDF</button>
+        </div>
+      </div>
+      <div class="content">
+        <div class="grid-2-1">
+          <div>
+            <div class="section-head">
+              <div class="section-title">All Highlights</div>
+              <div style="display:flex;gap:6px;">
+                <span class="chip chip-green" style="cursor:pointer;">Algorithms</span>
+                <span class="chip chip-purple" style="cursor:pointer;">Linear Algebra</span>
+                <span class="chip chip-yellow" style="cursor:pointer;">Discrete Math</span>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent4)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"Optimal substructure means the optimal solution to the problem can be constructed from optimal solutions of its subproblems."</div>
+                <div class="highlight-context">Algorithms · Ch.7 Dynamic Programming · 2 hours ago</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-purple" style="font-size:11px;">DP</span>
+                  <span class="chip chip-green" style="font-size:11px;">Key Concept</span>
+                </div>
+                <div class="para-ai-box visible" style="margin-top:10px;">
+                  <div class="para-ai-header">🤖 Auto Context</div>
+                  <div style="font-size:12px;color:var(--text2);line-height:1.7;">This is one of the two required conditions for DP. It means you can build the "big answer" from smaller answers — like how the cheapest journey A→C is built from cheapest A→B + cheapest B→C.</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent2)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"The time complexity depends on the number of unique subproblems and the time taken to solve each."</div>
+                <div class="highlight-context">Algorithms · Ch.7 Dynamic Programming · 2 hours ago</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-purple" style="font-size:11px;">Time Complexity</span>
+                  <span class="chip chip-pink" style="font-size:11px;">Exam Likely</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"Eigenvalues are scalar values λ such that for a matrix A, there exists a non-zero vector v where Av = λv."</div>
+                <div class="highlight-context">Linear Algebra · Ch.4 Eigenvalues · Yesterday</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-green" style="font-size:11px;">Eigenvalues</span>
+                  <span class="chip chip-yellow" style="font-size:11px;">Formula</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent3)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"A graph is bipartite if and only if it contains no odd-length cycles."</div>
+                <div class="highlight-context">Discrete Math · Ch.10 Graph Theory · 2 days ago</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-pink" style="font-size:11px;">Graph Theory</span>
+                  <span class="chip chip-red" style="font-size:11px;">Weak Area</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="highlight-item">
+              <div class="highlight-color" style="background:var(--accent4)"></div>
+              <div class="highlight-body">
+                <div class="highlight-text">"The Master Theorem provides a recipe for solving recurrences of the form T(n) = aT(n/b) + f(n)."</div>
+                <div class="highlight-context">Algorithms · Ch.3 Recurrences · 3 days ago</div>
+                <div class="highlight-tags">
+                  <span class="chip chip-yellow" style="font-size:11px;">Master Theorem</span>
+                  <span class="chip chip-green" style="font-size:11px;">Formula</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div class="card">
+              <div class="card-title">Highlights Summary</div>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span>Total highlights</span><span style="font-family:'JetBrains Mono',monospace;color:var(--accent)">12</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span>With AI context</span><span style="font-family:'JetBrains Mono',monospace;color:var(--accent2)">8</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span>Marked weak area</span><span style="font-family:'JetBrains Mono',monospace;color:var(--danger)">3</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;">
+                  <span>Marked exam likely</span><span style="font-family:'JetBrains Mono',monospace;color:var(--accent4)">5</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Quick Flashcards</div>
+              <div style="background:var(--surface2);border:1px solid var(--border2);border-radius:12px;padding:20px;text-align:center;min-height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;" id="flashcard">
+                <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;">Algorithms · Flashcard 1/5</div>
+                <div style="font-size:15px;font-weight:600;line-height:1.5;" id="flashcard-q">What are the two key properties needed for a problem to be solvable with Dynamic Programming?</div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px;">
+                <button class="btn btn-secondary" style="flex:1;" onclick="flipCard()">🔄 Reveal Answer</button>
+                <button class="btn btn-ghost" onclick="nextCard()">→ Next</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Topics Coverage</div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Algorithms</span><span class="progress-val">7</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-purple" style="width:58%"></div></div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Linear Algebra</span><span class="progress-val">3</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-green" style="width:25%"></div></div>
+              </div>
+              <div class="progress-wrap">
+                <div class="progress-header"><span class="progress-label">Discrete Math</span><span class="progress-val">2</span></div>
+                <div class="progress-bar"><div class="progress-fill fill-pink" style="width:17%"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- END HIGHLIGHTS -->

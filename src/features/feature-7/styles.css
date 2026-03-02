@@ -1,0 +1,7 @@
+.f7-drop {
+  border: 2px dashed var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+  margin-bottom: 10px;
+}

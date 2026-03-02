@@ -1,0 +1,37 @@
+.f1-paragraph {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.f1-tick {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: #0f172a;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.f1-response {
+  margin-top: 8px;
+  border-left: 3px solid var(--accent);
+  padding-left: 8px;
+}
+
+.f1-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.f1-actions button {
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  background: #111827;
+  color: var(--text);
+}
