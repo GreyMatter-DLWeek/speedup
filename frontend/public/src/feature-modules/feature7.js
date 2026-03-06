@@ -1,5 +1,5 @@
 export function initFeature7(ctx) {
-  const { runtime, API, apiGet, apiPost, apiPostForm, apiDelete, escapeHtml, logAudit, scheduleSave } = ctx;
+  const { runtime, API, apiGet, apiPost, apiPostForm, apiPut, apiDelete, escapeHtml, logAudit, scheduleSave } = ctx;
 
   let initialized = false;
   let selectedUploadIds = new Set();
@@ -271,7 +271,12 @@ export function initFeature7(ctx) {
     if (!ok) return;
     const status = document.getElementById("practiceStatus");
     if (status) status.textContent = "Deleting source...";
-    await apiDelete(API.practiceUpload(id));
+    try {
+      await apiDelete(API.practiceUpload(id));
+    } catch (error) {
+      if (!isDeleteEndpointMissing(error)) throw error;
+      await deleteUploadsViaStateFallback([id]);
+    }
     selectedUploadIds.delete(id);
     await refreshUserState();
     renderUploads();
@@ -287,13 +292,45 @@ export function initFeature7(ctx) {
     if (!ok) return;
     const status = document.getElementById("practiceStatus");
     if (status) status.textContent = "Deleting selected sources...";
-    await apiPost(API.practiceDeleteUploads, { uploadIds: ids });
+    try {
+      await apiPost(API.practiceDeleteUploads, { uploadIds: ids });
+    } catch (error) {
+      if (!isDeleteEndpointMissing(error)) throw error;
+      await deleteUploadsViaStateFallback(ids);
+    }
     selectedUploadIds = new Set();
     await refreshUserState();
     renderUploads();
     if (status) status.textContent = "Selected sources deleted.";
     logAudit(`Practice sources deleted: ${ids.length}.`);
     scheduleSave();
+  }
+
+  function isDeleteEndpointMissing(error) {
+    const msg = String(error?.message || "").toLowerCase();
+    return msg.includes("cannot delete /api/practice/uploads")
+      || msg.includes("cannot post /api/practice/uploads/delete-bulk")
+      || msg.includes("delete /api/practice/uploads/")
+      || msg.includes("post /api/practice/uploads/delete-bulk failed");
+  }
+
+  async function deleteUploadsViaStateFallback(uploadIds) {
+    const idSet = new Set((uploadIds || []).map((x) => String(x || "")));
+    if (!idSet.size) return;
+    const out = await apiGet(API.userState);
+    const state = out?.state && typeof out.state === "object" ? out.state : runtime.state;
+    const rows = Array.isArray(state.practiceUploads) ? state.practiceUploads : [];
+    const filtered = rows
+      .map((item, index) => ({ ...item, __uploadId: String(item?.uploadId || `legacy-${index}`) }))
+      .filter((item) => !idSet.has(item.__uploadId))
+      .map((item) => {
+        const next = { ...item };
+        delete next.__uploadId;
+        return next;
+      });
+    const nextState = { ...state, practiceUploads: filtered };
+    await apiPut(API.userState, { state: nextState });
+    runtime.state = { ...runtime.state, ...nextState, student: { ...runtime.state.student, ...(nextState.student || {}) } };
   }
 
   function bindUploadListInteractions() {
