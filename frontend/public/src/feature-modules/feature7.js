@@ -1,7 +1,8 @@
 export function initFeature7(ctx) {
-  const { runtime, API, apiGet, apiPost, apiPostForm, escapeHtml, logAudit, scheduleSave } = ctx;
+  const { runtime, API, apiGet, apiPost, apiPostForm, apiDelete, escapeHtml, logAudit, scheduleSave } = ctx;
 
   let initialized = false;
+  let selectedUploadIds = new Set();
 
   function formatBytes(value) {
     const size = Number(value || 0);
@@ -16,13 +17,22 @@ export function initFeature7(ctx) {
     return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
   }
 
-  function getUploadBySelected(selectId) {
+  function getUploadRows() {
     const rows = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
+    return rows
+      .map((item, index) => {
+        const uploadId = String(item?.uploadId || `legacy-${index}`);
+        return { ...item, uploadId };
+      });
+  }
+
+  function getUploadBySelected(selectId) {
+    const rows = getUploadRows();
     if (!rows.length) return null;
     const el = document.getElementById(selectId);
-    const idx = Number(el?.value ?? 0);
-    if (Number.isNaN(idx) || idx < 0 || idx >= rows.length) return rows[0];
-    return rows[idx];
+    const selectedId = String(el?.value || "").trim();
+    const byId = rows.find((r) => String(r.uploadId) === selectedId);
+    return byId || rows[0];
   }
 
   function getSourceTextFor(selectId) {
@@ -32,7 +42,7 @@ export function initFeature7(ctx) {
   }
 
   function populateSourceSelectors() {
-    const rows = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
+    const rows = getUploadRows();
     const selectors = ["quizSourceSelect", "flashcardSourceSelect"];
     selectors.forEach((id) => {
       const el = document.getElementById(id);
@@ -43,44 +53,59 @@ export function initFeature7(ctx) {
       }
       const currentVal = el.value;
       el.innerHTML = rows
-        .map((item, idx) => `<option value="${idx}">${escapeHtml(item.name || "Uploaded file")} | ${escapeHtml(item.date || "")}</option>`)
+        .map((item) => `<option value="${escapeHtml(String(item.uploadId))}">${escapeHtml(item.name || "Uploaded file")} | ${escapeHtml(item.date || "")}</option>`)
         .join("");
-      const currentIdx = Number(currentVal);
-      if (!Number.isNaN(currentIdx) && currentIdx >= 0 && currentIdx < rows.length) {
-        el.value = String(currentIdx);
+      const hasCurrent = rows.some((r) => String(r.uploadId) === String(currentVal));
+      if (hasCurrent) {
+        el.value = String(currentVal);
       } else {
-        el.value = "0";
+        el.value = String(rows[0].uploadId);
       }
     });
+  }
+
+  function updateSelectionCount() {
+    const label = document.getElementById("uploadSelectionCount");
+    if (!label) return;
+    label.textContent = `${selectedUploadIds.size} selected`;
   }
 
   function renderUploads() {
     const wrap = document.getElementById("uploadedPapersList");
     if (!wrap) return;
-    const rows = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
+    const rows = getUploadRows();
     if (!rows.length) {
+      selectedUploadIds = new Set();
+      updateSelectionCount();
       wrap.innerHTML = '<div style="font-size:13px;color:var(--text3);">No uploads yet.</div>';
       return;
     }
+    const rowIds = new Set(rows.map((r) => String(r.uploadId)));
+    selectedUploadIds = new Set([...selectedUploadIds].filter((id) => rowIds.has(id)));
+    updateSelectionCount();
 
-    const activeQuizIndex = Number(document.getElementById("quizSourceSelect")?.value ?? 0);
+    const activeQuizId = String(document.getElementById("quizSourceSelect")?.value || "");
     wrap.innerHTML = rows
       .slice(0, 20)
-      .map((item, idx) => {
+      .map((item) => {
         const hasUrl = Boolean(item.url);
         const action = hasUrl
           ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Open File</a>`
           : '<span class="chip" style="font-size:11px;">No file URL</span>';
-        const selectedClass = idx === activeQuizIndex ? " upload-card active" : " upload-card";
+        const isCurrentSource = String(item.uploadId) === activeQuizId;
+        const selectedClass = isCurrentSource ? " upload-card active" : " upload-card";
+        const checked = selectedUploadIds.has(String(item.uploadId)) ? "checked" : "";
         return `
-          <div class="${selectedClass.trim()}">
+          <div class="${selectedClass.trim()}" data-upload-id="${escapeHtml(String(item.uploadId))}">
             <div style="display:flex;align-items:center;gap:10px;">
+              <input type="checkbox" class="upload-select-checkbox" data-upload-id="${escapeHtml(String(item.uploadId))}" ${checked} />
               <div style="font-size:18px;">File</div>
               <div style="flex:1;min-width:0;">
                 <div class="upload-card-title">${escapeHtml(item.name || "Uploaded file")}</div>
                 <div class="upload-card-meta">${escapeHtml(item.date || "")} | ${formatBytes(item.size)} | ${escapeHtml(item.type || "")}</div>
               </div>
               ${action}
+              <button class="btn btn-ghost delete-upload-btn" data-upload-id="${escapeHtml(String(item.uploadId))}" style="padding:6px 10px;font-size:12px;color:var(--danger);border-color:rgba(248,113,113,0.35);">Delete</button>
             </div>
           </div>
         `;
@@ -164,10 +189,12 @@ export function initFeature7(ctx) {
 
   async function refreshUserState() {
     try {
-      const out = await apiGet(API.userState);
-      if (out?.state && typeof out.state === "object") {
-        runtime.state = { ...runtime.state, ...out.state, student: { ...runtime.state.student, ...(out.state.student || {}) } };
-      }
+      const [out, uploadsOut] = await Promise.all([
+        apiGet(API.userState),
+        apiGet(API.practiceUploads)
+      ]);
+      if (out?.state && typeof out.state === "object") runtime.state = { ...runtime.state, ...out.state, student: { ...runtime.state.student, ...(out.state.student || {}) } };
+      if (uploadsOut?.ok && Array.isArray(uploadsOut.uploads)) runtime.state.practiceUploads = uploadsOut.uploads;
     } catch {
       // Keep in-memory state.
     }
@@ -206,6 +233,7 @@ export function initFeature7(ctx) {
 
       const fileMeta = out.file || {};
       const item = {
+        uploadId: out.uploadId || "",
         name: fileMeta.name || "Pasted Text Input",
         type: fileMeta.type || "text/plain",
         size: Number(fileMeta.size || pastedText.length || 0),
@@ -224,12 +252,75 @@ export function initFeature7(ctx) {
       scheduleSave();
 
       await refreshUserState();
-      document.getElementById("quizSourceSelect").value = "0";
-      document.getElementById("flashcardSourceSelect").value = "0";
+      if (out.uploadId) {
+        const quizSelect = document.getElementById("quizSourceSelect");
+        const flashSelect = document.getElementById("flashcardSourceSelect");
+        if (quizSelect) quizSelect.value = String(out.uploadId);
+        if (flashSelect) flashSelect.value = String(out.uploadId);
+      }
       renderUploads();
     } catch (error) {
       if (statusEl) statusEl.textContent = error.message || "Upload/analysis failed.";
     }
+  }
+
+  async function deleteSingleUpload(uploadId) {
+    const id = String(uploadId || "").trim();
+    if (!id) return;
+    const ok = window.confirm("Delete this uploaded source?");
+    if (!ok) return;
+    const status = document.getElementById("practiceStatus");
+    if (status) status.textContent = "Deleting source...";
+    await apiDelete(API.practiceUpload(id));
+    selectedUploadIds.delete(id);
+    await refreshUserState();
+    renderUploads();
+    if (status) status.textContent = "Source deleted.";
+    logAudit("Practice source deleted.");
+    scheduleSave();
+  }
+
+  async function deleteSelectedUploads() {
+    const ids = [...selectedUploadIds];
+    if (!ids.length) return;
+    const ok = window.confirm(`Delete ${ids.length} selected source(s)?`);
+    if (!ok) return;
+    const status = document.getElementById("practiceStatus");
+    if (status) status.textContent = "Deleting selected sources...";
+    await apiPost(API.practiceDeleteUploads, { uploadIds: ids });
+    selectedUploadIds = new Set();
+    await refreshUserState();
+    renderUploads();
+    if (status) status.textContent = "Selected sources deleted.";
+    logAudit(`Practice sources deleted: ${ids.length}.`);
+    scheduleSave();
+  }
+
+  function bindUploadListInteractions() {
+    const list = document.getElementById("uploadedPapersList");
+    if (!list) return;
+    list.addEventListener("change", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (!target.classList.contains("upload-select-checkbox")) return;
+      const id = String(target.getAttribute("data-upload-id") || "");
+      if (!id) return;
+      if (target.checked) selectedUploadIds.add(id);
+      else selectedUploadIds.delete(id);
+      updateSelectionCount();
+    });
+    list.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (!target.classList.contains("delete-upload-btn")) return;
+      const id = String(target.getAttribute("data-upload-id") || "");
+      try {
+        await deleteSingleUpload(id);
+      } catch (error) {
+        const status = document.getElementById("practiceStatus");
+        if (status) status.textContent = error.message || "Failed to delete source.";
+      }
+    });
   }
 
   async function onGenerateQuiz() {
@@ -293,6 +384,23 @@ export function initFeature7(ctx) {
     document.getElementById("generateFlashcardsBtn")?.addEventListener("click", onGenerateFlashcards);
     document.getElementById("quizSourceSelect")?.addEventListener("change", renderUploads);
     document.getElementById("flashcardSourceSelect")?.addEventListener("change", renderUploads);
+    document.getElementById("selectAllUploadsBtn")?.addEventListener("click", () => {
+      getUploadRows().forEach((item) => selectedUploadIds.add(String(item.uploadId)));
+      renderUploads();
+    });
+    document.getElementById("clearUploadSelectionBtn")?.addEventListener("click", () => {
+      selectedUploadIds = new Set();
+      renderUploads();
+    });
+    document.getElementById("deleteSelectedUploadsBtn")?.addEventListener("click", async () => {
+      try {
+        await deleteSelectedUploads();
+      } catch (error) {
+        const status = document.getElementById("practiceStatus");
+        if (status) status.textContent = error.message || "Failed to delete selected sources.";
+      }
+    });
+    bindUploadListInteractions();
 
     renderAnalysis(null, "");
     refreshUserState();

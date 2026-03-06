@@ -20,6 +20,9 @@ const API = {
   userState: "/api/user/state",
   userExam: "/api/user/exam",
   practiceAnalyze: "/api/practice/analyze",
+  practiceUploads: "/api/practice/uploads",
+  practiceUpload: (uploadId) => `/api/practice/uploads/${encodeURIComponent(uploadId)}`,
+  practiceDeleteUploads: "/api/practice/uploads/delete-bulk",
   practiceGenerateQuiz: "/api/practice/generate-quiz",
   practiceGenerateFlashcards: "/api/practice/generate-flashcards",
   explain: "/api/explain",
@@ -902,13 +905,13 @@ function buildTutorContext(type) {
 
   if (resolvedType === "practice-papers") {
     const uploads = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
-    const selectedIdx = Number(document.getElementById("quizSourceSelect")?.value || 0);
-    const selected = uploads[selectedIdx] || uploads[0] || null;
+    const selectedValue = String(document.getElementById("quizSourceSelect")?.value || "");
+    const selected = uploads.find((u) => String(u?.uploadId || "") === selectedValue) || uploads[0] || null;
     const sourceName = selected?.name || "Practice Paper";
     const questionText = selected?.analysis?.summary || selected?.sourceTextSnippet || "Current question context not selected.";
     const markingScheme = (selected?.analysis?.recommendedNextSteps || []).join(" ");
     const linkedNote = highlights[0]?.summary || "";
-    const questionId = `Q${Math.max(1, selectedIdx + 1)}`;
+    const questionId = selected ? String(selected.uploadId || "Q1") : "Q1";
     return {
       contextType: "practice-papers",
       details: { sourceName, questionId },

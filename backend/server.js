@@ -723,7 +723,9 @@ app.post("/api/practice/analyze", requireFirebaseAuth, withRateLimit("practice",
     const analysis = parsed || fallback;
     await applyPracticeSignals(uid, analysis).catch(() => null);
     const sourceTextSnippet = snippet(extractedText, 6000);
+    const uploadId = createPracticeUploadId();
     await persistPracticeUpload(uid, {
+      uploadId,
       name: fileMeta?.name || "Pasted Text Input",
       type: fileMeta?.type || "text/plain",
       size: Number(fileMeta?.size || pastedText.length || 0),
@@ -741,6 +743,7 @@ app.post("/api/practice/analyze", requireFirebaseAuth, withRateLimit("practice",
       ok: true,
       provider,
       source,
+      uploadId,
       file: fileMeta,
       textLength: extractedText.length,
       sourceTextSnippet,
@@ -748,6 +751,70 @@ app.post("/api/practice/analyze", requireFirebaseAuth, withRateLimit("practice",
     });
   } catch (error) {
     handleError(res, "Failed to analyze practice paper", error);
+  }
+});
+
+app.get("/api/practice/uploads", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const { uploads, changed } = normalizePracticeUploads(state.practiceUploads || []);
+    if (changed) {
+      state.practiceUploads = uploads;
+      await setUserState(uid, state);
+    }
+    return res.json({ ok: true, uploads });
+  } catch (error) {
+    handleError(res, "Failed to load practice uploads", error);
+  }
+});
+
+app.delete("/api/practice/uploads/:uploadId", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const targetId = cleanText(req.params.uploadId, 120);
+    if (!targetId) return res.status(400).json({ error: "uploadId is required." });
+
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const { uploads, changed } = normalizePracticeUploads(state.practiceUploads || []);
+    const found = uploads.find((u) => String(u.uploadId) === targetId);
+    if (!found) return res.status(404).json({ error: "Upload source not found." });
+
+    state.practiceUploads = uploads.filter((u) => String(u.uploadId) !== targetId);
+    state.auditLog = state.auditLog || [];
+    state.auditLog.push({ ts: new Date().toISOString(), message: `Practice source deleted: ${found.name || targetId}` });
+    state.auditLog = state.auditLog.slice(-300);
+    await setUserState(uid, state);
+
+    await maybeDeleteStoredFile(found).catch(() => null);
+    return res.json({ ok: true, deleted: 1, uploads: state.practiceUploads, normalized: changed });
+  } catch (error) {
+    handleError(res, "Failed to delete practice upload", error);
+  }
+});
+
+app.post("/api/practice/uploads/delete-bulk", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const ids = cleanList(req.body?.uploadIds, 100, 120);
+    if (!ids.length) return res.status(400).json({ error: "uploadIds is required." });
+
+    const idSet = new Set(ids);
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
+    const matched = uploads.filter((u) => idSet.has(String(u.uploadId)));
+    if (!matched.length) return res.status(404).json({ error: "No matching upload sources found." });
+
+    state.practiceUploads = uploads.filter((u) => !idSet.has(String(u.uploadId)));
+    state.auditLog = state.auditLog || [];
+    state.auditLog.push({ ts: new Date().toISOString(), message: `Practice sources deleted: ${matched.length}` });
+    state.auditLog = state.auditLog.slice(-300);
+    await setUserState(uid, state);
+
+    await Promise.allSettled(matched.map((item) => maybeDeleteStoredFile(item)));
+    return res.json({ ok: true, deleted: matched.length, uploads: state.practiceUploads });
+  } catch (error) {
+    handleError(res, "Failed to bulk delete practice uploads", error);
   }
 });
 
@@ -1734,8 +1801,13 @@ async function persistPracticeUpload(uid, item) {
   if (!uid || !isFirebaseConfigured()) return false;
   const current = await getUserState(uid);
   const state = mergeDeep(createMinimalState(uid), current);
-  state.practiceUploads = state.practiceUploads || [];
-  state.practiceUploads.unshift(item);
+  const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
+  state.practiceUploads = uploads;
+  state.practiceUploads.unshift({
+    ...item,
+    uploadId: cleanText(item?.uploadId, 120) || createPracticeUploadId(),
+    createdAt: new Date().toISOString()
+  });
   state.practiceUploads = state.practiceUploads.slice(0, 30);
   state.auditLog = state.auditLog || [];
   state.auditLog.push({
@@ -1744,6 +1816,37 @@ async function persistPracticeUpload(uid, item) {
   });
   state.auditLog = state.auditLog.slice(-300);
   await setUserState(uid, state);
+  return true;
+}
+
+function createPracticeUploadId() {
+  return `up_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizePracticeUploads(items) {
+  const rows = Array.isArray(items) ? items : [];
+  let changed = false;
+  const used = new Set();
+  const uploads = rows.map((item, index) => {
+    const rawId = cleanText(item?.uploadId, 120);
+    let uploadId = rawId || `legacy_${Date.now().toString(36)}_${index.toString(36)}`;
+    if (used.has(uploadId)) uploadId = `${uploadId}_${index}`;
+    used.add(uploadId);
+    if (!rawId || rawId !== uploadId) changed = true;
+    return {
+      ...item,
+      uploadId,
+      createdAt: cleanText(item?.createdAt, 40) || ""
+    };
+  });
+  return { uploads, changed };
+}
+
+async function maybeDeleteStoredFile(item) {
+  if (!cloudinary || !isCloudinaryConfigured()) return false;
+  const pathValue = cleanText(item?.storagePath, 240);
+  if (!pathValue) return false;
+  await cloudinary.uploader.destroy(pathValue, { resource_type: "raw", invalidate: true });
   return true;
 }
 
