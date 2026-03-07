@@ -1360,7 +1360,10 @@ async function loadCloudHealth() {
 async function hydrateStateFromBackend() {
   try {
     const remote = await apiGet(API.userState);
-    runtime.state = mergeDeep(structuredClone(defaultState), remote.state || {});
+    const localSnapshot = runtime.state && typeof runtime.state === "object"
+      ? structuredClone(runtime.state)
+      : structuredClone(defaultState);
+    runtime.state = mergeDeep(mergeDeep(structuredClone(defaultState), localSnapshot), remote.state || {});
     if (runtime.authUser?.uid) runtime.state.student.id = runtime.authUser.uid;
     if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email.split("@")[0];
     saveLocalState(runtime.authUser?.uid || runtime.state.student?.id || "");

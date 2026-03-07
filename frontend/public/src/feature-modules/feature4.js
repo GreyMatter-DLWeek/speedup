@@ -492,6 +492,11 @@ export function initFeature4(ctx) {
       }
     } catch (error) {
       logAudit(`Time management load failed: ${error.message || "unknown"}`);
+      const cached = runtime.state?.timeManagement;
+      if (cached && typeof cached === "object") {
+        timetableState = cached;
+        activeWeekStart = cached.weekStart || activeWeekStart;
+      }
       renderAll();
     }
   }

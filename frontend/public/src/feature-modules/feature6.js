@@ -250,11 +250,11 @@ function ensureFeature6State(runtime) {
   return runtime.state.feature6;
 }
 
-function seedSnapshotsIfNeeded(runtime, topics, overallMastery) {
+function seedSnapshotsIfNeeded(runtime, topics, overallMastery, sourceState = null) {
   const feature6State = ensureFeature6State(runtime);
   if (feature6State.masterySnapshots.length) return false;
 
-  const state = runtime.state || {};
+  const state = sourceState && typeof sourceState === "object" ? sourceState : (runtime.state || {});
   const examDates = (state.examHistory || [])
     .map((exam) => String(exam?.date || "").slice(0, 10))
     .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
@@ -362,6 +362,196 @@ function createDailyMinutesMap(days = HISTORY_DAYS) {
     map.set(formatDateOnly(date), 0);
   }
   return map;
+}
+
+function shiftDate(dayOffset, hour = 9, minute = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() + dayOffset);
+  date.setHours(hour, minute, 0, 0);
+  return date;
+}
+
+function parseHourToken(value, fallbackHour = 9, fallbackMinute = 0) {
+  const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return { hour: fallbackHour, minute: fallbackMinute };
+  return {
+    hour: clamp(Number(match[1]), 0, 23),
+    minute: clamp(Number(match[2]), 0, 59)
+  };
+}
+
+function buildProjectedSeries(currentValue, length = 7) {
+  const safeCurrent = clamp(currentValue, 0, 100);
+  const window = clamp(Math.round(((100 - safeCurrent) * 0.14) + 8), 6, 18);
+  return Array.from({ length }, (_unused, index) => {
+    const ratio = length <= 1 ? 1 : index / (length - 1);
+    return clamp(Math.round(safeCurrent - ((1 - ratio) * window)), 0, 100);
+  });
+}
+
+function derivePreviewTopics(state, tmState) {
+  const stateTopics = Array.isArray(state?.topics) ? state.topics : [];
+  const timetableTopics = buildSyntheticTopicsFromTimetable(tmState);
+  return mergeTopicSignals(stateTopics, timetableTopics);
+}
+
+function buildPreviewMasterySnapshots(topics, state) {
+  const offsets = [-6, -5, -4, -3, -2, -1, 0];
+  const overallSeries = buildProjectedSeries(getOverallMastery(state, topics), offsets.length);
+
+  return offsets.map((offset, index) => {
+    const date = shiftDate(offset, 0, 0);
+    const progress = offsets.length <= 1 ? 1 : index / (offsets.length - 1);
+    const concepts = {};
+    topics.forEach((topic, topicIndex) => {
+      const name = normalizeTopicName(topic?.name);
+      if (!name) return;
+      const current = getMasteryFromTopic(topic);
+      const lag = clamp(Math.round(((100 - current) * 0.16) + (topicIndex * 1.5) + 4), 4, 18);
+      concepts[name] = clamp(Math.round(current - ((1 - progress) * lag)), 0, 100);
+    });
+    return {
+      date: formatDateOnly(date),
+      overall: overallSeries[index],
+      concepts
+    };
+  });
+}
+
+function derivePreviewFocusMode(task) {
+  const type = String(task?.type || "").toLowerCase();
+  const source = String(task?.source || "").toLowerCase();
+  if (type.includes("practice") || type.includes("quiz") || type.includes("exam")) return "practice";
+  if (source === "ai") return "tutor";
+  return "reading";
+}
+
+function buildPreviewFocusSessions(tmState) {
+  const tasks = (Array.isArray(tmState?.tasks) ? tmState.tasks : [])
+    .filter((task) => task && !isSchoolTask(task));
+  if (!tasks.length) return [];
+
+  const count = Math.min(6, Math.max(3, tasks.length));
+  const slots = Array.isArray(tmState?.slots) ? tmState.slots : [];
+  const slotByTaskId = new Map();
+  slots.forEach((slot) => {
+    if (!slot?.taskId || slotByTaskId.has(slot.taskId)) return;
+    slotByTaskId.set(slot.taskId, slot);
+  });
+
+  const orderedTasks = tasks
+    .slice()
+    .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+
+  return Array.from({ length: count }, (_unused, index) => {
+    const task = orderedTasks[index % orderedTasks.length];
+    const slot = slotByTaskId.get(task?.id);
+    const offset = -(count - 1 - index);
+    const fallbackHour = 8 + ((index % 4) * 3);
+    const parsedTime = parseHourToken(slot?.hour, fallbackHour, 0);
+    const start = shiftDate(offset, parsedTime.hour, parsedTime.minute);
+    const duration = clamp(task?.estimatedMinutes || 45, STREAK_TARGET_MINUTES, 120);
+    const end = new Date(start.getTime() + (duration * 60000));
+    return {
+      id: `preview-focus-${task?.id || index}`,
+      mode: derivePreviewFocusMode(task),
+      targetMinutes: duration,
+      startedAt: start.toISOString(),
+      endedAt: end.toISOString(),
+      status: "completed"
+    };
+  });
+}
+
+function buildPreviewAuditLog(state, tmState, focusSessions) {
+  const entries = [];
+
+  focusSessions.slice(-4).forEach((session) => {
+    entries.push({
+      ts: session.endedAt || session.startedAt,
+      message: `Focus session completed: ${getFocusModeLabel(session.mode)} · ${formatMinutes(getFocusSessionMinutes(session))}.`
+    });
+  });
+
+  const latestCompletedTask = (Array.isArray(tmState?.tasks) ? tmState.tasks : [])
+    .filter((task) => task?.status === "completed")
+    .sort((a, b) => String(b.completedAt || b.updatedAt || "").localeCompare(String(a.completedAt || a.updatedAt || "")))[0];
+  if (latestCompletedTask) {
+    entries.push({
+      ts: latestCompletedTask.completedAt || latestCompletedTask.updatedAt || latestCompletedTask.createdAt || new Date().toISOString(),
+      message: `Completed ${latestCompletedTask.title || latestCompletedTask.subject || "study session"}.`
+    });
+  }
+
+  const latestUpload = (Array.isArray(state?.practiceUploads) ? state.practiceUploads : [])[0];
+  if (latestUpload?.name) {
+    entries.push({
+      ts: latestUpload.date || new Date().toISOString(),
+      message: `Practice upload analyzed: ${latestUpload.name}`
+    });
+  }
+
+  const latestHighlight = (Array.isArray(state?.highlights) ? state.highlights : [])[0];
+  if (latestHighlight?.topic) {
+    entries.push({
+      ts: latestHighlight.date || new Date().toISOString(),
+      message: `Highlight saved (${latestHighlight.provider || "local"}).`
+    });
+  }
+
+  return entries
+    .filter((entry) => entry?.message)
+    .sort((a, b) => String(a.ts || "").localeCompare(String(b.ts || "")))
+    .slice(-12);
+}
+
+function buildDashboardPreviewFixture(runtime, tmState, force = false) {
+  const baseState = runtime.state || {};
+  const topics = derivePreviewTopics(baseState, tmState);
+  const stateForPreview = {
+    ...baseState,
+    topics
+  };
+  const masterySnapshots = buildPreviewMasterySnapshots(topics, stateForPreview);
+  const focusSessions = buildPreviewFocusSessions(tmState);
+  const auditLog = buildPreviewAuditLog(baseState, tmState, focusSessions);
+
+  return {
+    state: {
+      ...baseState,
+      topics: topics.length ? topics : (Array.isArray(baseState.topics) ? baseState.topics : []),
+      mastery: force || !Array.isArray(baseState.mastery) || !baseState.mastery.length
+        ? masterySnapshots.map((entry) => entry.overall)
+        : baseState.mastery,
+      focusSessions: force || !getFocusSessions(baseState).length ? focusSessions : getFocusSessions(baseState),
+      auditLog: force || !Array.isArray(baseState.auditLog) || !baseState.auditLog.length ? auditLog : baseState.auditLog
+    },
+    tmState: tmState || {},
+    masterySnapshots
+  };
+}
+
+function hasDashboardSignals(state, tmState) {
+  return Boolean(
+    (Array.isArray(state?.topics) && state.topics.length)
+    || (Array.isArray(state?.mastery) && state.mastery.length)
+    || (Array.isArray(state?.examHistory) && state.examHistory.length)
+    || (Array.isArray(state?.practiceUploads) && state.practiceUploads.length)
+    || (Array.isArray(state?.highlights) && state.highlights.length)
+    || getFocusSessions(state).length
+    || (Array.isArray(tmState?.tasks) && tmState.tasks.length)
+    || (Array.isArray(tmState?.slots) && tmState.slots.length)
+  );
+}
+
+function shouldForceDashboardPreview() {
+  try {
+    const search = typeof window !== "undefined" ? window.location?.search || "" : "";
+    const value = new URLSearchParams(search).get("previewDashboard");
+    return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
+  } catch {
+    return false;
+  }
 }
 
 function getFocusSessions(state) {
@@ -619,9 +809,9 @@ function buildTopicBreakdown(topics) {
     .slice(0, 3);
 }
 
-function buildMasteryTrend(runtime, topics, overallMastery) {
+function buildMasteryTrend(runtime, topics, overallMastery, snapshotsOverride = null) {
   const feature6State = ensureFeature6State(runtime);
-  const snapshots = (feature6State.masterySnapshots || [])
+  const snapshots = (Array.isArray(snapshotsOverride) ? snapshotsOverride : feature6State.masterySnapshots || [])
     .filter((entry) => entry && /^\d{4}-\d{2}-\d{2}$/.test(String(entry.date || "")))
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-10);
@@ -1024,27 +1214,37 @@ export function initFeature6(ctx) {
   }
 
   function buildModel(tmState) {
+    const baseState = runtime.state || {};
     const safeTmState = tmState || {};
-    const state = runtime.state || {};
+    const forcePreview = shouldForceDashboardPreview();
+    const preview = forcePreview || !hasDashboardSignals(baseState, safeTmState)
+      ? buildDashboardPreviewFixture(runtime, safeTmState, forcePreview)
+      : null;
+    const state = preview?.state || baseState;
+    const effectiveTmState = preview?.tmState || safeTmState;
     const stateTopics = Array.isArray(state.topics)
       ? state.topics.filter((topic) => normalizeTopicName(topic?.name))
       : [];
-    const syntheticTopics = buildSyntheticTopicsFromTimetable(safeTmState);
+    const syntheticTopics = buildSyntheticTopicsFromTimetable(effectiveTmState);
     const topics = mergeTopicSignals(stateTopics, syntheticTopics);
     const subjectMastery = buildSubjectMastery(topics);
     const overallMastery = getOverallMastery(state, topics);
 
-    const seeded = seedSnapshotsIfNeeded(runtime, topics, overallMastery);
-    const updated = upsertTodaySnapshot(runtime, topics, overallMastery);
-    if (seeded || updated) scheduleSave();
+    let seeded = false;
+    let updated = false;
+    if (!preview) {
+      seeded = seedSnapshotsIfNeeded(runtime, topics, overallMastery, state);
+      updated = upsertTodaySnapshot(runtime, topics, overallMastery);
+      if (seeded || updated) scheduleSave();
+    }
 
     const errorBreakdown = computeErrorBreakdown(state);
-    const stats = buildStatsPayload(state, safeTmState, topics, overallMastery);
-    const recentActivities = buildRecentActivities(state, safeTmState);
+    const stats = buildStatsPayload(state, effectiveTmState, topics, overallMastery);
+    const recentActivities = buildRecentActivities(state, effectiveTmState);
     const topicBreakdown = buildTopicBreakdown(topics);
-    const masteryTrend = buildMasteryTrend(runtime, topics, overallMastery);
-    const dashboardHeader = buildDashboardHeader(runtime, safeTmState);
-    const dashboardInsights = buildDashboardInsights(topics, safeTmState, stats.weeklyMinutes);
+    const masteryTrend = buildMasteryTrend(runtime, topics, overallMastery, preview?.masterySnapshots || null);
+    const dashboardHeader = buildDashboardHeader(runtime, effectiveTmState);
+    const dashboardInsights = buildDashboardInsights(topics, effectiveTmState, stats.weeklyMinutes);
 
     return {
       weeklyMinutes: stats.weeklyMinutes,

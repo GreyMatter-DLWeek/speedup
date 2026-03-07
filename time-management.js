@@ -2232,10 +2232,19 @@ function registerTimeManagementRoutes(app, deps) {
     safeParseJson,
     isOpenAIConfigured,
     normalizeStudentId,
+    requireFirebaseAuth,
+    resolveAuthorizedStudentId,
     upload,
     pdfParse,
     mammoth
   } = deps;
+  const authGuard = typeof requireFirebaseAuth === "function" ? requireFirebaseAuth : (_req, _res, next) => next();
+  const getStudentId = (req) => {
+    if (typeof resolveAuthorizedStudentId === "function") {
+      return resolveAuthorizedStudentId(req, req.params.studentId);
+    }
+    return normalizeStudentId(req.params.studentId);
+  };
   const schoolUploadMiddleware = upload?.single
     ? upload.single("timetable")
     : (_req, res) => res.status(503).json({ error: "File upload unavailable on server." });
@@ -2243,7 +2252,7 @@ function registerTimeManagementRoutes(app, deps) {
   const saveProfileHandler = async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const profile = await saveProfile(db, studentId, req.body || {});
       res.json({ ok: true, studentId, profile, updatedAt: nowIso() });
     } catch (error) {
@@ -2251,10 +2260,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   };
 
-  app.get("/api/time-management/:studentId", async (req, res) => {
+  app.get("/api/time-management/:studentId", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.query.weekStart);
       const state = await fetchWeekState(db, studentId, weekStart);
       res.json(state);
@@ -2263,13 +2272,13 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.put("/api/time-management/:studentId/profile", saveProfileHandler);
-  app.post("/api/time-management/:studentId/profile", saveProfileHandler);
+  app.put("/api/time-management/:studentId/profile", authGuard, saveProfileHandler);
+  app.post("/api/time-management/:studentId/profile", authGuard, saveProfileHandler);
 
-  app.post("/api/time-management/:studentId/upload-school-timetable", schoolUploadMiddleware, async (req, res) => {
+  app.post("/api/time-management/:studentId/upload-school-timetable", authGuard, schoolUploadMiddleware, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.body?.weekStart || req.query?.weekStart);
       const file = req.file;
       const calendarUrl = String(req.body?.calendarUrl || "").trim();
@@ -2326,10 +2335,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.post("/api/time-management/:studentId/generate-plan", async (req, res) => {
+  app.post("/api/time-management/:studentId/generate-plan", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = parseWeekFromRequest(req);
       const profile = await getProfile(db, studentId);
       const payload = req.body || {};
@@ -2375,10 +2384,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.post("/api/time-management/:studentId/tasks", async (req, res) => {
+  app.post("/api/time-management/:studentId/tasks", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = parseWeekFromRequest(req);
       const payload = toTaskPayload(req.body || {});
       const rawDay = String(req.body?.day || "").trim();
@@ -2449,10 +2458,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.put("/api/time-management/:studentId/tasks/:taskId", async (req, res) => {
+  app.put("/api/time-management/:studentId/tasks/:taskId", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const taskId = String(req.params.taskId || "").trim();
       if (!taskId) {
         return res.status(400).json({ error: "taskId is required" });
@@ -2596,10 +2605,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.delete("/api/time-management/:studentId/tasks/:taskId", async (req, res) => {
+  app.delete("/api/time-management/:studentId/tasks/:taskId", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const taskId = String(req.params.taskId || "").trim();
 
       await run(db, `DELETE FROM timetable_slots WHERE student_id = ? AND task_id = ?`, [studentId, taskId]);
@@ -2614,10 +2623,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.put("/api/time-management/:studentId/slots/:day/:hour", async (req, res) => {
+  app.put("/api/time-management/:studentId/slots/:day/:hour", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = parseWeekFromRequest(req);
       const day = normalizeDay(req.params.day);
       const hour = normalizeHour(req.params.hour);
@@ -2660,10 +2669,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.delete("/api/time-management/:studentId/slots/:day/:hour", async (req, res) => {
+  app.delete("/api/time-management/:studentId/slots/:day/:hour", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.query.weekStart);
       const day = normalizeDay(req.params.day);
       const hour = normalizeHour(req.params.hour);
@@ -2680,10 +2689,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.delete("/api/time-management/:studentId/week/:weekStart", async (req, res) => {
+  app.delete("/api/time-management/:studentId/week/:weekStart", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.params.weekStart);
 
       await run(db, "BEGIN TRANSACTION");
