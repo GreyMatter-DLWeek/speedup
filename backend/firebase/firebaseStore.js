@@ -40,10 +40,16 @@ async function appendAuditEvent(uid, message) {
   return current;
 }
 
+async function deleteUserState(uid) {
+  await userDoc(uid).delete();
+  return true;
+}
+
 module.exports = {
   getUserState,
   setUserState,
-  appendAuditEvent
+  appendAuditEvent,
+  deleteUserState
 };
 
 function normalizeState(uid, state) {

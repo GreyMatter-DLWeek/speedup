@@ -17,9 +17,9 @@ const pdfParse = tryRequire("pdf-parse");
 const JSZip = tryRequire("jszip");
 const cloudinaryModule = tryRequire("cloudinary");
 const cloudinary = cloudinaryModule?.v2 || null;
-const { isFirebaseConfigured, getFirestore } = require("./firebase/firebaseAdmin");
+const { isFirebaseConfigured, getFirestore, deleteFirebaseAuthUser } = require("./firebase/firebaseAdmin");
 const { requireFirebaseAuth } = require("./firebase/firebaseAuth");
-const { getUserState, setUserState, appendAuditEvent } = require("./firebase/firebaseStore");
+const { getUserState, setUserState, appendAuditEvent, deleteUserState } = require("./firebase/firebaseStore");
 const timeManagementModule = tryRequire("../time-management");
 const registerTimeManagementRoutes = timeManagementModule?.registerTimeManagementRoutes || null;
 
@@ -285,6 +285,52 @@ app.post("/api/user/controls", requireFirebaseAuth, async (req, res) => {
     return res.json({ ok: true, state });
   } catch (error) {
     return res.status(500).json({ error: "Failed to save settings. Please try again." });
+  }
+});
+
+app.delete("/api/user/account", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    if (!uid) return res.status(400).json({ error: "Invalid user id." });
+
+    let state = createMinimalState(uid);
+    try {
+      state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    } catch {
+      state = createMinimalState(uid);
+    }
+
+    const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
+    const fileCleanup = await Promise.allSettled(uploads.map((item) => maybeDeleteStoredFile(item)));
+    const filesDeleted = fileCleanup.filter((x) => x.status === "fulfilled" && x.value).length;
+    const fileDeleteFailed = fileCleanup.filter((x) => x.status === "rejected").length;
+
+    await cleanupUserRagNotes(uid).catch(() => null);
+    await deleteUserState(uid);
+
+    let authDeleted = false;
+    let authDeleteError = "";
+    try {
+      await deleteFirebaseAuthUser(uid);
+      authDeleted = true;
+    } catch (error) {
+      authDeleteError = cleanText(error?.message || "Failed to delete auth user.", 300);
+    }
+
+    return res.json({
+      ok: true,
+      deleted: {
+        firestoreState: true,
+        authUser: authDeleted,
+        filesDeleted,
+        fileDeleteFailed
+      },
+      warning: authDeleted ? "" : "Data deleted, but auth account deletion failed. Please contact admin if account still exists.",
+      authDeleteError,
+      requestId: req.requestId
+    });
+  } catch (error) {
+    return handleError(res, "Failed to delete account", error);
   }
 });
 
@@ -2499,6 +2545,28 @@ async function maybeDeleteStoredFile(item) {
   if (!pathValue) return false;
   await cloudinary.uploader.destroy(pathValue, { resource_type: "raw", invalidate: true });
   return true;
+}
+
+async function cleanupUserRagNotes(studentId) {
+  if (!isFirebaseConfigured()) return 0;
+  const safeId = normalizeStudentId(studentId);
+  if (!safeId) return 0;
+  const col = getFirestore().collection(config.rag.collection);
+  let deleted = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const snap = await col.where("studentId", "==", safeId).limit(100).get();
+    if (snap.empty) {
+      hasMore = false;
+      break;
+    }
+    const batch = getFirestore().batch();
+    snap.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+    deleted += snap.size;
+    if (snap.size < 100) hasMore = false;
+  }
+  return deleted;
 }
 
 async function applyPracticeSignals(uid, analysis) {
