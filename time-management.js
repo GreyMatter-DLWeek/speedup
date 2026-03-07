@@ -315,10 +315,12 @@ function parseIcsPropertyLine(line) {
   return { key, value, params };
 }
 
-function getIcsDateTimeContext(event, key, calendarTimeZone) {
+function getIcsDateTimeContext(event, key, calendarTimeZone, preferredTimeZone = "") {
   const params = event?.[`${key}__PARAMS`];
   const tzid = normalizeIanaTimezone(params?.TZID || "");
-  const fallback = normalizeIanaTimezone(calendarTimeZone) || getDefaultTimeZone();
+  const fallback = normalizeIanaTimezone(calendarTimeZone)
+    || normalizeIanaTimezone(preferredTimeZone)
+    || getDefaultTimeZone();
   return {
     timeZone: tzid || fallback
   };
@@ -461,9 +463,10 @@ function collapseSchoolBlocksByTimeslot(blocks) {
   return dedupeSchoolBlocks(collapsed);
 }
 
-function parseIcsOccurrences(buffer) {
+function parseIcsOccurrences(buffer, options = {}) {
   const text = String(buffer?.toString("utf8") || "");
   if (!text.trim()) return [];
+  const preferredTimeZone = normalizeIanaTimezone(options?.preferredTimeZone || "");
 
   const unfolded = text.replace(/\r?\n[ \t]/g, "");
   const lines = unfolded.split(/\r?\n/);
@@ -507,9 +510,15 @@ function parseIcsOccurrences(buffer) {
 
   const occurrences = [];
   events.forEach((event) => {
-    const startInfo = parseIcsDateTime(event.DTSTART || "", getIcsDateTimeContext(event, "DTSTART", calendarTimeZone));
+    const startInfo = parseIcsDateTime(
+      event.DTSTART || "",
+      getIcsDateTimeContext(event, "DTSTART", calendarTimeZone, preferredTimeZone)
+    );
     if (!startInfo?.time) return;
-    const endInfo = parseIcsDateTime(event.DTEND || "", getIcsDateTimeContext(event, "DTEND", calendarTimeZone));
+    const endInfo = parseIcsDateTime(
+      event.DTEND || "",
+      getIcsDateTimeContext(event, "DTEND", calendarTimeZone, preferredTimeZone)
+    );
     const start = startInfo.time;
     let end = endInfo?.time || addMinutesToClock(start, 60);
     if (hourToInt(end) <= hourToInt(start)) {
@@ -539,8 +548,8 @@ function parseIcsOccurrences(buffer) {
   return occurrences;
 }
 
-function parseIcsTimetableBuffer(buffer) {
-  const occurrences = parseIcsOccurrences(buffer);
+function parseIcsTimetableBuffer(buffer, options = {}) {
+  const occurrences = parseIcsOccurrences(buffer, options);
   return collapseSchoolBlocksByTimeslot(occurrences.map((item) => ({
     day: item.day,
     start: item.start,
@@ -549,8 +558,8 @@ function parseIcsTimetableBuffer(buffer) {
   })));
 }
 
-function parseIcsWeeklyBlocks(buffer) {
-  const occurrences = parseIcsOccurrences(buffer);
+function parseIcsWeeklyBlocks(buffer, options = {}) {
+  const occurrences = parseIcsOccurrences(buffer, options);
   const weekly = {};
 
   occurrences.forEach((item) => {
@@ -784,7 +793,8 @@ async function extractSchoolBlocksFromUpload(file, deps) {
     mammoth,
     callOpenAIChat,
     safeParseJson,
-    isOpenAIConfigured
+    isOpenAIConfigured,
+    preferredTimeZone
   } = deps || {};
 
   if (!buffer || !Buffer.isBuffer(buffer)) {
@@ -795,8 +805,8 @@ async function extractSchoolBlocksFromUpload(file, deps) {
 
   if (ext === ".ics" || mime.includes("text/calendar") || mime.includes("application/ics")) {
     try {
-      const blocks = parseIcsTimetableBuffer(buffer);
-      const weeklyBlocks = parseIcsWeeklyBlocks(buffer);
+      const blocks = parseIcsTimetableBuffer(buffer, { preferredTimeZone });
+      const weeklyBlocks = parseIcsWeeklyBlocks(buffer, { preferredTimeZone });
       return { fileType: "ics", provider: "ics-parser", blocks, weeklyBlocks };
     } catch (error) {
       primaryParseError = String(error?.message || "ICS parsing failed.");
@@ -846,13 +856,14 @@ async function extractSchoolBlocksFromCalendarUrl(calendarUrlRaw, deps) {
   const {
     callOpenAIChat,
     safeParseJson,
-    isOpenAIConfigured
+    isOpenAIConfigured,
+    preferredTimeZone
   } = deps || {};
 
   let primaryParseError = "";
   try {
-    const blocks = parseIcsTimetableBuffer(buffer);
-    const weeklyBlocks = parseIcsWeeklyBlocks(buffer);
+    const blocks = parseIcsTimetableBuffer(buffer, { preferredTimeZone });
+    const weeklyBlocks = parseIcsWeeklyBlocks(buffer, { preferredTimeZone });
     return { fileType: "ics-url", provider: "ics-url-parser", blocks, weeklyBlocks, calendarUrl };
   } catch (error) {
     primaryParseError = String(error?.message || "Calendar URL parsing failed.");
@@ -2423,6 +2434,7 @@ function registerTimeManagementRoutes(app, deps) {
       await schemaReady;
       const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.body?.weekStart || req.query?.weekStart);
+      const preferredTimeZone = normalizeIanaTimezone(req.body?.browserTimeZone || req.query?.browserTimeZone || "");
       const file = req.file;
       const calendarUrl = String(req.body?.calendarUrl || "").trim();
       if (!file && !calendarUrl) {
@@ -2435,12 +2447,14 @@ function registerTimeManagementRoutes(app, deps) {
           mammoth,
           callOpenAIChat,
           safeParseJson,
-          isOpenAIConfigured
+          isOpenAIConfigured,
+          preferredTimeZone
         })
         : await extractSchoolBlocksFromCalendarUrl(calendarUrl, {
           callOpenAIChat,
           safeParseJson,
-          isOpenAIConfigured
+          isOpenAIConfigured,
+          preferredTimeZone
         });
       if (!parsed.blocks.length) {
         return res.status(400).json({ error: "No timetable blocks detected from the uploaded file/calendar URL." });
