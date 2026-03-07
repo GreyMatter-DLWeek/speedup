@@ -27,17 +27,33 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const requestCounters = new Map();
 const FRONTEND_PUBLIC_DIR = path.resolve(__dirname, "../frontend/public");
+const HEALTH_DIAGNOSTIC_TTL_MS = 60 * 1000;
+const FIREBASE_DIAGNOSTIC_TIMEOUT_MS = 1200;
+const firebaseDiagnosticsCache = {
+  read: false,
+  write: false,
+  error: "pending",
+  checkedAt: 0,
+  inFlight: false
+};
 
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "http://localhost:3000")
   .split(",")
-  .map((v) => v.trim())
+  .map((v) => normalizeOrigin(v))
   .filter(Boolean);
+
+app.use((req, res, next) => {
+  req.requestId = `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  res.setHeader("x-request-id", req.requestId);
+  next();
+});
 
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      const normalized = normalizeOrigin(origin);
+      if (allowedOrigins.includes("*") || allowedOrigins.includes(normalized)) return callback(null, true);
       return callback(new Error("CORS blocked for origin."));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -46,10 +62,6 @@ app.use(
 );
 app.use(express.json({ limit: "2mb" }));
 app.use(express.static(FRONTEND_PUBLIC_DIR));
-app.use((req, res, next) => {
-  req.requestId = `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  next();
-});
 
 const upload = multer
   ? multer({
@@ -83,6 +95,12 @@ if (cloudinary && config.cloudinary.cloudName && config.cloudinary.apiKey && con
 }
 
 app.get("/api/health", async (req, res) => {
+  refreshFirebaseDiagnosticsIfStale();
+  const firebaseDiagnostics = {
+    read: firebaseDiagnosticsCache.read,
+    write: firebaseDiagnosticsCache.write,
+    error: firebaseDiagnosticsCache.error
+  };
   res.json({
     ok: true,
     services: {
@@ -90,6 +108,16 @@ app.get("/api/health", async (req, res) => {
       ragConfigured: Boolean(isFirebaseConfigured()),
       firebaseConfigured: Boolean(isFirebaseConfigured()),
       fileStorageConfigured: Boolean(isCloudinaryConfigured())
+    },
+    checks: {
+      openaiCallReady: Boolean(config.openai.apiKey && config.openai.model),
+      firebaseAuthReady: Boolean(isFirebaseConfigured()),
+      firestoreRead: firebaseDiagnostics.read,
+      firestoreWrite: firebaseDiagnostics.write
+    },
+    diagnostics: {
+      firestoreError: firebaseDiagnostics.error || "",
+      firestoreCheckedAt: firebaseDiagnosticsCache.checkedAt || 0
     },
     timestamp: new Date().toISOString()
   });
@@ -149,10 +177,12 @@ app.put("/api/user/profile", requireFirebaseAuth, async (req, res) => {
 app.get("/api/user/state", requireFirebaseAuth, async (req, res) => {
   try {
     const uid = req.firebaseUser.uid;
-    const state = await getUserState(uid);
-    return res.json({ ok: true, state });
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    state.student = state.student || {};
+    state.student.id = uid;
+    return res.json({ ok: true, state, requestId: req.requestId });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to load user state. Please try again." });
+    return handleError(res, "Failed to load user state", error);
   }
 });
 
@@ -161,10 +191,12 @@ app.put("/api/user/state", requireFirebaseAuth, async (req, res) => {
     const uid = req.firebaseUser.uid;
     const state = req.body?.state;
     if (!state || typeof state !== "object") return res.status(400).json({ error: "state object is required." });
+    state.student = state.student && typeof state.student === "object" ? state.student : {};
+    state.student.id = uid;
     await setUserState(uid, state);
-    return res.json({ ok: true, savedAt: new Date().toISOString() });
+    return res.json({ ok: true, savedAt: new Date().toISOString(), requestId: req.requestId });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to save user state. Please try again." });
+    return handleError(res, "Failed to save user state", error);
   }
 });
 
@@ -336,8 +368,23 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
   try {
     const contextType = cleanText(req.body?.contextType || "active-reading", 40).toLowerCase();
     const question = cleanText(req.body?.question, 2000);
+    const clarityHint = cleanText(req.body?.clarityHint || "", 200);
     const context = req.body?.context && typeof req.body.context === "object" ? req.body.context : {};
     if (!question) return res.status(400).json({ error: "question is required." });
+    if (isGreetingMessage(question)) {
+      return res.json({
+        ok: true,
+        provider: "system",
+        contextType,
+        scope: { label: "Greeting", contextType },
+        answer: "Hi. Share one topic or question and I will explain it in short steps with one concrete example.",
+        citations: [],
+        actions: [
+          { type: "quick", label: "Explain section", target: "explain" },
+          { type: "quick", label: "Give worked example", target: "example" }
+        ]
+      });
+    }
 
     const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
     const evidence = buildTutorEvidence(contextType, context);
@@ -363,17 +410,27 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
       "You are SpeedUp AI Tutor.",
       "Always stay within the supplied context scope.",
       "Return strict JSON with keys: answer, citations, actions.",
+      "If user message is greeting/small-talk, return a short conversational answer only.",
+      "When user asks for simplification, reduce jargon and give 3-5 short steps.",
       "citations must be an array of {docName,page,quote,jumpRef,sourceType}.",
       "actions must be an array of up to 4 items with keys {type,label,target,jumpRef,text}.",
+      "For Study Pack queries, ground the answer in section snippets and mention section refs when available.",
+      "Do not fabricate citations, page numbers, or quotes. Use only supplied evidence.",
+      "When appropriate, include actions for jump-section, add-to-notes, flashcards, or revise-link.",
       "If evidence is weak, clearly state uncertainty and ask user to expand scope."
     ].join(" ");
 
     const userPayload = {
       contextType,
       question,
+      clarityHint,
       scope: evidence.scope,
       localCitations: baselineCitations,
-      retrievedNotes: ragHits.map((h) => ({ title: h.title, source: h.source, snippet: h.snippet }))
+      retrievedNotes: ragHits.map((h) => ({ title: h.title, source: h.source, snippet: h.snippet })),
+      actionPolicy: {
+        primaryTypes: ["jump-section", "add-to-notes", "flashcards", "revise-link"],
+        maxActions: 4
+      }
     };
 
     let parsed = null;
@@ -411,7 +468,187 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
   }
 });
 
-app.post("/api/highlight/analyze", requireFirebaseAuth, withRateLimit("highlight", 50, 60 * 1000), async (req, res) => {
+app.post("/api/study-pack/upload-pdf", withRateLimit("study_pack_upload", 20, 60 * 1000), upload.single("pdf"), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: "Upload a PDF file first." });
+
+    const ext = path.extname(String(file.originalname || "")).toLowerCase();
+    const mime = String(file.mimetype || "").toLowerCase();
+    if (ext !== ".pdf" && !mime.includes("pdf")) {
+      return res.status(400).json({ error: "Only PDF uploads are supported for Study Pack." });
+    }
+
+    const extractedText = await extractTextFromFile(file);
+    const textLength = String(extractedText || "").trim().length;
+    if (textLength < 80) {
+      return res.status(400).json({ error: "Could not extract enough readable text from the PDF." });
+    }
+
+    const sections = buildStudyPackSectionsFromText(extractedText, file.originalname || "PDF");
+    return res.json({
+      ok: true,
+      file: {
+        name: cleanText(file.originalname || "PDF", 180),
+        type: cleanText(file.mimetype || "application/pdf", 80),
+        size: Number(file.size || 0)
+      },
+      textLength,
+      sections
+    });
+  } catch (error) {
+    handleError(res, "Failed to upload Study Pack PDF", error);
+  }
+});
+
+app.post("/api/study-pack/checkpoint-quiz", withRateLimit("study_pack_quiz", 40, 60 * 1000), async (req, res) => {
+  try {
+    const packTitle = cleanText(req.body?.packTitle || "Study Pack", 140) || "Study Pack";
+    const sectionRef = cleanText(req.body?.sectionRef || "", 30);
+    const sectionTitle = cleanText(req.body?.sectionTitle || "", 180) || `Section ${sectionRef || ""}`.trim();
+    const text = cleanText(req.body?.text, 18000);
+    if (!text) return res.status(400).json({ error: "Section text is required." });
+
+    const fallback = buildDeterministicCheckpointQuiz(text, sectionRef, sectionTitle);
+    let provider = "fallback";
+    let quiz = fallback;
+
+    try {
+      const raw = await callOpenAIChat(
+        [
+          {
+            role: "system",
+            content: [
+              "You generate section checkpoint quizzes.",
+              "Return strict JSON with shape {\"quiz\":{\"title\":string,\"questions\":[{\"question\":string,\"options\":string[4],\"answer\":string}]}}.",
+              "Create 3-4 questions. Questions should be concise and exam-oriented.",
+              "Answer must exactly match one option."
+            ].join(" ")
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              packTitle,
+              sectionRef,
+              sectionTitle,
+              text: snippet(text, 9000)
+            })
+          }
+        ],
+        0.2
+      );
+      const parsed = safeParseJson(raw);
+      const normalized = normalizeCheckpointQuiz(parsed?.quiz || parsed, fallback.title);
+      if (normalized.questions.length) {
+        quiz = normalized;
+        provider = "openai-api";
+      }
+    } catch {
+      quiz = fallback;
+      provider = "fallback";
+    }
+
+    return res.json({ ok: true, provider, quiz });
+  } catch (error) {
+    handleError(res, "Failed to generate Study Pack checkpoint quiz", error);
+  }
+});
+
+app.post("/api/study-pack/cheatsheet", withRateLimit("study_pack_cheatsheet", 20, 60 * 1000), async (req, res) => {
+  try {
+    const packTitle = cleanText(req.body?.packTitle || "Study Pack", 140) || "Study Pack";
+    const text = cleanText(req.body?.text, 50000);
+    if (!text) return res.status(400).json({ error: "Pack text is required." });
+
+    const fallback = buildDeterministicCheatsheet(packTitle, text);
+    let cheatsheet = fallback;
+    let provider = "fallback";
+
+    try {
+      const raw = await callOpenAIChat(
+        [
+          {
+            role: "system",
+            content: [
+              "You produce concise revision cheatsheets.",
+              "Return strict JSON with key {\"cheatsheet\": string}.",
+              "Structure output with headings, bullet points, common mistakes, and a short revision drill.",
+              "Keep it compact and practical for exam revision."
+            ].join(" ")
+          },
+          {
+            role: "user",
+            content: JSON.stringify({ packTitle, text: snippet(text, 12000) })
+          }
+        ],
+        0.2
+      );
+      const parsed = safeParseJson(raw);
+      const candidate = cleanText(parsed?.cheatsheet, 18000);
+      if (candidate) {
+        cheatsheet = candidate;
+        provider = "openai-api";
+      }
+    } catch {
+      cheatsheet = fallback;
+      provider = "fallback";
+    }
+
+    return res.json({ ok: true, provider, cheatsheet });
+  } catch (error) {
+    handleError(res, "Failed to generate Study Pack cheatsheet", error);
+  }
+});
+
+app.post("/api/study-pack/teach-mode", withRateLimit("study_pack_teach", 30, 60 * 1000), async (req, res) => {
+  try {
+    const packTitle = cleanText(req.body?.packTitle || "Study Pack", 140) || "Study Pack";
+    const sectionRef = cleanText(req.body?.sectionRef || "", 30);
+    const sectionTitle = cleanText(req.body?.sectionTitle || "", 180) || `Section ${sectionRef || ""}`.trim();
+    const text = cleanText(req.body?.text, 18000);
+    if (!text) return res.status(400).json({ error: "Section text is required." });
+
+    const fallback = buildDeterministicLecture(sectionRef, sectionTitle, text);
+    let lecture = fallback;
+    let provider = "fallback";
+
+    try {
+      const raw = await callOpenAIChat(
+        [
+          {
+            role: "system",
+            content: [
+              "You are a lecture-style tutor.",
+              "Return strict JSON with key {\"lecture\": string}.",
+              "Explain with a lecture flow: hook, intuition, steps, mini-checkpoint, recap.",
+              "Use approachable teaching language and keep it grounded in provided section text only."
+            ].join(" ")
+          },
+          {
+            role: "user",
+            content: JSON.stringify({ packTitle, sectionRef, sectionTitle, text: snippet(text, 9000) })
+          }
+        ],
+        0.25
+      );
+      const parsed = safeParseJson(raw);
+      const candidate = cleanText(parsed?.lecture, 18000);
+      if (candidate) {
+        lecture = candidate;
+        provider = "openai-api";
+      }
+    } catch {
+      lecture = fallback;
+      provider = "fallback";
+    }
+
+    return res.json({ ok: true, provider, lecture });
+  } catch (error) {
+    handleError(res, "Failed to generate Study Pack teach mode", error);
+  }
+});
+
+app.post("/api/highlight/analyze", withRateLimit("highlight", 50, 60 * 1000), async (req, res) => {
   try {
     const text = cleanText(req.body?.text, 3000);
     const topic = cleanText(req.body?.topic || "General", 120) || "General";
@@ -568,6 +805,8 @@ if (registerTimeManagementRoutes) {
     safeParseJson,
     isOpenAIConfigured,
     normalizeStudentId,
+    requireFirebaseAuth,
+    resolveAuthorizedStudentId,
     upload,
     pdfParse,
     mammoth
@@ -964,6 +1203,21 @@ app.get("/api/live/bootstrap/:studentId", requireFirebaseAuth, async (req, res) 
   }
 });
 
+app.use((error, req, res, next) => {
+  if (!error) return next();
+  const requestId = req?.requestId || `r_${Date.now().toString(36)}`;
+  const message = String(error?.message || "");
+  if (/cors blocked for origin/i.test(message)) {
+    return res.status(403).json({
+      error: "CORS blocked for origin.",
+      code: "CORS_BLOCKED",
+      hint: `Add this origin to ALLOWED_ORIGINS: ${req?.headers?.origin || "unknown-origin"}`,
+      requestId
+    });
+  }
+  return handleError(res, "Unhandled server error", error);
+});
+
 app.get("*", (req, res) => {
   res.sendFile(path.resolve(FRONTEND_PUBLIC_DIR, "index.html"));
 });
@@ -1001,6 +1255,18 @@ function normalizeStudentId(value) {
     .replace(/-+/g, "-");
 }
 
+function isGreetingMessage(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized);
+}
+
+function normalizeOrigin(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
 function trimSlash(url) {
   return String(url || "").replace(/\/+$/, "");
 }
@@ -1022,7 +1288,103 @@ function cleanList(input, maxItems = 10, maxItemLength = 120) {
 
 function handleError(res, label, error) {
   console.error(label, error?.message || error);
-  res.status(500).json({ error: `${label}. Please try again.` });
+  const req = res?.req;
+  const requestId = req?.requestId || "";
+  const details = mapErrorDetails(error);
+  res.status(details.status).json({
+    error: details.message || `${label}. Please try again.`,
+    code: details.code,
+    hint: details.hint,
+    requestId
+  });
+}
+
+function mapErrorDetails(error) {
+  const raw = String(error?.message || "").toLowerCase();
+  if (String(error?.code || "") === "STATE_TOO_LARGE" || raw.includes("too large")) {
+    return {
+      status: 413,
+      code: "STATE_TOO_LARGE",
+      message: "State payload is too large to save.",
+      hint: "Reduce uploaded source history or clear old tutor/highlight history."
+    };
+  }
+  if (raw.includes("permission_denied") || raw.includes("missing or insufficient permissions") || Number(error?.code) === 7) {
+    return {
+      status: 503,
+      code: "FIRESTORE_PERMISSION_DENIED",
+      message: "Firestore access is denied for the backend service account.",
+      hint: "Verify Render Firebase Admin credentials and IAM roles for Firestore."
+    };
+  }
+  if (raw.includes("deadline exceeded") || raw.includes("timeout") || Number(error?.code) === 4) {
+    return {
+      status: 503,
+      code: "FIRESTORE_TIMEOUT",
+      message: "Firestore operation timed out.",
+      hint: "Retry shortly and check Firestore region/availability."
+    };
+  }
+  if (raw.includes("firebase admin is not configured")) {
+    return {
+      status: 503,
+      code: "FIREBASE_NOT_CONFIGURED",
+      message: "Firebase Admin is not configured on backend.",
+      hint: "Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY."
+    };
+  }
+  return {
+    status: 500,
+    code: "INTERNAL_ERROR",
+    message: "",
+    hint: "Check backend logs using the returned requestId."
+  };
+}
+
+async function runFirebaseDiagnostics() {
+  if (!isFirebaseConfigured()) return { read: false, write: false, error: "firebase-not-configured" };
+  try {
+    const db = getFirestore();
+    const probe = db.collection("speedup_health").doc("probe");
+    await withTimeout(probe.get(), FIREBASE_DIAGNOSTIC_TIMEOUT_MS);
+    return { read: true, write: true, error: "" };
+  } catch (error) {
+    return {
+      read: false,
+      write: false,
+      error: String(error?.message || error || "").slice(0, 240)
+    };
+  }
+}
+
+function refreshFirebaseDiagnosticsIfStale() {
+  const now = Date.now();
+  if (firebaseDiagnosticsCache.inFlight) return;
+  if (now - Number(firebaseDiagnosticsCache.checkedAt || 0) < HEALTH_DIAGNOSTIC_TTL_MS) return;
+  firebaseDiagnosticsCache.inFlight = true;
+  runFirebaseDiagnostics()
+    .then((result) => {
+      firebaseDiagnosticsCache.read = Boolean(result?.read);
+      firebaseDiagnosticsCache.write = Boolean(result?.write);
+      firebaseDiagnosticsCache.error = String(result?.error || "");
+      firebaseDiagnosticsCache.checkedAt = Date.now();
+    })
+    .catch((error) => {
+      firebaseDiagnosticsCache.read = false;
+      firebaseDiagnosticsCache.write = false;
+      firebaseDiagnosticsCache.error = String(error?.message || error || "diagnostic-failed").slice(0, 240);
+      firebaseDiagnosticsCache.checkedAt = Date.now();
+    })
+    .finally(() => {
+      firebaseDiagnosticsCache.inFlight = false;
+    });
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("diagnostic-timeout")), ms))
+  ]);
 }
 
 function safeParseJson(raw) {
@@ -1432,6 +1794,8 @@ function createMinimalState(studentId) {
     highlights: [],
     notes: {},
     practiceUploads: [],
+    focusSessions: [],
+    dashboardFeedback: {},
     examHistory: [],
     responsibleControls: {},
     auditLog: []
@@ -1762,6 +2126,293 @@ function decodeXml(text) {
     .replace(/&#39;/g, "'");
 }
 
+function buildSectionRef(index) {
+  const chapter = Math.floor(Number(index || 0) / 3) + 1;
+  const part = (Number(index || 0) % 3) + 1;
+  return `${chapter}.${part}`;
+}
+
+function looksLikeHeading(value) {
+  const line = cleanText(value, 180);
+  if (!line || line.length > 120) return false;
+  if (/^(chapter|section|topic|unit|module)\b/i.test(line)) return true;
+  if (/^\d+(?:\.\d+){0,2}\s+/.test(line)) return true;
+  const alpha = line.replace(/[^a-z]/gi, "");
+  if (alpha.length >= 6 && alpha === alpha.toUpperCase() && line.split(/\s+/).length <= 10) return true;
+  return false;
+}
+
+function summarizeForSection(text, max = 260) {
+  const source = cleanText(text, 12000);
+  if (!source) return "";
+  const sentence = source.split(/(?<=[.!?])\s+/)[0] || source;
+  return snippet(sentence, max);
+}
+
+function extractKeyTerms(text, limit = 6) {
+  const stopwords = new Set([
+    "the", "and", "for", "that", "with", "this", "from", "into", "you", "your", "are", "was", "were", "have", "has", "had",
+    "when", "then", "than", "what", "why", "how", "can", "will", "may", "might", "about", "between", "within", "using", "used",
+    "also", "each", "which", "their", "there", "these", "those", "because", "should", "could", "would", "must", "into", "onto",
+    "section", "chapter", "topic", "example", "question", "answer", "method", "approach", "notes", "study", "pack"
+  ]);
+
+  const words = String(cleanText(text, 18000) || "")
+    .toLowerCase()
+    .match(/[a-z][a-z0-9-]{2,}/g) || [];
+
+  const freq = new Map();
+  words.forEach((word) => {
+    if (stopwords.has(word)) return;
+    freq.set(word, (freq.get(word) || 0) + 1);
+  });
+
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([word]) => word)
+    .slice(0, Math.max(1, Math.min(10, Number(limit) || 6)));
+}
+
+function buildStudyPackSectionsFromText(text, sourceName = "PDF") {
+  const normalized = cleanText(text, 180000).replace(/\r/g, "");
+  if (!normalized) return [];
+
+  const blocks = normalized
+    .split(/\n{2,}/)
+    .map((b) => cleanText(b, 12000))
+    .filter(Boolean);
+
+  const sections = [];
+  let pendingTitle = "";
+  let bucket = [];
+
+  const flush = () => {
+    const body = cleanText(bucket.join("\n\n"), 22000);
+    if (!body) {
+      bucket = [];
+      return;
+    }
+
+    const index = sections.length;
+    const ref = buildSectionRef(index);
+    const title = cleanText(pendingTitle || `Section ${ref}`, 180) || `Section ${ref}`;
+    const keyTerms = extractKeyTerms(body, 2);
+    sections.push({
+      id: `s-${index + 1}`,
+      ref,
+      title,
+      text: body,
+      summary: summarizeForSection(body, 320),
+      checkpoints: cleanList([
+        `Define the key idea in ${title}.`,
+        `Explain how to apply ${keyTerms[0] || "the concept"} in a worked example.`,
+        `What is a common mistake to avoid in ${title}?`
+      ], 3, 180),
+      sourceName: cleanText(sourceName, 180) || "PDF"
+    });
+
+    bucket = [];
+    pendingTitle = "";
+  };
+
+  (blocks.length ? blocks : [normalized]).forEach((block) => {
+    if (looksLikeHeading(block)) {
+      if (bucket.length) flush();
+      pendingTitle = cleanText(block, 180);
+      return;
+    }
+
+    bucket.push(block);
+    const currentLength = bucket.join("\n\n").length;
+    if (currentLength >= 2600) flush();
+  });
+  if (bucket.length) flush();
+
+  if (!sections.length) {
+    const chunkSize = 2200;
+    let offset = 0;
+    while (offset < normalized.length && sections.length < 24) {
+      const part = cleanText(normalized.slice(offset, offset + chunkSize), chunkSize);
+      if (!part) break;
+      const index = sections.length;
+      const ref = buildSectionRef(index);
+      sections.push({
+        id: `s-${index + 1}`,
+        ref,
+        title: `Section ${ref}`,
+        text: part,
+        summary: summarizeForSection(part, 320),
+        checkpoints: cleanList([
+          `What is the main idea in Section ${ref}?`,
+          `How would you apply Section ${ref} in one exam question?`
+        ], 2, 180),
+        sourceName: cleanText(sourceName, 180) || "PDF"
+      });
+      offset += chunkSize;
+    }
+  }
+
+  return sections.slice(0, 30);
+}
+
+function buildDeterministicCheckpointQuiz(text, sectionRef, sectionTitle) {
+  const sectionLabel = [sectionRef ? `Section ${sectionRef}` : "", cleanText(sectionTitle, 140)]
+    .filter(Boolean)
+    .join(" · ") || "Selected Section";
+  const terms = extractKeyTerms(text, 4);
+  const core = terms[0] || "the core concept";
+  const secondary = terms[1] || "its application";
+
+  const q1Answer = `It emphasizes ${core} and how to apply it step-by-step.`;
+  const q2Answer = `Identify given information, choose a method tied to ${core}, then verify assumptions.`;
+  const q3Answer = `A common mistake is skipping reasoning and memorizing steps without checking ${secondary}.`;
+
+  return {
+    title: `${sectionLabel} — Checkpoint Quiz`,
+    questions: [
+      {
+        question: `Which statement best captures the focus of ${sectionLabel}?`,
+        options: [
+          q1Answer,
+          "It is mainly about unrelated facts with no method.",
+          "It says speed matters more than understanding.",
+          "It avoids discussing mistakes or constraints."
+        ],
+        answer: q1Answer
+      },
+      {
+        question: `What is the best first-step strategy for questions from ${sectionLabel}?`,
+        options: [
+          "Start writing formulas immediately and hope they match.",
+          q2Answer,
+          "Skip context and jump to final answer format.",
+          "Memorize one pattern and force it on every question."
+        ],
+        answer: q2Answer
+      },
+      {
+        question: `Which weakness should you avoid when revising ${sectionLabel}?`,
+        options: [
+          "Reading quickly without practicing.",
+          "Using examples to check understanding.",
+          q3Answer,
+          "Linking mistakes to revision notes."
+        ],
+        answer: q3Answer
+      }
+    ]
+  };
+}
+
+function normalizeCheckpointQuiz(rawQuiz, fallbackTitle = "Checkpoint Quiz") {
+  const title = cleanText(rawQuiz?.title || fallbackTitle, 180) || "Checkpoint Quiz";
+  const rows = Array.isArray(rawQuiz?.questions)
+    ? rawQuiz.questions
+    : Array.isArray(rawQuiz)
+      ? rawQuiz
+      : [];
+
+  const distractors = [
+    "Review assumptions before finalizing the answer.",
+    "Compare your method with a worked example.",
+    "Check each step against the section definition.",
+    "Validate constraints and edge cases."
+  ];
+
+  const questions = rows
+    .map((row, idx) => {
+      const question = cleanText(row?.question, 260);
+      if (!question) return null;
+
+      let options = cleanList(row?.options, 8, 200);
+      let answer = cleanText(row?.answer, 200);
+
+      if (answer && !options.some((opt) => opt.toLowerCase() === answer.toLowerCase())) {
+        options.unshift(answer);
+      }
+      if (!answer && options.length) answer = options[0];
+
+      for (const extra of distractors) {
+        if (options.length >= 4) break;
+        if (!options.some((opt) => opt.toLowerCase() === extra.toLowerCase())) options.push(extra);
+      }
+
+      options = options.slice(0, 4);
+      if (!options.length) return null;
+
+      if (!answer || !options.some((opt) => opt.toLowerCase() === answer.toLowerCase())) {
+        answer = options[0];
+      }
+
+      return {
+        question,
+        options,
+        answer,
+        id: `q-${idx + 1}`
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 4);
+
+  return { title, questions };
+}
+
+function buildDeterministicCheatsheet(packTitle, text) {
+  const safePackTitle = cleanText(packTitle, 140) || "Study Pack";
+  const source = cleanText(text, 50000);
+  const lines = source
+    .split(/\n+/)
+    .map((l) => cleanText(l, 240))
+    .filter(Boolean);
+
+  const coreBullets = lines
+    .filter((line) => line.length >= 35)
+    .slice(0, 6)
+    .map((line) => `- ${snippet(line, 150)}`);
+
+  const terms = extractKeyTerms(source, 5);
+
+  return [
+    `${safePackTitle} — Cheatsheet`,
+    "",
+    "1) Core Ideas",
+    ...(coreBullets.length ? coreBullets : ["- Review the section summaries and rewrite each in one line."]),
+    "",
+    "2) Key Terms to Remember",
+    ...(terms.length ? terms.map((term) => `- ${term}`) : ["- Identify 3 repeated technical terms from your sections."]),
+    "",
+    "3) Common Mistakes",
+    "- Jumping into formulas without identifying assumptions.",
+    "- Memorizing procedures without understanding why they work.",
+    "- Ignoring repeated weak signals from recent practice papers.",
+    "",
+    "4) 15-Minute Revision Drill",
+    "- 5 min: explain one section out loud (no notes).",
+    "- 5 min: solve one checkpoint question under time pressure.",
+    "- 5 min: check mistakes and add one fix to your notes."
+  ].join("\n");
+}
+
+function buildDeterministicLecture(sectionRef, sectionTitle, text) {
+  const label = [sectionRef ? `Section ${sectionRef}` : "", cleanText(sectionTitle, 160)]
+    .filter(Boolean)
+    .join(" · ") || "this section";
+  const summary = summarizeForSection(text, 260) || "Focus on understanding the core idea before applying steps.";
+  const terms = extractKeyTerms(text, 3);
+  const termLine = terms.length ? terms.join(", ") : "the core idea and reasoning steps";
+
+  return [
+    `Let’s learn ${label} like a short lecture.`,
+    `Start with intuition: ${summary}`,
+    "Lecture flow:",
+    `1) Identify what the question is really asking and list known information.`,
+    `2) Choose a method linked to ${terms[0] || "the main concept"} and justify why it fits.`,
+    "3) Execute the method step-by-step, then check assumptions and edge cases.",
+    `Mini-checkpoint: Can you explain ${terms[0] || "the concept"} in one sentence and solve one fresh example?`,
+    `Recap: prioritise ${termLine}. If this is still weak, regenerate the checkpoint quiz for this section and retry.`
+  ].join("\n\n");
+}
+
 async function maybeStoreUploadedFile(uid, file) {
   if (!cloudinary) return null;
   if (String(process.env.ENABLE_FILE_STORAGE || "true").toLowerCase() === "false") return null;
@@ -1908,19 +2559,71 @@ function buildTutorEvidence(contextType, context) {
 
   if (type === "study-notes") {
     const packName = cleanText(safeContext.packName || "Study Pack", 140) || "Study Pack";
-    const section = cleanText(safeContext.section || "", 140);
+    const activeSection = safeContext.activeSection && typeof safeContext.activeSection === "object"
+      ? safeContext.activeSection
+      : null;
+    const activeSectionRef = cleanText(activeSection?.ref || "", 40);
+    const activeSectionTitle = cleanText(activeSection?.title || "", 180);
+    const section = cleanText(
+      safeContext.section || [activeSectionRef ? `Section ${activeSectionRef}` : "", activeSectionTitle].filter(Boolean).join(" · "),
+      160
+    );
     const selection = cleanText(safeContext.selection || "", 700);
+    const activeJumpRef = cleanText(activeSection?.jumpRef || "", 120) || "study-notes";
+    const activeText = cleanText(activeSection?.text || "", 4000);
+    const linkedSections = Array.isArray(safeContext.sections) ? safeContext.sections.slice(0, 4) : [];
+    const weaknessSignals = Array.isArray(safeContext.weaknessSignals) ? safeContext.weaknessSignals.slice(0, 4) : [];
     const highlights = Array.isArray(safeContext.highlights) ? safeContext.highlights.slice(0, 5) : [];
     const citations = [];
+
     if (selection) {
       citations.push({
         docName: packName,
         page: section || "Section",
         quote: selection,
-        jumpRef: "study-notes",
+        jumpRef: activeJumpRef,
         sourceType: "selection"
       });
     }
+
+    if (activeText) {
+      citations.push({
+        docName: packName,
+        page: section || (activeSectionRef ? `Section ${activeSectionRef}` : "Section"),
+        quote: snippet(activeText, 240),
+        jumpRef: activeJumpRef,
+        sourceType: "section"
+      });
+    }
+
+    linkedSections.forEach((row, idx) => {
+      if (!row || typeof row !== "object") return;
+      const rowRef = cleanText(row.ref || "", 40);
+      const rowTitle = cleanText(row.title || "", 180);
+      const rowSummary = cleanText(row.summary || row.text || "", 260);
+      if (!rowSummary) return;
+      citations.push({
+        docName: packName,
+        page: rowRef ? `Section ${rowRef}` : (rowTitle || `S${idx + 1}`),
+        quote: rowSummary,
+        jumpRef: cleanText(row.jumpRef || activeJumpRef, 120),
+        sourceType: "pack-section"
+      });
+    });
+
+    weaknessSignals.forEach((row) => {
+      if (!row || typeof row !== "object") return;
+      const message = cleanText(row.message || row.topic || "", 240);
+      if (!message) return;
+      citations.push({
+        docName: "Practice Signals",
+        page: cleanText(row.sectionRef || "Trend", 60) || "Trend",
+        quote: message,
+        jumpRef: cleanText(row.jumpRef || activeJumpRef, 120),
+        sourceType: "weakness-signal"
+      });
+    });
+
     highlights.forEach((h, idx) => {
       const quote = cleanText(h?.text || h?.summary || "", 220);
       if (!quote) return;
@@ -1928,16 +2631,18 @@ function buildTutorEvidence(contextType, context) {
         docName: packName,
         page: cleanText(h?.section || section || `S${idx + 1}`, 40),
         quote,
-        jumpRef: "study-notes",
+        jumpRef: cleanText(h?.jumpRef || activeJumpRef, 120),
         sourceType: "pack"
       });
     });
+
     return {
       scope: {
         label: `Context: Study Pack (${packName}${section ? ` · ${section}` : ""})`,
         contextType: "study-notes",
         packName,
-        section
+        section,
+        sectionRef: activeSectionRef
       },
       citations
     };
@@ -2063,9 +2768,22 @@ function buildTutorFallback(contextType, question, scope, citations) {
   }
 
   const safeCitations = dedupeTutorCitations(citations).slice(0, 4);
+  const isStudyPack = hint === "study-notes";
   const fallbackActions = [
-    safeCitations[0]?.jumpRef ? { type: "jump", label: "Jump to source", jumpRef: safeCitations[0].jumpRef } : null,
-    { type: "add-note", label: "Add to my notes", text: answer },
+    isStudyPack
+      ? {
+        type: "jump-section",
+        label: "Jump to section",
+        jumpRef: cleanText(safeCitations[0]?.jumpRef || "study-notes", 80) || "study-notes"
+      }
+      : safeCitations[0]?.jumpRef
+        ? {
+          type: "jump",
+          label: "Jump to source",
+          jumpRef: safeCitations[0].jumpRef
+        }
+        : null,
+    { type: isStudyPack ? "add-to-notes" : "add-note", label: "Add to my notes", text: answer },
     hint === "practice-papers"
       ? { type: "revise-link", label: "Revise in Study Notes", target: "study-notes" }
       : { type: "flashcards", label: "Turn into flashcards", text: answer }
@@ -2079,33 +2797,105 @@ function buildTutorFallback(contextType, question, scope, citations) {
   };
 }
 
+function mapTutorActionType(rawType, contextType) {
+  const value = String(rawType || "").trim().toLowerCase();
+  if (!value) return "";
+  if (["jump", "jump-section", "jump_to_section", "goto", "go-to", "go_to", "jump-to-source", "jump_to_source"].includes(value)) {
+    return String(contextType || "").toLowerCase() === "study-notes" ? "jump-section" : "jump";
+  }
+  if (["add-note", "add_to_note", "add_to_notes", "add-to-notes", "add-note-to-notes", "save-note"].includes(value)) {
+    return "add-to-notes";
+  }
+  if (["flashcard", "flashcards", "to-flashcards", "turn-into-flashcards", "turn_to_flashcards"].includes(value)) {
+    return "flashcards";
+  }
+  if (["revise", "revise-link", "revise_link", "review-link"].includes(value)) {
+    return "revise-link";
+  }
+  return value;
+}
+
 function normalizeTutorActions(actions, contextType, citations, answer, fallbackActions = []) {
+  const hint = String(contextType || "active-reading").toLowerCase();
+  const isStudyPack = hint === "study-notes";
+  const studyPackJumpRef = cleanText(citations[0]?.jumpRef || "study-notes", 80) || "study-notes";
   const normalized = Array.isArray(actions)
     ? actions
       .map((a) => {
         if (!a || typeof a !== "object") return null;
+        const normalizedType = mapTutorActionType(cleanText(a.type || "", 40), contextType);
         return {
-          type: cleanText(a.type || "", 40),
+          type: normalizedType,
           label: cleanText(a.label || "", 80),
           target: cleanText(a.target || "", 80),
           jumpRef: cleanText(a.jumpRef || "", 80),
           text: cleanText(a.text || "", 280)
         };
       })
-      .filter((a) => a && a.label)
+      .filter((a) => a && a.label && a.type)
+      .map((a) => {
+        if ((a.type === "jump" || a.type === "jump-section") && !a.jumpRef && citations[0]?.jumpRef) {
+          a.jumpRef = cleanText(citations[0].jumpRef, 80);
+        }
+        return a;
+      })
       .slice(0, 4)
     : [];
 
-  if (normalized.length) return normalized;
-
-  const hint = String(contextType || "active-reading").toLowerCase();
   const defaults = [
-    citations[0]?.jumpRef ? { type: "jump", label: "Jump to source", jumpRef: citations[0].jumpRef } : null,
-    { type: "add-note", label: "Add to my notes", text: cleanText(answer, 240) },
+    isStudyPack
+      ? {
+        type: "jump-section",
+        label: "Jump to section",
+        jumpRef: studyPackJumpRef
+      }
+      : citations[0]?.jumpRef
+        ? {
+          type: "jump",
+          label: "Jump to source",
+          jumpRef: citations[0].jumpRef
+        }
+        : null,
+    { type: "simplify", label: "Simplify further", text: cleanText(answer, 220) },
+    { type: isStudyPack ? "add-to-notes" : "add-note", label: "Add to my notes", text: cleanText(answer, 240) },
     hint === "practice-papers"
       ? { type: "revise-link", label: "Revise in Study Notes", target: "study-notes" }
       : { type: "flashcards", label: "Turn into flashcards", text: cleanText(answer, 200) }
   ].filter(Boolean);
 
-  return (fallbackActions.length ? fallbackActions : defaults).slice(0, 4);
+  const baseActions = (normalized.length ? normalized : (fallbackActions.length ? fallbackActions : defaults)).slice(0, 4);
+  if (!isStudyPack) return baseActions;
+
+  const requiredStudyPackActions = [
+    {
+      type: "jump-section",
+      label: "Jump to section",
+      jumpRef: studyPackJumpRef
+    },
+    {
+      type: "add-to-notes",
+      label: "Add to my notes",
+      text: cleanText(answer, 240)
+    }
+  ].filter(Boolean);
+
+  const merged = [];
+  const seen = new Set();
+  [...requiredStudyPackActions, ...baseActions].forEach((action) => {
+    if (!action?.type || !action?.label) return;
+    const key = String(action.type).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    merged.push(action);
+  });
+
+  if (!seen.has("flashcards") && merged.length < 4) {
+    merged.push({
+      type: "flashcards",
+      label: "Turn into flashcards",
+      text: cleanText(answer, 200)
+    });
+  }
+
+  return merged.slice(0, 4);
 }

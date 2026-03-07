@@ -7,17 +7,34 @@ export function initFeature3(ctx) {
     return email.slice(0, 2).toUpperCase();
   }
 
+  function isGreeting(text) {
+    const normalized = String(text || "").trim().toLowerCase();
+    return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized);
+  }
+
+  function simplificationHint(attempt) {
+    const n = Number(attempt || 0);
+    if (n <= 0) return "normal";
+    if (n === 1) return "simplify level 1: use shorter sentences and one concrete example.";
+    if (n === 2) return "simplify level 2: use analogy + 3-step checklist + one mini question.";
+    return "simplify level 3: explain as if teaching a beginner with zero assumptions.";
+  }
+
   async function tutorResponse(question, attempt = 0, feedback = "") {
-    const normalized = String(question || "").trim().toLowerCase();
-    if (/^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized)) {
+    if (isGreeting(question)) {
       return {
-        html: "Hi. I am your SpeedUp tutor. Tell me what concept you want to learn, and I will explain it step-by-step with an example.",
-        provider: "assistant-local",
+        html: "Hi. I am your SpeedUp tutor. Tell me one topic or question, and I will explain it with short steps and one worked example.",
+        provider: "system",
         raw: {}
       };
     }
 
-    const prompt = `Student asked: ${question}. Explain clearly with short steps and one example.`;
+    const prompt = [
+      `Student asked: ${question}`,
+      "Instruction: Explain clearly with short steps and one concrete example.",
+      `Clarity mode: ${simplificationHint(attempt)}.`,
+      feedback ? `Student feedback: ${feedback}.` : ""
+    ].filter(Boolean).join(" ");
     try {
       const out = await apiPost(API.explain, {
         paragraph: prompt,
@@ -25,7 +42,7 @@ export function initFeature3(ctx) {
         feedback,
         topicHint: "Tutor"
       });
-      const html = `<div style="font-size:11px;color:var(--accent);margin-bottom:8px;font-weight:600;">Why this response: based on your active topic and recent weak areas.</div><strong>${escapeHtml(out.concept || "Concept")}</strong><br><br>${escapeHtml(out.context || "")}<br><br><strong>Example:</strong> ${escapeHtml(out.example || "")}<br><br><strong>Check:</strong> ${escapeHtml(out.check || "")}`;
+      const html = `<div style="font-size:11px;color:var(--accent);margin-bottom:8px;font-weight:600;">Why this response: adapted to your current context and clarification level.</div><strong>${escapeHtml(out.concept || "Concept")}</strong><br><br>${escapeHtml(out.context || "")}<br><br><strong>Example:</strong> ${escapeHtml(out.example || "")}<br><br><strong>Check:</strong> ${escapeHtml(out.check || "")}`;
       return { html, provider: out.provider || "openai-api", raw: out };
     } catch {
       return {
@@ -74,7 +91,7 @@ export function initFeature3(ctx) {
     div.innerHTML = `
       <div class="msg-avatar msg-ai-avatar">AI</div>
       <div>
-        <div class="msg-bubble">${html}<div style="margin-top:8px;font-size:11px;color:var(--text3);">Provider: ${escapeHtml(provider)}</div></div>
+        <div class="msg-bubble">${html}<div style="margin-top:8px;font-size:11px;color:var(--text3);">Provider: ${escapeHtml(provider)}</div><div style="margin-top:4px;font-size:11px;color:var(--text3);">AI-generated content may be inaccurate. Verify with trusted course materials.</div></div>
         ${showClarity ? `<div class="msg-clarity">
           <button class="clarity-btn clarity-yes" onclick="sendClarityMsg(true)">Clear</button>
           <button class="clarity-btn clarity-no" onclick="sendClarityMsg(false)">Still confused</button>
@@ -127,8 +144,13 @@ export function initFeature3(ctx) {
     }
 
     const nextAttempt = Number(current.attempt || 0) + 1;
+    const levelFeedback = nextAttempt === 1
+      ? "not clear; simplify wording"
+      : nextAttempt === 2
+        ? "still not clear; use analogy and shorter steps"
+        : "still not clear; beginner-level explanation only";
     addUserMsg("Still confused, simplify.", true);
-    const response = await tutorResponse(current.question, nextAttempt, "not clear");
+    const response = await tutorResponse(current.question, nextAttempt, levelFeedback);
     addAIMsg(response.html, response.provider, { question: current.question, attempt: nextAttempt, feedback: "not clear" }, true);
     logAudit(`Tutor simplification requested (attempt ${nextAttempt}).`);
   }

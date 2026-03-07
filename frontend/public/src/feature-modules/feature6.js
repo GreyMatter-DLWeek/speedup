@@ -28,6 +28,12 @@ const CHART_COLORS = {
   border: "rgba(255,255,255,0.08)"
 };
 
+const FOCUS_MODE_LABELS = {
+  reading: "Active Reading",
+  tutor: "AI Tutor",
+  practice: "Practice Questions"
+};
+
 const STREAK_TARGET_MINUTES = 20;
 const HISTORY_DAYS = 16 * 7;
 
@@ -102,6 +108,300 @@ function getMasteryFromTopic(topic) {
   return clamp(100 - Number(topic?.weakScore || 0), 0, 100);
 }
 
+function isSchoolTask(task) {
+  const source = String(task?.source || "").toLowerCase();
+  const type = String(task?.type || "").toLowerCase();
+  return source === "school" || type === "school-block";
+}
+
+function getTaskConceptName(task) {
+  return normalizeTopicName(task?.topic || task?.subject || task?.title || "");
+}
+
+function isGenericStudyLabel(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return true;
+  return [
+    "revision",
+    "review",
+    "study",
+    "study session",
+    "practice",
+    "practice set",
+    "practice paper",
+    "mock test",
+    "exam prep",
+    "exam preparation",
+    "quiz prep",
+    "test prep",
+    "general"
+  ].includes(text);
+}
+
+function getTaskSubjectName(task) {
+  const subject = normalizeTopicName(task?.subject || "");
+  if (subject && !isGenericStudyLabel(subject)) return subject;
+
+  const topic = normalizeTopicName(task?.topic || "");
+  if (topic && !isGenericStudyLabel(topic)) return topic;
+
+  return "";
+}
+
+function simplifySubjectLabel(value) {
+  let label = normalizeTopicName(value);
+  if (!label) return "";
+  label = label.replace(/^[A-Z]{2,}\s*\d{3,5}[A-Z]?\s*-\s*/i, "");
+  label = label.replace(/\s*\((?:[^()]|\([^)]*\))*\)\s*$/g, "").trim();
+  label = label.replace(/&/g, " and ");
+  label = label.replace(/[-/]+/g, " ");
+  return label.replace(/\s+/g, " ").trim();
+}
+
+function getSubjectKey(value) {
+  return simplifySubjectLabel(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getSubjectTokens(value) {
+  const key = getSubjectKey(value);
+  return key ? key.split(" ").filter(Boolean) : [];
+}
+
+function getSubjectMatchScore(a, b) {
+  const left = getSubjectKey(a);
+  const right = getSubjectKey(b);
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  if (left.includes(right) || right.includes(left)) return 0.92;
+
+  const leftTokens = new Set(getSubjectTokens(left));
+  const rightTokens = new Set(getSubjectTokens(right));
+  if (!leftTokens.size || !rightTokens.size) return 0;
+
+  let intersection = 0;
+  leftTokens.forEach((token) => {
+    if (rightTokens.has(token)) intersection += 1;
+  });
+
+  return intersection / Math.max(leftTokens.size, rightTokens.size);
+}
+
+function getSubjectImportanceItems(tmState) {
+  return (Array.isArray(tmState?.subjectImportance) ? tmState.subjectImportance : [])
+    .map((item) => ({
+      ...item,
+      label: simplifySubjectLabel(item?.subject || ""),
+      key: getSubjectKey(item?.subject || "")
+    }))
+    .filter((item) => item.label && item.key)
+    .sort((a, b) => {
+      if (Number(b.importanceScore || 0) !== Number(a.importanceScore || 0)) {
+        return Number(b.importanceScore || 0) - Number(a.importanceScore || 0);
+      }
+      return Number(b.weeklyMinutes || 0) - Number(a.weeklyMinutes || 0);
+    });
+}
+
+function findMatchingImportanceSubject(subjectName, importanceItems) {
+  let best = null;
+  let bestScore = 0;
+
+  (importanceItems || []).forEach((item) => {
+    const score = getSubjectMatchScore(subjectName, item?.label || item?.subject || "");
+    if (score > bestScore) {
+      best = item;
+      bestScore = score;
+    }
+  });
+
+  return bestScore >= 0.5 ? best : null;
+}
+
+function buildSyntheticTopicsFromTimetable(tmState) {
+  const tasks = Array.isArray(tmState?.tasks) ? tmState.tasks : [];
+  const byName = new Map();
+
+  tasks.forEach((task) => {
+    if (!task || isSchoolTask(task)) return;
+    const name = getTaskConceptName(task);
+    if (!name) return;
+    if (!byName.has(name)) {
+      byName.set(name, {
+        name,
+        totalMinutes: 0,
+        completedMinutes: 0,
+        count: 0
+      });
+    }
+    const bucket = byName.get(name);
+    const mins = clamp(task?.estimatedMinutes || 60, 15, 240);
+    bucket.totalMinutes += mins;
+    bucket.count += 1;
+    if (String(task?.status || "").toLowerCase() === "completed") {
+      bucket.completedMinutes += mins;
+    }
+  });
+
+  return [...byName.values()].map((bucket) => {
+    const completionRatio = bucket.totalMinutes > 0 ? bucket.completedMinutes / bucket.totalMinutes : 0;
+    const repetitionBonus = clamp(bucket.count / 5, 0, 1);
+    const derivedMastery = clamp(Math.round((completionRatio * 72) + (repetitionBonus * 18) + 10), 10, 92);
+    return {
+      name: bucket.name,
+      totalMinutes: bucket.totalMinutes,
+      completedMinutes: bucket.completedMinutes,
+      count: bucket.count,
+      signalSource: "timetable",
+      weakScore: clamp(100 - derivedMastery, 8, 95)
+    };
+  });
+}
+
+function mergeTopicSignals(stateTopics, timetableTopics) {
+  const merged = new Map();
+
+  (Array.isArray(stateTopics) ? stateTopics : []).forEach((topic) => {
+    const name = normalizeTopicName(topic?.name);
+    if (!name) return;
+    merged.set(name.toLowerCase(), { ...topic, name });
+  });
+
+  (Array.isArray(timetableTopics) ? timetableTopics : []).forEach((topic) => {
+    const name = normalizeTopicName(topic?.name);
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (!merged.has(key)) {
+      merged.set(key, { ...topic, name });
+      return;
+    }
+    const existing = merged.get(key);
+    const existingWeak = Number(existing?.weakScore);
+    const incomingWeak = Number(topic?.weakScore);
+    if (!Number.isFinite(existingWeak) && Number.isFinite(incomingWeak)) {
+      merged.set(key, { ...existing, ...topic, name, weakScore: incomingWeak });
+      return;
+    }
+    if (Number.isFinite(existingWeak) && Number.isFinite(incomingWeak)) {
+      merged.set(key, {
+        ...existing,
+        ...topic,
+        name,
+        weakScore: clamp(Math.round((existingWeak * 0.7) + (incomingWeak * 0.3)), 0, 100)
+      });
+    }
+  });
+
+  return [...merged.values()];
+}
+
+function hasMeasuredTopicSignal(topic) {
+  return Number(topic?.count || 0) > 0
+    || Number(topic?.totalMinutes || 0) > 0
+    || Number(topic?.completedMinutes || 0) > 0;
+}
+
+function selectDashboardTopics(topics) {
+  const measured = (Array.isArray(topics) ? topics : [])
+    .filter((topic) => topic && hasMeasuredTopicSignal(topic));
+  return measured.length ? measured : [];
+}
+
+function buildSubjectSignals(tmState) {
+  const tasks = Array.isArray(tmState?.tasks) ? tmState.tasks : [];
+  const importanceItems = getSubjectImportanceItems(tmState);
+  const buckets = new Map();
+
+  const ensureBucket = (label, importance = null) => {
+    const key = getSubjectKey(label);
+    if (!key) return null;
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        name: simplifySubjectLabel(label) || label,
+        key,
+        totalMinutes: 0,
+        completedMinutes: 0,
+        count: 0,
+        schoolMinutes: Number(importance?.weeklyMinutes || 0),
+        blockCount: Number(importance?.blockCount || 0),
+        importanceRatio: Number(importance?.importanceRatio || 0),
+        importanceScore: Number(importance?.importanceScore || 0)
+      });
+    }
+
+    const bucket = buckets.get(key);
+    if (importance) {
+      bucket.name = importance.label || bucket.name;
+      bucket.schoolMinutes = Math.max(bucket.schoolMinutes, Number(importance.weeklyMinutes || 0));
+      bucket.blockCount = Math.max(bucket.blockCount, Number(importance.blockCount || 0));
+      bucket.importanceRatio = Math.max(bucket.importanceRatio, Number(importance.importanceRatio || 0));
+      bucket.importanceScore = Math.max(bucket.importanceScore, Number(importance.importanceScore || 0));
+    }
+    return bucket;
+  };
+
+  importanceItems.forEach((item) => {
+    ensureBucket(item.label, item);
+  });
+
+  tasks.forEach((task) => {
+    if (!task || isSchoolTask(task)) return;
+    if (String(task?.type || "").toLowerCase() === "mock-test") return;
+
+    const subjectName = getTaskSubjectName(task);
+    if (!subjectName) return;
+
+    const matchedImportance = findMatchingImportanceSubject(subjectName, importanceItems);
+    const bucket = ensureBucket(matchedImportance?.label || subjectName, matchedImportance);
+    if (!bucket) return;
+    const mins = clamp(task?.estimatedMinutes || 60, 15, 240);
+    bucket.totalMinutes += mins;
+    bucket.count += 1;
+    if (String(task?.status || "").toLowerCase() === "completed") {
+      bucket.completedMinutes += mins;
+    }
+  });
+
+  return [...buckets.values()].map((bucket) => {
+    const expectedMinutes = bucket.schoolMinutes > 0
+      ? Math.max(bucket.totalMinutes, Math.round(bucket.schoolMinutes * 1.2), 60)
+      : Math.max(bucket.totalMinutes, 60);
+    const completionRatio = expectedMinutes > 0 ? bucket.completedMinutes / expectedMinutes : 0;
+    const planningRatio = expectedMinutes > 0 ? bucket.totalMinutes / expectedMinutes : 0;
+    const repetitionBonus = clamp(bucket.count / 5, 0, 1);
+    const derivedMastery = clamp(
+      Math.round((completionRatio * 68) + (planningRatio * 16) + (repetitionBonus * 10) + 6),
+      6,
+      96
+    );
+    return {
+      name: bucket.name,
+      mastery: derivedMastery,
+      totalMinutes: bucket.totalMinutes,
+      completedMinutes: bucket.completedMinutes,
+      count: bucket.count,
+      schoolMinutes: bucket.schoolMinutes,
+      blockCount: bucket.blockCount,
+      importanceRatio: bucket.importanceRatio,
+      importanceScore: bucket.importanceScore
+    };
+  }).sort((a, b) => {
+    if (Number(b.importanceScore || 0) !== Number(a.importanceScore || 0)) {
+      return Number(b.importanceScore || 0) - Number(a.importanceScore || 0);
+    }
+    if (Number(b.schoolMinutes || 0) !== Number(a.schoolMinutes || 0)) {
+      return Number(b.schoolMinutes || 0) - Number(a.schoolMinutes || 0);
+    }
+    if (Number(b.mastery || 0) !== Number(a.mastery || 0)) {
+      return Number(b.mastery || 0) - Number(a.mastery || 0);
+    }
+    return String(a.name || "").localeCompare(String(b.name || ""));
+  });
+}
+
 function getOverallMastery(state, topicList) {
   const mastery = Array.isArray(state?.mastery) ? state.mastery : [];
   if (mastery.length) {
@@ -166,11 +466,11 @@ function ensureFeature6State(runtime) {
   return runtime.state.feature6;
 }
 
-function seedSnapshotsIfNeeded(runtime, topics, overallMastery) {
+function seedSnapshotsIfNeeded(runtime, topics, overallMastery, sourceState = null) {
   const feature6State = ensureFeature6State(runtime);
   if (feature6State.masterySnapshots.length) return false;
 
-  const state = runtime.state || {};
+  const state = sourceState && typeof sourceState === "object" ? sourceState : (runtime.state || {});
   const examDates = (state.examHistory || [])
     .map((exam) => String(exam?.date || "").slice(0, 10))
     .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
@@ -280,13 +580,347 @@ function createDailyMinutesMap(days = HISTORY_DAYS) {
   return map;
 }
 
+function shiftDate(dayOffset, hour = 9, minute = 0) {
+  const date = new Date();
+  date.setDate(date.getDate() + dayOffset);
+  date.setHours(hour, minute, 0, 0);
+  return date;
+}
+
+function parseHourToken(value, fallbackHour = 9, fallbackMinute = 0) {
+  const match = String(value || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return { hour: fallbackHour, minute: fallbackMinute };
+  return {
+    hour: clamp(Number(match[1]), 0, 23),
+    minute: clamp(Number(match[2]), 0, 59)
+  };
+}
+
+function dateForWeekday(weekStart, dayToken, fallbackOffset, hour = 9, minute = 0) {
+  const weekDate = parseDate(`${String(weekStart || "").slice(0, 10)}T00:00:00`);
+  const dayIndex = DAY_ORDER.indexOf(String(dayToken || "").toUpperCase());
+  if (!weekDate || dayIndex < 0) return shiftDate(fallbackOffset, hour, minute);
+
+  const date = new Date(weekDate);
+  date.setDate(date.getDate() + dayIndex);
+  date.setHours(hour, minute, 0, 0);
+  return date;
+}
+
+function getWeekEnd(weekStart) {
+  const start = parseDate(`${String(weekStart || "").slice(0, 10)}T00:00:00`);
+  if (!start) return "";
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return formatDateOnly(end);
+}
+
+function isDateWithinWeek(dateKey, weekStart) {
+  const key = String(dateKey || "").slice(0, 10);
+  const start = String(weekStart || "").slice(0, 10);
+  const end = getWeekEnd(start);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key) || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return false;
+  }
+  return key >= start && key <= end;
+}
+
+function collectRealStudyActivityDateKeys(state, tmState, weekStart = getCurrentWeekStart()) {
+  const keys = new Set();
+
+  getFocusSessions(state).forEach((session) => {
+    if (!session || String(session.status || "").toLowerCase() === "cancelled") return;
+    const key = String(session?.endedAt || session?.startedAt || "").slice(0, 10);
+    if (isDateWithinWeek(key, weekStart)) keys.add(key);
+  });
+
+  (Array.isArray(tmState?.tasks) ? tmState.tasks : []).forEach((task) => {
+    if (isSchoolTask(task)) return;
+    if (String(task?.status || "").toLowerCase() !== "completed") return;
+    const key = String(task?.completedAt || task?.updatedAt || "").slice(0, 10);
+    if (isDateWithinWeek(key, weekStart)) keys.add(key);
+  });
+
+  return keys;
+}
+
+function mergePreviewFocusSessions(state, tmState, previewSessions, force = false) {
+  const existing = getFocusSessions(state);
+  if (force) return previewSessions;
+  if (!previewSessions.length) return existing;
+
+  const realKeys = collectRealStudyActivityDateKeys(state, tmState, tmState?.weekStart || getCurrentWeekStart());
+  const supplements = previewSessions.filter((session) => {
+    const key = String(session?.endedAt || session?.startedAt || "").slice(0, 10);
+    return key && !realKeys.has(key);
+  });
+
+  return [...existing, ...supplements];
+}
+
+function mergePreviewAuditLog(existingAudit, previewAudit, force = false) {
+  const current = Array.isArray(existingAudit) ? existingAudit : [];
+  if (force) return previewAudit;
+  if (!previewAudit.length) return current;
+
+  const seen = new Set(current.map((entry) => `${String(entry?.ts || "").slice(0, 10)}|${String(entry?.message || "")}`));
+  const supplements = previewAudit.filter((entry) => {
+    const key = `${String(entry?.ts || "").slice(0, 10)}|${String(entry?.message || "")}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return [...current, ...supplements].sort((a, b) => String(a?.ts || "").localeCompare(String(b?.ts || ""))).slice(-60);
+}
+
+function buildProjectedSeries(currentValue, length = 7) {
+  const safeCurrent = clamp(currentValue, 0, 100);
+  const window = clamp(Math.round(((100 - safeCurrent) * 0.14) + 8), 6, 18);
+  return Array.from({ length }, (_unused, index) => {
+    const ratio = length <= 1 ? 1 : index / (length - 1);
+    return clamp(Math.round(safeCurrent - ((1 - ratio) * window)), 0, 100);
+  });
+}
+
+function derivePreviewTopics(state, tmState) {
+  const stateTopics = Array.isArray(state?.topics) ? state.topics : [];
+  const timetableTopics = buildSyntheticTopicsFromTimetable(tmState);
+  return mergeTopicSignals(stateTopics, timetableTopics);
+}
+
+function buildPreviewMasterySnapshots(topics, state) {
+  const offsets = [-6, -5, -4, -3, -2, -1, 0];
+  const overallSeries = buildProjectedSeries(getOverallMastery(state, topics), offsets.length);
+
+  return offsets.map((offset, index) => {
+    const date = shiftDate(offset, 0, 0);
+    const progress = offsets.length <= 1 ? 1 : index / (offsets.length - 1);
+    const concepts = {};
+    topics.forEach((topic, topicIndex) => {
+      const name = normalizeTopicName(topic?.name);
+      if (!name) return;
+      const current = getMasteryFromTopic(topic);
+      const lag = clamp(Math.round(((100 - current) * 0.16) + (topicIndex * 1.5) + 4), 4, 18);
+      concepts[name] = clamp(Math.round(current - ((1 - progress) * lag)), 0, 100);
+    });
+    return {
+      date: formatDateOnly(date),
+      overall: overallSeries[index],
+      concepts
+    };
+  });
+}
+
+function derivePreviewFocusMode(task) {
+  const type = String(task?.type || "").toLowerCase();
+  const source = String(task?.source || "").toLowerCase();
+  if (type.includes("practice") || type.includes("quiz") || type.includes("exam")) return "practice";
+  if (source === "ai") return "tutor";
+  return "reading";
+}
+
+function buildPreviewFocusSessions(tmState) {
+  const tasks = (Array.isArray(tmState?.tasks) ? tmState.tasks : [])
+    .filter((task) => task && !isSchoolTask(task) && String(task?.type || "").toLowerCase() !== "mock-test");
+  if (!tasks.length) return [];
+
+  const count = 5;
+  const slots = Array.isArray(tmState?.slots) ? tmState.slots : [];
+  const slotByTaskId = new Map();
+  slots.forEach((slot) => {
+    if (!slot?.taskId || slotByTaskId.has(slot.taskId)) return;
+    slotByTaskId.set(slot.taskId, slot);
+  });
+
+  const orderedTasks = tasks
+    .slice()
+    .sort((a, b) => {
+      const slotA = slotByTaskId.has(a?.id) ? 1 : 0;
+      const slotB = slotByTaskId.has(b?.id) ? 1 : 0;
+      if (slotB !== slotA) return slotB - slotA;
+      return String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""));
+    });
+
+  const previewDays = DAY_ORDER.slice(0, 5);
+
+  return Array.from({ length: count }, (_unused, index) => {
+    const task = orderedTasks[index % orderedTasks.length];
+    const slot = slotByTaskId.get(task?.id);
+    const dayToken = previewDays[index] || slot?.day || "MON";
+    const offset = -(count - 1 - index);
+    const fallbackHour = 8 + ((index % 4) * 3);
+    const parsedTime = parseHourToken(slot?.hour, fallbackHour, 0);
+    const start = dateForWeekday(tmState?.weekStart, dayToken, offset, parsedTime.hour, parsedTime.minute);
+    const duration = clamp(Math.round((clamp(task?.estimatedMinutes || 45, 20, 90) / 2) / 5) * 5, 20, 30);
+    const end = new Date(start.getTime() + (duration * 60000));
+    return {
+      id: `preview-focus-${task?.id || index}`,
+      mode: derivePreviewFocusMode(task),
+      targetMinutes: duration,
+      startedAt: start.toISOString(),
+      endedAt: end.toISOString(),
+      status: "completed"
+    };
+  });
+}
+
+function buildPreviewAuditLog(state, tmState, focusSessions) {
+  const entries = [];
+
+  focusSessions.slice(-4).forEach((session) => {
+    entries.push({
+      ts: session.endedAt || session.startedAt,
+      message: `Focus session completed: ${getFocusModeLabel(session.mode)} · ${formatMinutes(getFocusSessionMinutes(session))}.`
+    });
+  });
+
+  const latestCompletedTask = (Array.isArray(tmState?.tasks) ? tmState.tasks : [])
+    .filter((task) => task?.status === "completed")
+    .sort((a, b) => String(b.completedAt || b.updatedAt || "").localeCompare(String(a.completedAt || a.updatedAt || "")))[0];
+  if (latestCompletedTask) {
+    entries.push({
+      ts: latestCompletedTask.completedAt || latestCompletedTask.updatedAt || latestCompletedTask.createdAt || new Date().toISOString(),
+      message: `Completed ${latestCompletedTask.title || latestCompletedTask.subject || "study session"}.`
+    });
+  }
+
+  const latestUpload = (Array.isArray(state?.practiceUploads) ? state.practiceUploads : [])[0];
+  if (latestUpload?.name) {
+    entries.push({
+      ts: latestUpload.date || new Date().toISOString(),
+      message: `Practice upload analyzed: ${latestUpload.name}`
+    });
+  }
+
+  const latestHighlight = (Array.isArray(state?.highlights) ? state.highlights : [])[0];
+  if (latestHighlight?.topic) {
+    entries.push({
+      ts: latestHighlight.date || new Date().toISOString(),
+      message: `Highlight saved (${latestHighlight.provider || "local"}).`
+    });
+  }
+
+  return entries
+    .filter((entry) => entry?.message)
+    .sort((a, b) => String(a.ts || "").localeCompare(String(b.ts || "")))
+    .slice(-12);
+}
+
+function buildDashboardPreviewFixture(runtime, tmState, force = false) {
+  const baseState = runtime.state || {};
+  const topics = derivePreviewTopics(baseState, tmState);
+  const stateForPreview = {
+    ...baseState,
+    topics
+  };
+  const masterySnapshots = buildPreviewMasterySnapshots(topics, stateForPreview);
+  const focusSessions = buildPreviewFocusSessions(tmState);
+  const auditLog = buildPreviewAuditLog(baseState, tmState, focusSessions);
+
+  return {
+    state: {
+      ...baseState,
+      topics: topics.length ? topics : (Array.isArray(baseState.topics) ? baseState.topics : []),
+      mastery: force || !Array.isArray(baseState.mastery) || !baseState.mastery.length
+        ? masterySnapshots.map((entry) => entry.overall)
+        : baseState.mastery,
+      focusSessions: mergePreviewFocusSessions(baseState, tmState, focusSessions, force),
+      auditLog: mergePreviewAuditLog(baseState.auditLog, auditLog, force)
+    },
+    tmState: tmState || {},
+    masterySnapshots
+  };
+}
+
+function hasDashboardSignals(state, tmState) {
+  return Boolean(
+    (Array.isArray(state?.topics) && state.topics.length)
+    || (Array.isArray(state?.mastery) && state.mastery.length)
+    || (Array.isArray(state?.examHistory) && state.examHistory.length)
+    || (Array.isArray(state?.practiceUploads) && state.practiceUploads.length)
+    || (Array.isArray(state?.highlights) && state.highlights.length)
+    || getFocusSessions(state).length
+    || (Array.isArray(tmState?.tasks) && tmState.tasks.length)
+    || (Array.isArray(tmState?.slots) && tmState.slots.length)
+  );
+}
+
+function hasRealStudyActivity(state, tmState) {
+  return collectRealStudyActivityDateKeys(state, tmState, tmState?.weekStart || getCurrentWeekStart()).size > 0;
+}
+
+function shouldAutoPreviewDashboard(state, tmState) {
+  return collectRealStudyActivityDateKeys(state, tmState, tmState?.weekStart || getCurrentWeekStart()).size <= 1;
+}
+
+function shouldForceDashboardPreview() {
+  try {
+    const search = typeof window !== "undefined" ? window.location?.search || "" : "";
+    const value = new URLSearchParams(search).get("previewDashboard");
+    return ["1", "true", "yes", "on"].includes(String(value || "").toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+function getFocusSessions(state) {
+  return Array.isArray(state?.focusSessions) ? state.focusSessions : [];
+}
+
+function getFocusModeLabel(mode) {
+  return FOCUS_MODE_LABELS[mode] || "Focus Session";
+}
+
+function getFocusSessionEffectiveEnd(session, now = new Date()) {
+  const start = parseDate(session?.startedAt);
+  if (!start) return null;
+
+  const explicitEnd = parseDate(session?.endedAt);
+  const targetMinutes = Math.max(0, toInt(session?.targetMinutes || 0));
+  let end = explicitEnd || now;
+
+  if (targetMinutes > 0) {
+    const cappedEnd = new Date(start.getTime() + (targetMinutes * 60000));
+    if (cappedEnd < end) end = cappedEnd;
+  }
+
+  return end >= start ? end : start;
+}
+
+function getFocusSessionMinutes(session, now = new Date()) {
+  const start = parseDate(session?.startedAt);
+  const end = getFocusSessionEffectiveEnd(session, now);
+  if (!start || !end || end <= start) return 0;
+  return Math.max(1, Math.round((end.getTime() - start.getTime()) / 60000));
+}
+
+function addMinutesAcrossDays(map, start, end) {
+  if (!(start instanceof Date) || !(end instanceof Date) || end <= start) return;
+  let cursor = new Date(start);
+
+  while (cursor < end) {
+    const nextBoundary = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1);
+    const segmentEnd = end < nextBoundary ? end : nextBoundary;
+    const minutes = Math.max(1, Math.round((segmentEnd.getTime() - cursor.getTime()) / 60000));
+    const key = formatDateOnly(cursor);
+    if (map.has(key)) {
+      map.set(key, map.get(key) + minutes);
+    }
+    cursor = segmentEnd;
+  }
+}
+
 function buildMinutesTimeline(state, tmState) {
   const map = createDailyMinutesMap(HISTORY_DAYS);
+  const now = new Date();
 
-  (state.auditLog || []).forEach((entry) => {
-    const date = String(entry?.ts || "").slice(0, 10);
-    if (!map.has(date)) return;
-    map.set(date, map.get(date) + 12);
+  getFocusSessions(state).forEach((session) => {
+    if (!session || String(session.status || "").toLowerCase() === "cancelled") return;
+    const start = parseDate(session?.startedAt);
+    const end = getFocusSessionEffectiveEnd(session, now);
+    if (!start || !end || end <= start) return;
+    addMinutesAcrossDays(map, start, end);
   });
 
   const tasks = Array.isArray(tmState?.tasks) ? tmState.tasks : [];
@@ -322,29 +956,23 @@ function computeStreakAndDecay(dailyMinutes, overallMastery) {
   return { streakDays, inactivityDays, confidenceDecayPct };
 }
 
-function buildWeeklyMinutes(tmState) {
-  const minutesByDay = Object.fromEntries(DAY_ORDER.map((day) => [day, 0]));
-  const tasks = new Map((tmState?.tasks || []).map((task) => [task.id, task]));
-
-  (tmState?.slots || []).forEach((slot) => {
-    const day = String(slot?.day || "").toUpperCase();
-    const task = tasks.get(slot?.taskId);
-    if (!DAY_ORDER.includes(day) || !task) return;
-    const source = String(task?.source || "").toLowerCase();
-    const type = String(task?.type || "").toLowerCase();
-    if (source === "school" || type === "school-block") return;
-    minutesByDay[day] += clamp(task?.estimatedMinutes || 60, 15, 180);
+function buildWeeklyMinutes(dailyMinutes) {
+  const weekStart = parseDate(`${getCurrentWeekStart()}T00:00:00`) || new Date();
+  return DAY_ORDER.map((day, index) => {
+    const date = new Date(weekStart);
+    date.setDate(weekStart.getDate() + index);
+    const key = formatDateOnly(date);
+    return {
+      day,
+      label: DAY_LABELS[day],
+      minutes: toInt(dailyMinutes.get(key) || 0)
+    };
   });
-
-  return DAY_ORDER.map((day) => ({
-    day,
-    label: DAY_LABELS[day],
-    minutes: minutesByDay[day]
-  }));
 }
 
-function buildTodayMinutes(tmState) {
+function buildTodayMinutes(tmState, dailyMinutes) {
   const todayDay = getDayToken(new Date());
+  const todayKey = formatDateOnly(new Date());
   const tasks = new Map((tmState?.tasks || []).map((task) => [task.id, task]));
   let planned = 0;
   let completed = 0;
@@ -361,32 +989,87 @@ function buildTodayMinutes(tmState) {
     if (task.status === "completed") completed += mins;
   });
 
-  return { planned, completed };
+  return {
+    planned,
+    completed,
+    logged: toInt(dailyMinutes.get(todayKey) || 0)
+  };
 }
 
 function buildRecentActivities(state, tmState) {
   const feed = [];
+  const push = (item) => {
+    if (!item?.title) return;
+    feed.push(item);
+  };
+
+  const focusSessions = getFocusSessions(state)
+    .filter((session) => session && String(session.status || "").toLowerCase() !== "cancelled")
+    .slice()
+    .sort((a, b) => String(b.endedAt || b.startedAt || "").localeCompare(String(a.endedAt || a.startedAt || "")))
+    .slice(0, 3);
+
+  focusSessions.forEach((session, index) => {
+    const active = String(session.status || "").toLowerCase() === "active" && !session.endedAt;
+    const sortTs = parseDate(session.endedAt || session.startedAt)?.getTime() || 0;
+    push({
+      sortTs,
+      title: `${active ? "Focus in progress" : "Completed"} ${getFocusModeLabel(session.mode)} · ${formatMinutes(getFocusSessionMinutes(session))}`,
+      meta: active ? `Started ${formatRelative(session.startedAt)}` : formatRelative(session.endedAt || session.startedAt),
+      dotColor: [CHART_COLORS.accent, CHART_COLORS.accent2, CHART_COLORS.accent3][index % 3]
+    });
+  });
+
   const audits = Array.isArray(state.auditLog) ? state.auditLog : [];
-  const recentAudits = audits.slice(-8).reverse();
+  const recentAudits = audits
+    .filter((entry) => {
+      const message = String(entry?.message || "");
+      return message
+        && !/^focus session (started|completed|discarded):/i.test(message)
+        && !/^feature 6 render failed:/i.test(message)
+        && message !== "Loaded user state from backend.";
+    })
+    .slice(-8)
+    .reverse();
   recentAudits.forEach((entry, index) => {
-    feed.push({
+    push({
+      sortTs: parseDate(entry?.ts)?.getTime() || 0,
       title: entry?.message || "Learning activity",
       meta: formatRelative(entry?.ts),
       dotColor: [CHART_COLORS.accent, CHART_COLORS.accent2, CHART_COLORS.accent4, CHART_COLORS.accent3][index % 4]
     });
   });
 
-  const completedTasks = (tmState?.tasks || [])
+  (tmState?.tasks || [])
     .filter((task) => task?.status === "completed" && task?.completedAt)
     .sort((a, b) => String(b.completedAt).localeCompare(String(a.completedAt)))
     .slice(0, 4)
-    .map((task, index) => ({
-      title: `Completed ${task.title || task.subject || "study session"} · ${clamp(task.estimatedMinutes || 60, 15, 180)} min`,
-      meta: formatRelative(task.completedAt),
-      dotColor: [CHART_COLORS.accent, CHART_COLORS.accent2, CHART_COLORS.accent4, CHART_COLORS.accent3][index % 4]
-    }));
+    .forEach((task, index) => {
+      push({
+        sortTs: parseDate(task.completedAt)?.getTime() || 0,
+        title: `Completed ${task.title || task.subject || "study session"} · ${clamp(task.estimatedMinutes || 60, 15, 180)} min`,
+        meta: formatRelative(task.completedAt),
+        dotColor: [CHART_COLORS.accent, CHART_COLORS.accent2, CHART_COLORS.accent4, CHART_COLORS.accent3][index % 4]
+      });
+    });
 
-  const merged = [...completedTasks, ...feed].slice(0, 6);
+  (tmState?.tasks || [])
+    .filter((task) => !isSchoolTask(task) && task?.status !== "completed")
+    .sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")))
+    .slice(0, 3)
+    .forEach((task, index) => {
+      push({
+        sortTs: parseDate(task.updatedAt || task.createdAt)?.getTime() || 0,
+        title: `Scheduled ${task.title || task.subject || "study session"} · ${clamp(task.estimatedMinutes || 60, 15, 180)} min`,
+        meta: formatRelative(task.updatedAt || task.createdAt),
+        dotColor: [CHART_COLORS.accent2, CHART_COLORS.accent3, CHART_COLORS.accent4][index % 3]
+      });
+    });
+
+  const merged = feed
+    .sort((a, b) => Number(b.sortTs || 0) - Number(a.sortTs || 0))
+    .slice(0, 6)
+    .map(({ sortTs, ...entry }) => entry);
   if (merged.length) return merged;
   return [{
     title: "No activity logged yet",
@@ -397,14 +1080,16 @@ function buildRecentActivities(state, tmState) {
 
 function buildSubjectMastery(topics) {
   if (!topics.length) {
-    return [{ name: "No topic data yet", mastery: 0 }];
+    return [{ name: "No measured subjects yet", mastery: 0 }];
   }
   return topics
+    .slice()
     .map((topic) => ({
-      name: normalizeTopicName(topic?.name || "Topic"),
-      mastery: getMasteryFromTopic(topic)
+      name: normalizeTopicName(topic?.name || "Subject"),
+      mastery: Number.isFinite(Number(topic?.mastery))
+        ? clamp(Number(topic.mastery), 0, 100)
+        : getMasteryFromTopic(topic)
     }))
-    .sort((a, b) => b.mastery - a.mastery)
     .slice(0, 5);
 }
 
@@ -413,7 +1098,7 @@ function buildTopicBreakdown(topics) {
     return [{
       domain: "general",
       title: "Concepts",
-      items: [{ name: "No topic data yet", mastery: 0 }]
+      items: [{ name: "No measured mastery yet", mastery: 0 }]
     }];
   }
 
@@ -436,9 +1121,9 @@ function buildTopicBreakdown(topics) {
     .slice(0, 3);
 }
 
-function buildMasteryTrend(runtime, topics, overallMastery) {
+function buildMasteryTrend(runtime, topics, overallMastery, snapshotsOverride = null) {
   const feature6State = ensureFeature6State(runtime);
-  const snapshots = (feature6State.masterySnapshots || [])
+  const snapshots = (Array.isArray(snapshotsOverride) ? snapshotsOverride : feature6State.masterySnapshots || [])
     .filter((entry) => entry && /^\d{4}-\d{2}-\d{2}$/.test(String(entry.date || "")))
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(-10);
@@ -534,8 +1219,9 @@ function buildStatsPayload(state, tmState, topics, overallMastery, controls) {
   const previousMastery = getPreviousMastery(state, overallMastery);
   const masteryDelta = toInt(overallMastery - previousMastery);
   const dailyMinutes = buildMinutesTimeline(state, tmState);
+  const weeklyMinutes = buildWeeklyMinutes(dailyMinutes);
   const streakData = computeStreakAndDecay(dailyMinutes, overallMastery);
-  const todayMinutes = buildTodayMinutes(tmState);
+  const todayMinutes = buildTodayMinutes(tmState, dailyMinutes);
   const topicMetrics = topics.map((topic) => ({ mastery: getMasteryFromTopic(topic) }));
   const weakCount = topicMetrics.filter((topic) => topic.mastery < 60).length;
   const criticalWeak = topicMetrics.filter((topic) => topic.mastery < 40).length;
@@ -558,12 +1244,14 @@ function buildStatsPayload(state, tmState, topics, overallMastery, controls) {
         : "→ Enable concept mastery detection",
       topicsValue: String(topics.length),
       topicsChange: `→ ${weakCount} pending`,
-      timeTodayValue: formatMinutes(todayMinutes.completed || todayMinutes.planned),
-      timeTodayChange: todayMinutes.completed > 0
-        ? `↑ ${formatMinutes(todayMinutes.completed)} completed`
+      timeTodayValue: formatMinutes(todayMinutes.logged || todayMinutes.completed || todayMinutes.planned),
+      timeTodayChange: todayMinutes.logged > 0
+        ? `↑ ${formatMinutes(todayMinutes.logged)} logged today`
+        : todayMinutes.completed > 0
+          ? `↑ ${formatMinutes(todayMinutes.completed)} completed`
         : todayMinutes.planned > 0
           ? `→ ${formatMinutes(todayMinutes.planned)} planned`
-          : "→ No sessions scheduled"
+          : "→ No timed sessions logged"
     },
     progress: {
       levelValue: `Lv.${level}`,
@@ -582,8 +1270,89 @@ function buildStatsPayload(state, tmState, topics, overallMastery, controls) {
         : "→ Enable mastery decay modeling"
     },
     streak: streakData,
-    dailyMinutes
+    dailyMinutes,
+    weeklyMinutes
   };
+}
+
+function getStudentDisplayName(runtime) {
+  const raw = String(runtime?.state?.student?.name || "").trim();
+  if (!raw) return "Student";
+  return raw.split(/\s+/)[0] || "Student";
+}
+
+function getGreetingPrefix(date = new Date()) {
+  const hour = date.getHours();
+  if (hour < 12) return "morning";
+  if (hour < 18) return "afternoon";
+  return "evening";
+}
+
+function buildDashboardHeader(runtime, tmState) {
+  const now = new Date();
+  const name = getStudentDisplayName(runtime);
+  const profile = tmState?.profile || {};
+  const dates = Array.isArray(profile.examDates) ? profile.examDates : [];
+  const nearest = dates
+    .map((value) => ({
+      raw: value,
+      date: parseDate(`${value}T00:00:00`)
+    }))
+    .filter((item) => item.date && Number.isFinite(item.date.getTime()))
+    .sort((a, b) => a.date - b.date)
+    .find((item) => item.date >= new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+
+  const dayLabel = now.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  let examText = "No exam dates set";
+
+  if (nearest) {
+    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startExam = new Date(nearest.date.getFullYear(), nearest.date.getMonth(), nearest.date.getDate());
+    const diffDays = Math.round((startExam - startToday) / 86400000);
+    if (diffDays <= 0) examText = "Exam day";
+    else if (diffDays === 1) examText = "Exam in 1 day";
+    else examText = `Exam in ${diffDays} days`;
+  }
+
+  return {
+    title: `Good ${getGreetingPrefix(now)}, ${name} 👋`,
+    sub: `${dayLabel} · ${examText}`
+  };
+}
+
+function buildDashboardInsights(topics, tmState, weeklyMinutes) {
+  const sortedTopics = topics
+    .slice()
+    .sort((a, b) => Number(b?.weakScore || 0) - Number(a?.weakScore || 0));
+
+  const weakest = sortedTopics[0] || null;
+  const weakMastery = weakest ? getMasteryFromTopic(weakest) : 0;
+
+  const primary = weakest
+    ? {
+      type: weakMastery < 50 ? "Knowledge Gap Detected" : "Reinforcement Suggested",
+      text: `${normalizeTopicName(weakest.name)} is at ${toInt(weakMastery)}% mastery (weak score ${toInt(weakest.weakScore || 0)}). Prioritize this concept in your next focused session.`
+    }
+    : {
+      type: "Baseline Building",
+      text: "No topic weakness data yet. Complete a practice analysis or tutor session to unlock targeted gap insights."
+    };
+
+  const profile = tmState?.profile || {};
+  const productiveHours = Array.isArray(profile.productiveHours) ? profile.productiveHours : [];
+  const weeklyGoalHours = clamp(profile.weeklyGoalsHours || 14, 1, 60);
+  const loggedMinutes = weeklyMinutes.reduce((sum, item) => sum + toInt(item.minutes), 0);
+  const loggedHours = Number((loggedMinutes / 60).toFixed(1));
+  const remainingHours = Math.max(0, Number((weeklyGoalHours - loggedHours).toFixed(1)));
+
+  const secondary = {
+    type: loggedHours >= weeklyGoalHours ? "Goal Coverage On Track" : "Goal Coverage Gap",
+    text: loggedHours >= weeklyGoalHours
+      ? `You have already logged ${loggedHours}h against a ${weeklyGoalHours}h weekly goal. Keep your next sessions aligned to productive windows: ${productiveHours.join(" and ") || "not set"}.`
+      : `You have logged ${loggedHours}h of ${weeklyGoalHours}h this week. Add ${remainingHours}h in productive windows (${productiveHours.join(" and ") || "set your productive hours"}) to stay on target.`
+  };
+
+  return { primary, secondary };
 }
 
 function getChartCtor() {
@@ -594,6 +1363,25 @@ function setStatChangeClass(el, tone) {
   if (!el) return;
   el.classList.remove("up", "down", "neutral");
   el.classList.add(tone || "neutral");
+}
+
+function renderDashboardHeader(header) {
+  const title = document.getElementById("dashboard-greeting-title");
+  const sub = document.getElementById("dashboard-greeting-sub");
+  if (title && header?.title) title.textContent = header.title;
+  if (sub && header?.sub) sub.textContent = header.sub;
+}
+
+function renderDashboardInsights(insights) {
+  const primaryType = document.getElementById("dashboard-insight-primary-type");
+  const primaryText = document.getElementById("dashboard-insight-primary-text");
+  const secondaryType = document.getElementById("dashboard-insight-secondary-type");
+  const secondaryText = document.getElementById("dashboard-insight-secondary-text");
+
+  if (primaryType && insights?.primary?.type) primaryType.textContent = insights.primary.type;
+  if (primaryText && insights?.primary?.text) primaryText.textContent = insights.primary.text;
+  if (secondaryType && insights?.secondary?.type) secondaryType.textContent = insights.secondary.type;
+  if (secondaryText && insights?.secondary?.text) secondaryText.textContent = insights.secondary.text;
 }
 
 function renderDashboardStats(stats) {
@@ -745,6 +1533,7 @@ export function initFeature6(ctx) {
   };
   let lastModel = null;
   let refreshInFlight = null;
+  let liveRefreshTimer = null;
 
   function destroyChart(name) {
     if (charts[name]) {
@@ -761,38 +1550,71 @@ export function initFeature6(ctx) {
       const state = await apiGet(API.timeManagementState(studentId, weekStart));
       return state && typeof state === "object" ? state : null;
     } catch {
-      return null;
+      return runtime.state?.timeManagement || null;
+    }
+  }
+
+  function syncLiveRefreshTimer() {
+    const hasActiveFocus = getFocusSessions(runtime.state).some((session) => session?.status === "active" && !session?.endedAt);
+    if (hasActiveFocus && !liveRefreshTimer && typeof window !== "undefined") {
+      liveRefreshTimer = window.setInterval(() => {
+        refreshFeature6(true).catch(() => {});
+      }, 60000);
+      return;
+    }
+
+    if (!hasActiveFocus && liveRefreshTimer && typeof window !== "undefined") {
+      window.clearInterval(liveRefreshTimer);
+      liveRefreshTimer = null;
     }
   }
 
   function buildModel(tmState) {
-    const state = runtime.state || {};
+    const baseState = runtime.state || {};
+    const safeTmState = tmState || {};
+    const forcePreview = shouldForceDashboardPreview();
+    const preview = forcePreview || shouldAutoPreviewDashboard(baseState, safeTmState)
+      ? buildDashboardPreviewFixture(runtime, safeTmState, forcePreview)
+      : null;
+    const state = preview?.state || baseState;
+    const effectiveTmState = preview?.tmState || safeTmState;
     const responsibleControls = resolveResponsibleControls(state);
-    const topics = Array.isArray(state.topics)
+    const stateTopics = Array.isArray(state.topics)
       ? state.topics.filter((topic) => normalizeTopicName(topic?.name))
       : [];
-    const subjectMastery = buildSubjectMastery(topics);
+    const syntheticTopics = buildSyntheticTopicsFromTimetable(effectiveTmState);
+    const topics = mergeTopicSignals(stateTopics, syntheticTopics);
+    const dashboardTopics = selectDashboardTopics(topics);
+    const subjectSignals = buildSubjectSignals(effectiveTmState);
+    const subjectMastery = buildSubjectMastery(subjectSignals);
     const overallMastery = getOverallMastery(state, topics);
 
-    const seeded = seedSnapshotsIfNeeded(runtime, topics, overallMastery);
-    const updated = upsertTodaySnapshot(runtime, topics, overallMastery);
-    if (seeded || updated) scheduleSave();
+    let seeded = false;
+    let updated = false;
+    if (!preview) {
+      seeded = seedSnapshotsIfNeeded(runtime, topics, overallMastery, state);
+      updated = upsertTodaySnapshot(runtime, topics, overallMastery);
+      if (seeded || updated) scheduleSave();
+    }
 
-    const weeklyMinutes = buildWeeklyMinutes(tmState || {});
     const errorBreakdown = responsibleControls.personalization
       ? computeErrorBreakdown(state)
       : { carelessCount: 0, knowledgeCount: 0, carelessPct: 0, knowledgePct: 0 };
-    const stats = buildStatsPayload(state, tmState || {}, topics, overallMastery, responsibleControls);
-    const recentActivities = buildRecentActivities(state, tmState || {});
-    const topicBreakdown = buildTopicBreakdown(topics);
-    const masteryTrend = buildMasteryTrend(runtime, topics, overallMastery);
+    const stats = buildStatsPayload(state, effectiveTmState, dashboardTopics, overallMastery, responsibleControls);
+    const recentActivities = buildRecentActivities(state, effectiveTmState);
+    const topicBreakdown = buildTopicBreakdown(dashboardTopics);
+    const masteryTrend = buildMasteryTrend(runtime, topics, overallMastery, preview?.masterySnapshots || null);
+    const dashboardHeader = buildDashboardHeader(runtime, effectiveTmState);
+    const dashboardInsights = buildDashboardInsights(dashboardTopics, effectiveTmState, stats.weeklyMinutes);
 
     return {
-      weeklyMinutes,
+      weeklyMinutes: stats.weeklyMinutes,
       errorBreakdown,
       subjectMastery,
       topicBreakdown,
       masteryTrend,
+      dashboardHeader,
+      dashboardInsights,
       dashboardStats: stats.dashboard,
       progressStats: stats.progress,
       responsibleControls,
@@ -993,6 +1815,8 @@ export function initFeature6(ctx) {
   }
 
   function renderAll(model) {
+    renderDashboardHeader(model.dashboardHeader);
+    renderDashboardInsights(model.dashboardInsights);
     renderDashboardStats(model.dashboardStats);
     renderSubjectMastery(model.subjectMastery);
     renderRecentActivity(model.recentActivities);
@@ -1062,14 +1886,15 @@ export function initFeature6(ctx) {
     exportBtn.addEventListener("click", downloadProgressReport);
   }
 
-  async function refreshFeature6(force = false) {
-    if (refreshInFlight && !force) return refreshInFlight;
+  async function refreshFeature6() {
+    if (refreshInFlight) return refreshInFlight;
     refreshInFlight = (async () => {
       const tmState = await fetchTimeManagementState();
       const model = buildModel(tmState || {});
       lastModel = model;
       bindProgressActions();
       renderAll(model);
+      syncLiveRefreshTimer();
       return model;
     })()
       .catch((error) => {
