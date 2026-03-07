@@ -1,4 +1,3 @@
-"use strict";
-
-// Root entry point so `node server.js` works from the project root.
+// Backward-compatible entrypoint.
+// Keeps `node server.js` and legacy run configurations working.
 require("./backend/server.js");

@@ -1,120 +1,231 @@
-# SpeedUp Dashboard (OpenAI + Firebase)
+# SpeedUp — Adaptive AI Learning Intelligence Platform
 
-Production-style student learning dashboard with:
+## Executive Summary
+SpeedUp is an AI-powered educational platform that models a student’s evolving learning state and converts interaction data into actionable, explainable study guidance.  
+The product is designed for sustained educational use over weeks and months, not a one-time prediction demo.
 
-- Live AI explanations/recommendations (`OpenAI API`)
-- Per-user auth (`Firebase Auth`)
-- Per-user state + RAG note index (`Firestore`)
-- Practice paper file storage (`Cloudinary`)
+The implementation combines authenticated per-user state, context-grounded AI generation, and responsible AI controls to improve trust, clarity, and practical decision-making for students.
 
-## Stack
+## Problem Context
+Students generate large volumes of digital learning signals (attempts, scores, timestamps, topic progression), but still lack clear answers to high-impact questions:
+- Which weaknesses are conceptual versus careless?
+- Is performance improving, stagnating, or regressing?
+- What should be prioritized under limited study time?
+- Why are mistakes repeating despite revision?
 
-- Frontend: `frontend/public/` (entry: `frontend/public/index.html`)
-- Backend: `backend/server.js` (Express)
-- Data/Auth: Firebase Admin SDK + Firebase Web SDK (`backend/firebase/*` and `frontend/public/auth/*`)
+Learning behavior is non-linear. Students show inactivity gaps, bursts of revision, and changing mastery profiles. A practical solution must adapt over time while remaining transparent to the user.
 
-## 1) Install
+## Solution Overview
+SpeedUp implements a full adaptive loop:
+1. Student authenticates securely.
+2. Student uploads practice material (PDF/DOCX/PPTX/TXT or pasted text).
+3. AI extracts and analyzes learning signals from that context.
+4. Student selects a specific uploaded source to generate:
+- Quiz (difficulty, count, type configurable)
+- Flashcards (exact count configurable)
+5. Student uses AI Tutor with `Clear` / `Still confused` loop.
+6. State persists per user for longitudinal personalization.
 
+## Architecture
+### Frontend
+- Static web app using HTML/CSS/JavaScript.
+- Modular feature-based structure under `frontend/public/src`.
+- Hosted on GitHub Pages (deployment branch: `hosting`).
+
+### Backend
+- Node.js + Express API.
+- Handles auth verification, AI orchestration, parsing, persistence integration.
+- Hosted on Render.
+
+### Identity and Data
+- Firebase Authentication (Email/Password).
+- Firestore-backed user state persistence.
+
+### File Storage
+- Cloudinary for uploaded practice files.
+
+### AI Integration
+- OpenAI API for:
+- Tutor explanations and simplification loops
+- Recommendations
+- Practice analysis
+- Quiz generation
+- Flashcard generation
+
+## AI Pattern Justification
+### 1. Human-in-the-loop clarification loop
+Tutor supports explicit comprehension feedback (`Clear` / `Still confused`) and re-generates simplified responses accordingly.  
+Why: preserves human agency and improves explainability.
+
+### 2. Context-grounded generation
+Quiz and flashcards are generated from selected uploaded context, not generic prompts.  
+Why: improves relevance and reduces off-topic responses.
+
+### 3. Reliability via fallback behavior
+When model outputs are unavailable or malformed, deterministic fallback paths keep the app functional.  
+Why: improves consistency and production resilience.
+
+### 4. Longitudinal personalization
+User-scoped persisted state enables adaptation over time instead of stateless interactions.  
+Why: aligns with real educational usage patterns.
+
+## Responsible AI Considerations
+- Explainability: AI outputs are framed with rationale structure.
+- User control: retry, simplify, and regenerate interactions are explicit.
+- Reliability: guarded routes, structured outputs, fallback behavior.
+- Privacy: per-user auth and scoped storage.
+- Data minimization: store only necessary user learning artifacts.
+- Fairness posture: recommendations rely on behavior signals, not demographic profiling.
+
+## Core Features
+### AI Tutor
+- Conversation history persistence.
+- Clarification loop with multi-attempt simplification.
+- Natural greeting handling and context-aware responses.
+
+### Practice Studio
+- Upload + analyze academic practice content.
+- Supported file types: PDF, DOCX, PPTX, TXT, pasted text.
+- Source selector for quiz/flashcard grounding.
+- Quiz controls: difficulty, question count, question type.
+- Flashcard controls: exact card count.
+
+### Learning-State Persistence
+- Per-user profile and learning artifacts persisted across sessions.
+
+## File Structure
+```text
+DLWeekNTU/
+├─ backend/
+│  ├─ server.js
+│  └─ firebase/
+│     ├─ firebaseAdmin.js
+│     ├─ firebaseAuth.js
+│     └─ firebaseStore.js
+├─ frontend/
+│  └─ public/
+│     ├─ index.html
+│     ├─ login.html
+│     ├─ signup.html
+│     ├─ app.js
+│     ├─ styles.css
+│     ├─ auth/
+│     │  ├─ auth-pages.js
+│     │  └─ firebase-auth-client.js
+│     ├─ config/
+│     │  ├─ firebase-config.js
+│     │  └─ site-config.js
+│     └─ src/
+│        ├─ layout/
+│        │  ├─ base.css
+│        │  ├─ load-app.js
+│        │  ├─ modals.html
+│        │  └─ sidebar.html
+│        ├─ pages/
+│        │  ├─ dashboard.html
+│        │  ├─ notes.html
+│        │  ├─ study-notes.html
+│        │  ├─ tutor.html
+│        │  ├─ practice.html
+│        │  ├─ timetable.html
+│        │  ├─ progress.html
+│        │  ├─ recommendations.html
+│        │  └─ responsible.html
+│        └─ feature-modules/
+│           ├─ feature1.js
+│           ├─ feature2.js
+│           ├─ feature3.js
+│           ├─ feature4.js
+│           ├─ feature5.js
+│           ├─ feature6.js
+│           ├─ feature7.js
+│           └─ feature8.js
+├─ .github/
+│  └─ workflows/
+│     └─ deploy-pages.yml
+├─ render.yaml
+├─ server.js
+├─ package.json
+├─ package-lock.json
+└─ README.md
+```
+
+## Local Setup
+### 1) Install
 ```bash
 npm install
 ```
 
-## 2) Configure backend env
-
-Create `.env` from `.env.example` and fill:
-
+### 2) Configure environment
+Create `.env` from `.env.example` and set:
 - `OPENAI_API_KEY`
-- `FIREBASE_SERVICE_ACCOUNT_JSON` (recommended), or split Firebase admin vars
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY` (single-line string with `\n` escaped newlines)
 - `CLOUDINARY_CLOUD_NAME`
 - `CLOUDINARY_API_KEY`
 - `CLOUDINARY_API_SECRET`
+- `ALLOWED_ORIGINS`
 
-## 3) Configure frontend Firebase web app
+Do not use `FIREBASE_SERVICE_ACCOUNT_JSON` unless you intentionally need legacy fallback mode.
 
-In `frontend/public/config/firebase-config.js`, fill:
-
-- `window.FIREBASE_CLIENT_CONFIG.apiKey`
+### 3) Configure frontend Firebase web config
+Edit `frontend/public/config/firebase-config.js`:
+- `apiKey`
 - `authDomain`
 - `projectId`
 - `storageBucket`
 - `messagingSenderId`
 - `appId`
 
-Also enable Firebase Auth provider:
+Enable Email/Password in Firebase Auth console.
 
-- Firebase Console -> Authentication -> Sign-in method -> `Email/Password` -> Enable
-
-## 4) Start
-
+### 4) Run locally
 ```bash
 npm start
 ```
-
 Open `http://localhost:3000`.
-You will be redirected to `/login.html` until authenticated.
 
-## GitHub Pages Hosting (Frontend)
+### 5) Validate auth wiring
+Health check:
+```bash
+curl http://localhost:3000/api/health
+```
+Expected: `firebaseConfigured: true`
 
-This repo can auto-deploy static frontend to GitHub Pages via:
+Browser token check (DevTools console after login):
+```js
+const token = await window.firebaseAuthClient.getIdToken(true);
+const claims = JSON.parse(atob(token.split(".")[1]));
+console.log({ aud: claims.aud, iss: claims.iss });
+```
+Expected:
+- `aud` equals your Firebase project id (for this project: `dlweek-ac284`)
+- `iss` contains `securetoken.google.com/<project-id>`
 
-- [deploy-pages.yml](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/.github/workflows/deploy-pages.yml)
+## Deployment
+### Frontend (GitHub Pages)
+- Workflow: `.github/workflows/deploy-pages.yml`
+- Branch trigger: `hosting`
+- Source in GitHub Pages settings: `GitHub Actions`
 
-Important:
+### Backend (Render)
+- Blueprint: `render.yaml`
+- Set required secrets in Render environment.
+- Verify: `https://<your-render-url>/api/health`
 
-- GitHub Pages hosts frontend only (no Node/Express backend).
-- Your backend must be deployed separately (Render/Railway/Fly/VM).
+## Grader Testbench
+For evaluator setup and verification, use:
+- [`testbench/README.md`](testbench/README.md)
+- [`testbench/01-setup-and-run.md`](testbench/01-setup-and-run.md)
+- [`testbench/02-functional-test-cases.md`](testbench/02-functional-test-cases.md)
+- [`testbench/03-api-test-cases.md`](testbench/03-api-test-cases.md)
+- [`testbench/04-submission-checklist.md`](testbench/04-submission-checklist.md)
 
-Set backend URL for Pages:
-
-1. Open `frontend/public/config/site-config.js`
-2. Set:
-   - `window.SPEEDUP_API_BASE = "https://<your-backend-domain>";`
-3. Commit + push to `main`.
-
-Then enable in GitHub:
-
-1. `Repo -> Settings -> Pages`
-2. Source: `GitHub Actions`
-3. Push to `main` and wait for workflow completion.
-
-## Deploy Backend on Render
-
-This repo includes Render Blueprint config:
-
-- [render.yaml](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/render.yaml)
-
-Steps:
-
-1. Go to Render Dashboard -> `New` -> `Blueprint`.
-2. Connect this GitHub repo and deploy.
-3. In Render service `Environment`, fill secret values:
-   - `OPENAI_API_KEY`
-   - `FIREBASE_SERVICE_ACCOUNT_JSON`
-   - `CLOUDINARY_CLOUD_NAME`
-   - `CLOUDINARY_API_KEY`
-   - `CLOUDINARY_API_SECRET`
-4. Keep non-secret env defaults from `render.yaml` (or copy from [.env.example](/d:/SIT_Y1T2_RootFolder/DLWeekNTU/.env.example)).
-5. After deploy, copy backend URL:
-   - Example: `https://speedup-api.onrender.com`
-6. Update `frontend/public/config/site-config.js`:
-   - Set `window.SPEEDUP_API_BASE = "https://<your-render-url>";`
-7. Commit + push `main` so GitHub Pages frontend calls Render backend.
-
-Quick health check:
-
-- Open `https://<your-render-url>/api/health` and verify `ok: true`.
-
-## Main APIs
-
+## API Surface (Primary)
 - `GET /api/health`
-- `GET /api/user/profile` (auth)
-- `PUT /api/user/profile` (auth)
 - `GET /api/user/state` (auth)
 - `PUT /api/user/state` (auth)
-- `GET /api/user/bootstrap` (auth)
-- `POST /api/user/event` (auth)
-- `POST /api/user/exam` (auth)
-- `POST /api/user/controls` (auth)
 - `POST /api/explain`
 - `POST /api/tutor/query`
 - `POST /api/study-pack/upload-pdf` (multipart: `pdf`)
@@ -122,13 +233,29 @@ Quick health check:
 - `POST /api/study-pack/cheatsheet`
 - `POST /api/study-pack/teach-mode`
 - `POST /api/highlight/analyze`
-- `POST /api/rag/index-note`
-- `POST /api/rag/query`
+- `POST /api/practice/analyze`
+- `POST /api/practice/generate-quiz`
+- `POST /api/practice/generate-flashcards`
 - `POST /api/recommendations`
-- `POST /api/practice/analyze` (multipart: `paper`, or `pastedText`)
+- `POST /api/rag/query`
+- `POST /api/rag/index-note`
 
-## Notes
+## Current Limitations
+- Output quality depends on uploaded source quality.
+- Free-tier hosting can introduce cold-start latency.
+- Retrieval ranking can be improved further.
+- Formal psychometric calibration is not yet implemented.
 
-- Uploaded files are stored in Cloudinary under `speedup/practice-papers/<uid>/...`.
-- API routes now include basic request throttling for AI-heavy endpoints.
-- If Firebase/OpenAI is not configured, UI falls back partially to local state/demo behavior.
+## Recommended Next Additions
+### Engineering
+- Add API contract tests and parser regression tests.
+- Add telemetry for quality, latency, and user-action outcomes.
+- Add prompt/output quality evaluator layer.
+
+### AI Extensions (beyond LLM-only)
+- Knowledge tracing (`BKT` / `DKT`) for mastery forecasting.
+- IRT-based adaptive question selection.
+- Speech AI for oral explanation practice.
+- Vision AI for handwritten/diagram analysis.
+- RAG reranker for improved context relevance.
+- Evaluator model for generated quiz/flashcard quality control.

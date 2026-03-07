@@ -8,8 +8,8 @@ import { initFeature7 } from "./src/feature-modules/feature7.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
 import { initFeature9StudyPack } from "./src/feature-modules/feature9-study-pack.js";
 
-const STORAGE_KEY = "speedup_dashboard_reference_v1";
-const STUDENT_ID = "anonymous";
+const STORAGE_KEY_PREFIX = "speedup_dashboard_reference_v1";
+const STUDENT_ID = "";
 const SIDEBAR_ORDER_KEY = "speedup_sidebar_order_v1";
 
 let defaultSidebarOrder = null;
@@ -19,8 +19,12 @@ let settingsDragState = null;
 const API = {
   health: "/api/health",
   userState: "/api/user/state",
+  userControls: "/api/user/controls",
   userExam: "/api/user/exam",
   practiceAnalyze: "/api/practice/analyze",
+  practiceUploads: "/api/practice/uploads",
+  practiceUpload: (uploadId) => `/api/practice/uploads/${encodeURIComponent(uploadId)}`,
+  practiceDeleteUploads: "/api/practice/uploads/delete-bulk",
   practiceGenerateQuiz: "/api/practice/generate-quiz",
   practiceGenerateFlashcards: "/api/practice/generate-flashcards",
   explain: "/api/explain",
@@ -38,6 +42,7 @@ const API = {
     return weekStart ? `${base}?weekStart=${encodeURIComponent(weekStart)}` : base;
   },
   timeManagementProfile: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/profile`,
+  timeManagementUploadSchoolTimetable: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/upload-school-timetable`,
   timeManagementGeneratePlan: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/generate-plan`,
   timeManagementTasks: (studentId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks`,
   timeManagementTask: (studentId, taskId) => `/api/time-management/${encodeURIComponent(studentId)}/tasks/${encodeURIComponent(taskId)}`,
@@ -75,20 +80,15 @@ const defaultState = {
   notes: {},
   highlights: [],
   practiceUploads: [],
-  studyPackHub: {
-    uploads: [],
-    packs: [],
-    activePackId: "",
-    activeSectionId: "",
-    notes: [],
-    weaknessRecommendations: []
-  },
+  focusSessions: [],
+  dashboardFeedback: {},
   examHistory: [],
   responsibleControls: {
     explainability: true,
     personalization: true,
     decayModeling: true,
-    errorTypeDetection: true
+    errorTypeDetection: true,
+    externalStudyCredit: false
   },
   auditLog: []
 };
@@ -96,7 +96,8 @@ const defaultState = {
 const flashcards = [];
 
 const modals = {
-  focus: { title: "Start Focus Session", body: "<div class='form-group'><label class='form-label'>Mode</label><select class='select'><option>Active Reading</option><option>AI Tutor</option><option>Practice Questions</option></select></div>", confirm: "Start" },
+  focus: { title: "Start Focus Session", body: "", confirm: "Start" },
+  reschedule: { title: "Reschedule Session", body: "", confirm: "Open timetable" },
   visual: { title: "Concept Visualization", body: "<div class='form-group'><label class='form-label'>Concept</label><input class='input' placeholder='Enter concept...'></div>", confirm: "Generate" },
   export: { title: "Export Highlights", body: "<div style='font-size:13px;color:var(--text3);line-height:1.7;'>Export current highlights to JSON report from dashboard.</div>", confirm: "Close" },
   "full-plan": { title: "Generate Full Plan", body: "<div class='form-group'><label class='form-label'>Available hours</label><input class='input' type='number' value='12'></div>", confirm: "Generate" },
@@ -109,7 +110,7 @@ const modals = {
 };
 
 const runtime = {
-  state: loadLocalState(),
+  state: structuredClone(defaultState),
   cloudServices: { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false },
   highlightMode: false,
   currentParagraphId: 1,
@@ -176,12 +177,13 @@ async function init() {
   await hydrateStateFromBackend();
 
   hydrateFromDom();
+  initResponsibleAiPage();
   feature2.renderHighlights();
   feature5.renderRecommendations();
   renderCloudStatus();
   feature2.renderFlashcard();
-  feature6.initWeeklyChart();
-  feature6.initHeatmap();
+  await feature6.refreshFeature6();
+  feature8.hydrateFeedbackSelections();
   feature7.initPracticeFeature();
   feature9.initStudyPack();
 
@@ -663,6 +665,138 @@ function hydrateFromDom() {
   scheduleSave();
 }
 
+function initResponsibleAiPage() {
+  const page = document.getElementById("page-responsible");
+  if (!page) return;
+
+  const defaultControls = structuredClone(defaultState.responsibleControls || {});
+  runtime.state.responsibleControls = mergeDeep(defaultControls, runtime.state.responsibleControls || {});
+  renderResponsibleControls();
+
+  if (!page.dataset.responsibleBound) {
+    page.dataset.responsibleBound = "1";
+
+    page.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-responsible-control]");
+      if (!toggle) return;
+      const key = toggle.dataset.responsibleControl;
+      if (!key) return;
+      const current = Boolean(runtime.state.responsibleControls?.[key]);
+      setResponsibleControl(key, !current);
+    });
+
+    page.addEventListener("keydown", (event) => {
+      const toggle = event.target.closest("[data-responsible-control]");
+      if (!toggle) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      const key = toggle.dataset.responsibleControl;
+      if (!key) return;
+      const current = Boolean(runtime.state.responsibleControls?.[key]);
+      setResponsibleControl(key, !current);
+    });
+  }
+
+  const downloadBtn = document.getElementById("downloadDataBtn");
+  if (downloadBtn && !downloadBtn.dataset.bound) {
+    downloadBtn.dataset.bound = "1";
+    downloadBtn.addEventListener("click", downloadResponsibleData);
+  }
+
+  const resetBtn = document.getElementById("resetAiProfileBtn");
+  if (resetBtn && !resetBtn.dataset.bound) {
+    resetBtn.dataset.bound = "1";
+    resetBtn.addEventListener("click", resetAiProfile);
+  }
+
+  const deleteBtn = document.getElementById("deleteAllDataBtn");
+  if (deleteBtn && !deleteBtn.dataset.bound) {
+    deleteBtn.dataset.bound = "1";
+    deleteBtn.addEventListener("click", deleteAllUserData);
+  }
+}
+
+function renderResponsibleControls() {
+  const controls = runtime.state.responsibleControls || {};
+  document.querySelectorAll("[data-responsible-control]").forEach((el) => {
+    const key = el.dataset.responsibleControl;
+    const on = Boolean(controls[key]);
+    el.classList.toggle("on", on);
+    el.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+
+function setResponsibleControl(key, enabled) {
+  if (!runtime.state.responsibleControls || typeof runtime.state.responsibleControls !== "object") {
+    runtime.state.responsibleControls = structuredClone(defaultState.responsibleControls || {});
+  }
+  runtime.state.responsibleControls[key] = Boolean(enabled);
+  renderResponsibleControls();
+  logAudit(`Responsible setting changed: ${key}=${Boolean(enabled) ? "on" : "off"}.`);
+  scheduleSave();
+  apiPost(API.userControls, { controls: { [key]: Boolean(enabled) } }).catch(() => {});
+}
+
+async function downloadResponsibleData() {
+  let payload = runtime.state;
+  try {
+    const remote = await apiGet(API.userState);
+    payload = remote?.state || payload;
+  } catch {
+    // Keep local payload fallback.
+  }
+
+  const exported = {
+    exportedAt: new Date().toISOString(),
+    studentId: runtime.authUser?.uid || runtime.state.student?.id || "",
+    state: payload
+  };
+  const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `speedup-data-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  logAudit("User exported data copy.");
+  scheduleSave();
+}
+
+function resetAiProfile() {
+  const ok = window.confirm("Reset AI profile now? This will clear learned mastery and recommendation signals.");
+  if (!ok) return;
+
+  runtime.state.responsibleControls = structuredClone(defaultState.responsibleControls || {});
+  runtime.state.mastery = [];
+  runtime.state.topics = [];
+  runtime.state.recommendedActions = [];
+  runtime.state.liveRecommendation = structuredClone(defaultState.liveRecommendation || {});
+  runtime.state.practiceErrorLog = [];
+  runtime.state.tutorRevisitQueue = [];
+
+  renderResponsibleControls();
+  feature8.hydrateFeedbackSelections();
+  logAudit("AI profile reset by user.");
+  scheduleSave();
+}
+
+function deleteAllUserData() {
+  const ok = window.confirm("Delete all saved learning data? This action cannot be undone.");
+  if (!ok) return;
+
+  runtime.state = structuredClone(defaultState);
+  runtime.state.student.id = runtime.authUser?.uid || runtime.state.student.id || "";
+  if (!runtime.state.student.name && runtime.authUser?.email) {
+    runtime.state.student.name = runtime.authUser.email.split("@")[0];
+  }
+  logAudit("All user data deleted by user.");
+  renderResponsibleControls();
+  feature8.hydrateFeedbackSelections();
+  scheduleSave();
+}
+
 function renderCloudStatus() {
   const topbarSub = document.querySelector("#page-dashboard .topbar-sub");
   if (!topbarSub) return;
@@ -686,6 +820,11 @@ function navigate(page) {
 
   if (page === "timetable") {
     feature4.refreshTimeManagement();
+  }
+  if (page === "dashboard" || page === "progress") {
+    feature6.refreshFeature6().then(() => {
+      feature8.hydrateFeedbackSelections();
+    });
   }
 
   if (page === "study-notes") {
@@ -912,13 +1051,13 @@ function buildTutorContext(type) {
 
   if (resolvedType === "practice-papers") {
     const uploads = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
-    const selectedIdx = Number(document.getElementById("quizSourceSelect")?.value || 0);
-    const selected = uploads[selectedIdx] || uploads[0] || null;
+    const selectedValue = String(document.getElementById("quizSourceSelect")?.value || "");
+    const selected = uploads.find((u) => String(u?.uploadId || "") === selectedValue) || uploads[0] || null;
     const sourceName = selected?.name || "Practice Paper";
     const questionText = selected?.analysis?.summary || selected?.sourceTextSnippet || "Current question context not selected.";
     const markingScheme = (selected?.analysis?.recommendedNextSteps || []).join(" ");
     const linkedNote = highlights[0]?.summary || "";
-    const questionId = `Q${Math.max(1, selectedIdx + 1)}`;
+    const questionId = selected ? String(selected.uploadId || "Q1") : "Q1";
     return {
       contextType: "practice-papers",
       details: { sourceName, questionId },
@@ -1244,7 +1383,7 @@ async function hydrateStateFromBackend() {
     runtime.state = mergeDeep(structuredClone(defaultState), remote.state || {});
     if (runtime.authUser?.uid) runtime.state.student.id = runtime.authUser.uid;
     if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email.split("@")[0];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(runtime.state));
+    saveLocalState(runtime.authUser?.uid || runtime.state.student?.id || "");
     logAudit("Loaded user state from backend.");
   } catch {
     logAudit("User state unavailable. Using local state.");
@@ -1252,7 +1391,7 @@ async function hydrateStateFromBackend() {
 }
 
 function scheduleSave() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(runtime.state));
+  saveLocalState(runtime.authUser?.uid || runtime.state.student?.id || "");
   persistStateToBackend();
 }
 
@@ -1264,14 +1403,33 @@ async function persistStateToBackend() {
   }
 }
 
-function loadLocalState() {
+function stateStorageKeyFor(uid = "") {
+  const safeUid = String(uid || "").trim();
+  return safeUid ? `${STORAGE_KEY_PREFIX}:${safeUid}` : STORAGE_KEY_PREFIX;
+}
+
+function saveLocalState(uid = "") {
+  localStorage.setItem(stateStorageKeyFor(uid), JSON.stringify(runtime.state));
+}
+
+function loadLocalStateForUser(uid) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return structuredClone(defaultState);
-    return mergeDeep(structuredClone(defaultState), JSON.parse(raw));
+    const scopedRaw = localStorage.getItem(stateStorageKeyFor(uid));
+    if (scopedRaw) return mergeDeep(structuredClone(defaultState), JSON.parse(scopedRaw));
+
+    if (!uid) return structuredClone(defaultState);
+
+    // Legacy fallback for installs that used a shared single key.
+    const legacyRaw = localStorage.getItem(STORAGE_KEY_PREFIX);
+    if (!legacyRaw) return structuredClone(defaultState);
+    return mergeDeep(structuredClone(defaultState), JSON.parse(legacyRaw));
   } catch {
     return structuredClone(defaultState);
   }
+}
+
+function loadLocalState(uid = "") {
+  return loadLocalStateForUser(uid);
 }
 
 function mergeDeep(target, source) {
@@ -1320,8 +1478,12 @@ async function ensureAuthenticated() {
       return false;
     }
     runtime.authUser = user;
-    runtime.state.student.id = user.uid || runtime.state.student.id || STUDENT_ID;
+    // Load a user-scoped local cache to avoid cross-account state leakage.
+    runtime.state = loadLocalStateForUser(user.uid);
+    runtime.state.student.id = user.uid || runtime.state.student.id || "";
     if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
+    // Cleanup legacy shared key once user-scoped storage is active.
+    localStorage.removeItem(STORAGE_KEY_PREFIX);
     authClient.onAuthChanged((nextUser) => {
       if (!nextUser) window.location.replace(appPath("/login.html"));
     });
@@ -1369,68 +1531,71 @@ function bindSidebarActions() {
 }
 
 async function apiGet(url) {
-  const res = await fetch(apiUrl(url), { headers: await authHeaders() });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `GET ${url} failed`);
-  return payload;
+  return requestJson("GET", url);
 }
 
 async function apiPost(url, body) {
-  const res = await fetch(apiUrl(url), {
-    method: "POST",
-    headers: await authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
-  return payload;
+  return requestJson("POST", url, body);
 }
 
 async function apiPostForm(url, formData) {
-  const res = await fetch(apiUrl(url), {
-    method: "POST",
-    headers: await authHeaders(),
-    body: formData
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `POST ${url} failed`);
-  return payload;
+  return requestJson("POST", url, formData, true);
 }
 
 async function apiPut(url, body) {
-  const res = await fetch(apiUrl(url), {
-    method: "PUT",
-    headers: await authHeaders({ "Content-Type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `PUT ${url} failed`);
-  return payload;
+  return requestJson("PUT", url, body);
 }
 
 async function apiDelete(url) {
-  const res = await fetch(apiUrl(url), {
-    method: "DELETE",
-    headers: await authHeaders()
-  });
-  const payload = await parseMaybeJson(res);
-  if (!res.ok) throw new Error(payload.error || `DELETE ${url} failed`);
-  return payload;
+  return requestJson("DELETE", url);
 }
 
-async function authHeaders(base = {}) {
+async function authHeaders(base = {}, forceRefresh = false) {
   const headers = { ...base };
-  const token = await window.firebaseAuthClient?.getIdToken?.();
+  const token = await window.firebaseAuthClient?.getIdToken?.(forceRefresh);
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
 
+async function requestJson(method, url, body = undefined, isForm = false) {
+  const attempt = async (forceRefresh = false) => {
+    const headers = isForm
+      ? await authHeaders({}, forceRefresh)
+      : await authHeaders({ "Content-Type": "application/json" }, forceRefresh);
+    const options = { method, headers };
+    if (method !== "GET" && method !== "DELETE" && body !== undefined) {
+      options.body = isForm ? body : JSON.stringify(body);
+    }
+    const res = await fetch(apiUrl(url), options);
+    const payload = await parseMaybeJson(res);
+    return { res, payload };
+  };
+
+  let { res, payload } = await attempt(false);
+  if (!res.ok && res.status === 401 && /invalid firebase token/i.test(String(payload?.error || ""))) {
+    ({ res, payload } = await attempt(true));
+  }
+  if (!res.ok) throw new Error(extractErrorMessage(payload, `${method} ${url} failed`));
+  return payload;
+}
+
 async function parseMaybeJson(res) {
   try {
-    return await res.json();
+    const text = await res.text();
+    if (!text) return {};
+    try {
+      return JSON.parse(text);
+    } catch {
+      return { details: text.slice(0, 500) };
+    }
   } catch {
     return {};
   }
+}
+
+function extractErrorMessage(payload, fallback) {
+  if (!payload || typeof payload !== "object") return fallback;
+  return payload.error || payload.details || payload.message || fallback;
 }
 
 export function bootstrapApp() {
@@ -1461,6 +1626,7 @@ export function bootstrapApp() {
   window.toggleFeedback = feature8.toggleFeedback;
   window.openModal = feature8.openModal;
   window.closeModal = feature8.closeModal;
+  window.refreshFeature6 = feature6.refreshFeature6;
   window.initWeeklyChart = feature6.initWeeklyChart;
   window.initHeatmap = feature6.initHeatmap;
   window.runRagQuery = feature5.runRagQuery;

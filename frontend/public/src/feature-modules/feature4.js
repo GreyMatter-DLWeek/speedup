@@ -6,7 +6,7 @@ const DAY_LABELS = {
   THU: "Thu",
   FRI: "Fri"
 };
-const HOURS = ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "20:00", "21:00"];
+const HOURS = Array.from({ length: 24 }, (_v, hour) => `${String(hour).padStart(2, "0")}:00`);
 
 const SUBJECT_STYLES = {
   math: "tt-math",
@@ -100,7 +100,7 @@ function getTaskEmoji(task) {
 }
 
 export function initFeature4(ctx) {
-  const { runtime, API, apiGet, apiPost, apiPut, apiDelete, escapeHtml, logAudit, scheduleSave } = ctx;
+  const { runtime, API, apiGet, apiPost, apiPostForm, apiPut, apiDelete, escapeHtml, logAudit, scheduleSave } = ctx;
 
   let timetableState = null;
   let activeWeekStart = getCurrentWeekStart();
@@ -176,7 +176,17 @@ export function initFeature4(ctx) {
     const legend = document.getElementById("tm-legend");
     if (!legend) return;
 
-    const subjects = [...new Set((state.tasks || []).map((task) => task.subject || task.type || "Study"))].filter(Boolean).slice(0, 4);
+    const subjects = [...new Set(
+      (state.tasks || [])
+        .filter((task) => {
+          const source = String(task?.source || "").toLowerCase();
+          const type = String(task?.type || "").toLowerCase();
+          return source !== "school" && type !== "school-block";
+        })
+        .map((task) => task.subject || task.type || "Study")
+    )]
+      .filter(Boolean)
+      .slice(0, 4);
     if (!subjects.length) {
       legend.innerHTML = "<span class='chip chip-purple'>📚 Study</span>";
       return;
@@ -206,7 +216,12 @@ export function initFeature4(ctx) {
     if (!pool) return;
 
     const assigned = new Set((state.slots || []).map((slot) => slot.taskId).filter(Boolean));
-    const unassigned = (state.tasks || []).filter((task) => !assigned.has(task.id));
+    const unassigned = (state.tasks || []).filter((task) => {
+      if (assigned.has(task.id)) return false;
+      const source = String(task?.source || "").toLowerCase();
+      const type = String(task?.type || "").toLowerCase();
+      return source !== "school" && type !== "school-block";
+    });
 
     if (!unassigned.length) {
       pool.innerHTML = "<div style='font-size:12px;color:var(--text3);'>No unassigned tasks. Add a session or regenerate plan.</div>";
@@ -280,6 +295,8 @@ export function initFeature4(ctx) {
         });
 
         cell.addEventListener("dblclick", async () => {
+          const slot = slotByKey.get(`${day}_${hour}`);
+          if (String(slot?.source || "").toLowerCase() === "school") return;
           await clearTimetableSlot(day, hour);
         });
 
@@ -288,34 +305,41 @@ export function initFeature4(ctx) {
           const task = taskById.get(slot.taskId);
           if (task) {
             const eventBox = document.createElement("div");
+            const isSchool = String(task.source || "").toLowerCase() === "school";
             const completeClass = task.status === "completed" ? "tm-task-completed" : "";
             eventBox.className = `tt-event ${getStyleClass(task.subject, task.type)} ${completeClass}`;
-            eventBox.draggable = true;
+            eventBox.draggable = !isSchool;
             eventBox.dataset.taskId = task.id;
-            eventBox.innerHTML = `
-              <span class="tm-event-label">${escapeHtml(getTaskEmoji(task))} ${escapeHtml(task.title)}</span>
-              <span class="tm-event-actions">
-                <button class="tm-mini-btn ${task.status === "completed" ? "active" : ""}" data-action="toggle">${task.status === "completed" ? "↺" : "✓"}</button>
-                <button class="tm-mini-btn danger" data-action="clear">✕</button>
-              </span>
-            `;
+            if (isSchool) {
+              eventBox.innerHTML = `
+                <span class="tm-event-label">${escapeHtml(getTaskEmoji(task))} ${escapeHtml(task.subject || task.title)}</span>
+              `;
+            } else {
+              eventBox.innerHTML = `
+                <span class="tm-event-label">${escapeHtml(getTaskEmoji(task))} ${escapeHtml(task.title)}</span>
+                <span class="tm-event-actions">
+                  <button class="tm-mini-btn ${task.status === "completed" ? "active" : ""}" data-action="toggle">${task.status === "completed" ? "↺" : "✓"}</button>
+                  <button class="tm-mini-btn danger" data-action="clear">✕</button>
+                </span>
+              `;
 
-            eventBox.addEventListener("dragstart", (event) => {
-              event.dataTransfer?.setData("text/plain", task.id);
-            });
-
-            eventBox.querySelectorAll("button").forEach((btn) => {
-              btn.addEventListener("click", async (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (btn.dataset.action === "toggle") {
-                  await toggleTimetableTaskCompletion(task.id);
-                }
-                if (btn.dataset.action === "clear") {
-                  await clearTimetableSlot(day, hour);
-                }
+              eventBox.addEventListener("dragstart", (event) => {
+                event.dataTransfer?.setData("text/plain", task.id);
               });
-            });
+
+              eventBox.querySelectorAll("button").forEach((btn) => {
+                btn.addEventListener("click", async (event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (btn.dataset.action === "toggle") {
+                    await toggleTimetableTaskCompletion(task.id);
+                  }
+                  if (btn.dataset.action === "clear") {
+                    await clearTimetableSlot(day, hour);
+                  }
+                });
+              });
+            }
 
             cell.appendChild(eventBox);
           }
@@ -347,8 +371,11 @@ export function initFeature4(ctx) {
     agenda.innerHTML = list
       .map((item) => {
         const task = item.task || {};
+        const isSchool = String(task.source || "").toLowerCase() === "school";
         const statusClass = task.status === "completed" ? "on" : "";
-        const bg = task.status === "completed"
+        const bg = isSchool
+          ? "rgba(251,191,36,0.09);border:1px solid rgba(251,191,36,0.2);"
+          : task.status === "completed"
           ? "rgba(110,231,183,0.09);border:1px solid rgba(110,231,183,0.2);"
           : "rgba(129,140,248,0.09);border:1px solid rgba(129,140,248,0.2);";
         return `
@@ -359,7 +386,7 @@ export function initFeature4(ctx) {
               <div style="font-size:11px;color:var(--text3);">${escapeHtml(formatHour(item.hour))} · ${escapeHtml(task.estimatedMinutes || 60)} min</div>
             </div>
             <div style="margin-left:auto;">
-              <div class="toggle ${statusClass}" data-task-id="${escapeHtml(task.id)}"></div>
+              ${isSchool ? "<span class='chip chip-yellow' style='font-size:10px;'>School</span>" : `<div class="toggle ${statusClass}" data-task-id="${escapeHtml(task.id)}"></div>`}
             </div>
           </div>
         `;
@@ -469,28 +496,89 @@ export function initFeature4(ctx) {
     }
   }
 
+  function buildOnboardingModeFields(mode, profile) {
+    if (mode === "school_blocks") {
+      const importedCount = Array.isArray(profile.schoolBlocks) ? profile.schoolBlocks.length : 0;
+      return `
+        <div class="form-group">
+          <label class="form-label">School timetable file (any format)</label>
+          <input class="input" id="tm-ob-file" type="file">
+          <div style="font-size:11px;color:var(--text3);margin-top:6px;">
+            Upload timetable file (.ics, .pdf, .docx, .txt, etc). AI will extract class blocks. Imported weekly blocks currently saved: ${escapeHtml(importedCount)}.
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Calendar URL (optional)</label>
+          <input class="input" id="tm-ob-calendar-url" placeholder="webcal://... or https://..." value="">
+          <div style="font-size:11px;color:var(--text3);margin-top:6px;">
+            Use this when your iPhone calendar is subscribed and your local .ics file has no VEVENT entries.
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="form-group">
+        <label class="form-label">Productive hours (optional)</label>
+        <input class="input" id="tm-ob-productive" placeholder="09:00-11:00,20:00-22:00" value="${escapeHtml((profile.productiveHours || []).join(","))}">
+      </div>
+    `;
+  }
+
+  function bindOnboardingModeUI(profile) {
+    const select = document.getElementById("tm-ob-mode");
+    const container = document.getElementById("tm-ob-mode-fields");
+    if (!select || !container) return;
+
+    const render = () => {
+      const mode = select.value || "productive_hours";
+      container.innerHTML = buildOnboardingModeFields(mode, profile);
+    };
+
+    select.addEventListener("change", render);
+    render();
+  }
+
   async function saveTimeManagementOnboarding() {
     const mode = document.getElementById("tm-ob-mode")?.value || "productive_hours";
-    const schoolBlocksText = document.getElementById("tm-ob-school")?.value || "";
-    const productiveHoursText = document.getElementById("tm-ob-productive")?.value || "";
     const examDatesText = document.getElementById("tm-ob-exams")?.value || "";
     const weeklyGoalsHours = Number(document.getElementById("tm-ob-goal")?.value || 14);
 
     try {
-      const payload = {
-        mode,
-        schoolBlocksText,
-        productiveHoursText,
-        examDatesText,
-        weeklyGoalsHours
-      };
+      if (mode === "school_blocks") {
+        const fileInput = document.getElementById("tm-ob-file");
+        const file = fileInput?.files?.[0];
+        const calendarUrl = (document.getElementById("tm-ob-calendar-url")?.value || "").trim();
+        if (!file && !calendarUrl) {
+          throw new Error("Please upload a timetable file or paste a calendar URL.");
+        }
 
-      try {
-        await apiPut(API.timeManagementProfile(getStudentId()), payload);
-      } catch (putError) {
-        // Some environments/proxies block PUT; fallback to POST alias.
-        await apiPost(API.timeManagementProfile(getStudentId()), payload);
+        const form = new FormData();
+        if (file) form.append("timetable", file);
+        if (calendarUrl) form.append("calendarUrl", calendarUrl);
+        form.append("weekStart", activeWeekStart);
+        form.append("examDatesText", examDatesText);
+        form.append("weeklyGoalsHours", String(weeklyGoalsHours));
+
+        await apiPostForm(API.timeManagementUploadSchoolTimetable(getStudentId()), form);
+      } else {
+        const payload = {
+          mode,
+          examDatesText,
+          weeklyGoalsHours
+        };
+        const productiveEl = document.getElementById("tm-ob-productive");
+        if (productiveEl) {
+          payload.productiveHoursText = productiveEl.value || "";
+        }
+
+        try {
+          await apiPut(API.timeManagementProfile(getStudentId()), payload);
+        } catch (putError) {
+          await apiPost(API.timeManagementProfile(getStudentId()), payload);
+        }
       }
+
       hideModal();
       logAudit("Time management onboarding saved.");
       await loadTimeManagement();
@@ -503,9 +591,6 @@ export function initFeature4(ctx) {
   function openTimeManagementOnboarding() {
     const profile = getStateSafe().profile || {};
     const mode = profile.mode || "productive_hours";
-    const schoolBlocksText = (profile.schoolBlocks || [])
-      .map((block) => `${block.day} ${block.start}-${block.end}`)
-      .join(", ");
 
     const html = `
       <div class="modal-title">Time Management Onboarding</div>
@@ -519,15 +604,7 @@ export function initFeature4(ctx) {
         </select>
       </div>
 
-      <div class="form-group">
-        <label class="form-label">School blocks (optional)</label>
-        <input class="input" id="tm-ob-school" placeholder="MON 08:00-10:00, TUE 10:00-12:00" value="${escapeHtml(schoolBlocksText)}">
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Productive hours (optional)</label>
-        <input class="input" id="tm-ob-productive" placeholder="09:00-11:00,20:00-22:00" value="${escapeHtml((profile.productiveHours || []).join(","))}">
-      </div>
+      <div id="tm-ob-mode-fields"></div>
 
       <div class="form-group">
         <label class="form-label">Upcoming exam dates</label>
@@ -547,6 +624,7 @@ export function initFeature4(ctx) {
     `;
 
     showModal(html);
+    bindOnboardingModeUI(profile);
   }
 
   async function generateTimeManagementPlan() {

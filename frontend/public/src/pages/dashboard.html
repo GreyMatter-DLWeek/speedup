@@ -1,8 +1,8 @@
     <div id="page-dashboard" class="page active">
       <div class="topbar">
         <div>
-          <div class="topbar-title">Good morning, Alex 👋</div>
-          <div class="topbar-sub">Monday, March 2 · Finals in 18 days</div>
+          <div class="topbar-title" id="dashboard-greeting-title">Good morning 👋</div>
+          <div class="topbar-sub" id="dashboard-greeting-sub">Loading your study summary…</div>
         </div>
         <div class="topbar-actions">
           <button class="btn btn-secondary" onclick="navigate('timetable')">📅 Today's Plan</button>
@@ -27,26 +27,26 @@
           <div class="stat-card green">
             <div class="stat-icon">🔥</div>
             <div class="stat-label">Study Streak</div>
-            <div class="stat-value" style="color:var(--accent)">14d</div>
-            <div class="stat-change up">↑ Personal best</div>
+            <div class="stat-value" id="dashboard-study-streak-value" style="color:var(--accent)">0d</div>
+            <div class="stat-change neutral" id="dashboard-study-streak-change">→ No activity yet</div>
           </div>
           <div class="stat-card purple">
             <div class="stat-icon">⚡</div>
             <div class="stat-label">Overall Mastery</div>
-            <div class="stat-value" style="color:var(--accent2)">72%</div>
-            <div class="stat-change up">↑ +4% this week</div>
+            <div class="stat-value" id="dashboard-overall-mastery-value" style="color:var(--accent2)">0%</div>
+            <div class="stat-change neutral" id="dashboard-overall-mastery-change">→ Build your baseline</div>
           </div>
           <div class="stat-card pink">
             <div class="stat-icon">🎯</div>
             <div class="stat-label">Topics Reviewed</div>
-            <div class="stat-value" style="color:var(--accent3)">34</div>
-            <div class="stat-change neutral">→ 6 pending</div>
+            <div class="stat-value" id="dashboard-topics-reviewed-value" style="color:var(--accent3)">0</div>
+            <div class="stat-change neutral" id="dashboard-topics-reviewed-change">→ 0 pending</div>
           </div>
           <div class="stat-card yellow">
             <div class="stat-icon">⏱</div>
             <div class="stat-label">Study Time Today</div>
-            <div class="stat-value" style="color:var(--accent4)">2h 14m</div>
-            <div class="stat-change down">↓ Below target</div>
+            <div class="stat-value" id="dashboard-study-time-today-value" style="color:var(--accent4)">0m</div>
+            <div class="stat-change neutral" id="dashboard-study-time-today-change">→ No sessions completed</div>
           </div>
         </div>
 
@@ -63,25 +63,11 @@
 
             <div class="card">
               <div class="card-title">Subject Mastery Overview</div>
-              <div class="progress-wrap">
-                <div class="progress-header"><span class="progress-label">Data Structures</span><span class="progress-val">84%</span></div>
-                <div class="progress-bar"><div class="progress-fill fill-green" style="width:84%"></div></div>
-              </div>
-              <div class="progress-wrap">
-                <div class="progress-header"><span class="progress-label">Algorithms</span><span class="progress-val">67%</span></div>
-                <div class="progress-bar"><div class="progress-fill fill-purple" style="width:67%"></div></div>
-              </div>
-              <div class="progress-wrap">
-                <div class="progress-header"><span class="progress-label">Linear Algebra</span><span class="progress-val">52%</span></div>
-                <div class="progress-bar"><div class="progress-fill fill-yellow" style="width:52%"></div></div>
-              </div>
-              <div class="progress-wrap">
-                <div class="progress-header"><span class="progress-label">Operating Systems</span><span class="progress-val">78%</span></div>
-                <div class="progress-bar"><div class="progress-fill fill-pink" style="width:78%"></div></div>
-              </div>
-              <div class="progress-wrap">
-                <div class="progress-header"><span class="progress-label">Discrete Mathematics</span><span class="progress-val">41%</span></div>
-                <div class="progress-bar"><div class="progress-fill fill-red" style="width:41%"></div></div>
+              <div id="dashboard-subject-mastery-list">
+                <div class="progress-wrap">
+                  <div class="progress-header"><span class="progress-label">No topic data yet</span><span class="progress-val">0%</span></div>
+                  <div class="progress-bar"><div class="progress-fill fill-red" style="width:0%"></div></div>
+                </div>
               </div>
             </div>
           </div>
@@ -91,55 +77,36 @@
             <div class="card">
               <div class="card-title">AI Insights</div>
               <div class="insight-card">
-                <div class="insight-type">Knowledge Gap Detected</div>
-                <div class="insight-text">You've answered 7/10 Discrete Math questions incorrectly across 3 sessions — this is a genuine gap, not careless errors.</div>
+                <div class="insight-type" id="dashboard-insight-primary-type">Knowledge Gap Detected</div>
+                <div class="insight-text" id="dashboard-insight-primary-text">Analyzing your current study signals…</div>
                 <div class="insight-action" onclick="navigate('recommendations')">→ Get study plan</div>
-                <div class="feedback-row">
+                <div class="feedback-row" data-feedback-key="dashboard-primary">
                   <span class="feedback-label">Accurate?</span>
-                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')" data-tip="Agree">👍</button>
-                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')" data-tip="Disagree">👎</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')" data-feedback-key="dashboard-primary" data-feedback-direction="up" data-tip="Agree">👍</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')" data-feedback-key="dashboard-primary" data-feedback-direction="down" data-tip="Disagree">👎</button>
                 </div>
               </div>
               <div class="insight-card" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),rgba(244,114,182,0.05));border-color:rgba(251,191,36,0.15);">
-                <div class="insight-type" style="color:var(--accent4)">Optimal Study Window</div>
-                <div class="insight-text">Based on your past 30 sessions, you perform best on weekdays 9–11 AM and 8–10 PM. Today's 3 PM slot may be suboptimal.</div>
+                <div class="insight-type" id="dashboard-insight-secondary-type" style="color:var(--accent4)">Optimal Study Window</div>
+                <div class="insight-text" id="dashboard-insight-secondary-text">Checking timetable alignment with your productive hours…</div>
                 <div class="insight-action" style="color:var(--accent4)" onclick="openModal('reschedule')">→ Reschedule session</div>
-                <div class="feedback-row">
+                <div class="feedback-row" data-feedback-key="dashboard-secondary">
                   <span class="feedback-label">Accurate?</span>
-                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')">👍</button>
-                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')">👎</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')" data-feedback-key="dashboard-secondary" data-feedback-direction="up">👍</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')" data-feedback-key="dashboard-secondary" data-feedback-direction="down">👎</button>
                 </div>
               </div>
             </div>
 
             <div class="card">
               <div class="card-title">Recent Activity</div>
-              <div class="activity-item">
-                <div class="activity-dot" style="background:var(--accent)"></div>
-                <div class="activity-content">
-                  <div class="activity-title">Completed Algorithms Quiz · 8/10</div>
-                  <div class="activity-meta">2 hours ago · 28 minutes</div>
-                </div>
-              </div>
-              <div class="activity-item">
-                <div class="activity-dot" style="background:var(--accent2)"></div>
-                <div class="activity-content">
-                  <div class="activity-title">Read Chapter 5: Recursion</div>
-                  <div class="activity-meta">Yesterday · 3 paragraphs explained</div>
-                </div>
-              </div>
-              <div class="activity-item">
-                <div class="activity-dot" style="background:var(--accent4)"></div>
-                <div class="activity-content">
-                  <div class="activity-title">Highlighted 4 concepts in Linear Algebra</div>
-                  <div class="activity-meta">Yesterday · Auto-saved to Highlights</div>
-                </div>
-              </div>
-              <div class="activity-item">
-                <div class="activity-dot" style="background:var(--accent3)"></div>
-                <div class="activity-content">
-                  <div class="activity-title">Uploaded Mid-term Past Paper 2023</div>
-                  <div class="activity-meta">2 days ago · AI analyzed 24 questions</div>
+              <div id="dashboard-recent-activity">
+                <div class="activity-item">
+                  <div class="activity-dot" style="background:var(--text3)"></div>
+                  <div class="activity-content">
+                    <div class="activity-title">No activity logged yet</div>
+                    <div class="activity-meta">Start learning actions to populate this feed</div>
+                  </div>
                 </div>
               </div>
             </div>
