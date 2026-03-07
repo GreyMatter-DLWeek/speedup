@@ -106,7 +106,20 @@ export function initFeature4(ctx) {
   let activeWeekStart = getCurrentWeekStart();
 
   function getStudentId() {
-    return runtime.state?.student?.id || "demo-student-1";
+    const authUid = String(runtime.authUser?.uid || "").trim();
+    if (authUid) {
+      runtime.state.student.id = authUid;
+      return authUid;
+    }
+    return String(runtime.state?.student?.id || "").trim();
+  }
+
+  function requireStudentId() {
+    const studentId = getStudentId();
+    if (!studentId) {
+      throw new Error("Your session is not ready yet. Please refresh and sign in again.");
+    }
+    return studentId;
   }
 
   function showModal(html) {
@@ -480,7 +493,7 @@ export function initFeature4(ctx) {
 
   async function loadTimeManagement() {
     try {
-      const response = await apiGet(API.timeManagementState(getStudentId(), activeWeekStart));
+      const response = await apiGet(API.timeManagementState(requireStudentId(), activeWeekStart));
       activeWeekStart = response.weekStart || activeWeekStart;
       timetableState = response;
       runtime.state.timeManagement = response;
@@ -492,6 +505,13 @@ export function initFeature4(ctx) {
       }
     } catch (error) {
       logAudit(`Time management load failed: ${error.message || "unknown"}`);
+      const summary = document.getElementById("tm-peak-sub");
+      if (summary) summary.textContent = error.message || "Failed to load timetable.";
+      const cached = runtime.state?.timeManagement;
+      if (cached && typeof cached === "object") {
+        timetableState = cached;
+        activeWeekStart = cached.weekStart || activeWeekStart;
+      }
       renderAll();
     }
   }
@@ -560,7 +580,7 @@ export function initFeature4(ctx) {
         form.append("examDatesText", examDatesText);
         form.append("weeklyGoalsHours", String(weeklyGoalsHours));
 
-        await apiPostForm(API.timeManagementUploadSchoolTimetable(getStudentId()), form);
+        await apiPostForm(API.timeManagementUploadSchoolTimetable(requireStudentId()), form);
       } else {
         const payload = {
           mode,
@@ -573,9 +593,9 @@ export function initFeature4(ctx) {
         }
 
         try {
-          await apiPut(API.timeManagementProfile(getStudentId()), payload);
+          await apiPut(API.timeManagementProfile(requireStudentId()), payload);
         } catch (putError) {
-          await apiPost(API.timeManagementProfile(getStudentId()), payload);
+          await apiPost(API.timeManagementProfile(requireStudentId()), payload);
         }
       }
 
@@ -639,7 +659,7 @@ export function initFeature4(ctx) {
       const weakConcepts = topics.slice(0, 4).map((topic) => topic.name);
       const forgettingRiskTopics = topics.filter((topic) => Number(topic.weakScore || 0) >= 60).slice(0, 4).map((topic) => topic.name);
 
-      const response = await apiPost(API.timeManagementGeneratePlan(getStudentId()), {
+      const response = await apiPost(API.timeManagementGeneratePlan(requireStudentId()), {
         weekStart: activeWeekStart,
         weakConcepts,
         forgettingRiskTopics,
@@ -775,7 +795,7 @@ export function initFeature4(ctx) {
 
     try {
       if (taskId) {
-        await apiPut(API.timeManagementTask(getStudentId(), taskId), {
+        await apiPut(API.timeManagementTask(requireStudentId(), taskId), {
           title,
           subject,
           topic,
@@ -787,7 +807,7 @@ export function initFeature4(ctx) {
           hour
         });
       } else {
-        await apiPost(API.timeManagementTasks(getStudentId()), {
+        await apiPost(API.timeManagementTasks(requireStudentId()), {
           weekStart: activeWeekStart,
           title,
           subject,
@@ -816,7 +836,7 @@ export function initFeature4(ctx) {
     if (!confirmed) return;
 
     try {
-      await apiDelete(API.timeManagementTask(getStudentId(), taskId));
+      await apiDelete(API.timeManagementTask(requireStudentId(), taskId));
       await loadTimeManagement();
     } catch (error) {
       logAudit(`Task delete failed: ${error.message || "unknown"}`);
@@ -826,7 +846,7 @@ export function initFeature4(ctx) {
   async function assignTaskToTimetableSlot(taskId, day, hour) {
     if (!taskId || !day || !hour) return;
     try {
-      await apiPut(API.timeManagementSlot(getStudentId(), day, hour), {
+      await apiPut(API.timeManagementSlot(requireStudentId(), day, hour), {
         weekStart: activeWeekStart,
         taskId,
         source: "manual"
@@ -840,7 +860,7 @@ export function initFeature4(ctx) {
   async function clearTimetableSlot(day, hour) {
     if (!day || !hour) return;
     try {
-      const url = `${API.timeManagementSlot(getStudentId(), day, hour)}?weekStart=${encodeURIComponent(activeWeekStart)}`;
+      const url = `${API.timeManagementSlot(requireStudentId(), day, hour)}?weekStart=${encodeURIComponent(activeWeekStart)}`;
       await apiDelete(url);
       await loadTimeManagement();
     } catch (error) {
@@ -854,7 +874,7 @@ export function initFeature4(ctx) {
     const nextStatus = task.status === "completed" ? "planned" : "completed";
 
     try {
-      await apiPut(API.timeManagementTask(getStudentId(), taskId), { status: nextStatus });
+      await apiPut(API.timeManagementTask(requireStudentId(), taskId), { status: nextStatus });
       await loadTimeManagement();
     } catch (error) {
       logAudit(`Completion update failed: ${error.message || "unknown"}`);
@@ -866,7 +886,7 @@ export function initFeature4(ctx) {
     if (!confirmed) return;
 
     try {
-      await apiDelete(API.timeManagementClearWeek(getStudentId(), activeWeekStart));
+      await apiDelete(API.timeManagementClearWeek(requireStudentId(), activeWeekStart));
       await loadTimeManagement();
     } catch (error) {
       logAudit(`Week reset failed: ${error.message || "unknown"}`);
