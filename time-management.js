@@ -375,6 +375,97 @@ function extractByDayFromRrule(rrule) {
     .filter(Boolean);
 }
 
+function parseRruleParts(rrule) {
+  const parts = {};
+  String(rrule || "")
+    .split(";")
+    .forEach((piece) => {
+      const idx = piece.indexOf("=");
+      if (idx < 0) return;
+      const key = String(piece.slice(0, idx) || "").trim().toUpperCase();
+      const value = String(piece.slice(idx + 1) || "").trim();
+      if (!key) return;
+      parts[key] = value;
+    });
+  return parts;
+}
+
+function parseDateOnlyUtc(value) {
+  const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function addDaysToDateOnly(value, deltaDays) {
+  const base = parseDateOnlyUtc(value);
+  if (!base) return "";
+  base.setUTCDate(base.getUTCDate() + Number(deltaDays || 0));
+  return formatYmd(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate());
+}
+
+function compareDateOnly(left, right) {
+  return String(left || "").localeCompare(String(right || ""));
+}
+
+function sortInternalDays(days) {
+  return [...new Set((days || []).filter((day) => DAYS.includes(day)))]
+    .sort((a, b) => DAYS.indexOf(a) - DAYS.indexOf(b));
+}
+
+function getDateForWeekday(weekStart, day) {
+  const index = DAYS.indexOf(day);
+  if (index < 0) return "";
+  return addDaysToDateOnly(weekStart, index);
+}
+
+function parseRruleUntilDate(value, timeZone) {
+  if (!value) return "";
+  const parsed = parseIcsDateTime(value, { timeZone });
+  return parsed?.date || "";
+}
+
+function buildEventOccurrences(event, startInfo, calendarTimeZone, preferredTimeZone) {
+  const startDate = String(startInfo?.date || "").trim();
+  const startDay = String(startInfo?.day || "").trim();
+  if (!startDate || !startDay) return [];
+
+  const rawRrule = String(event?.RRULE || "").trim();
+  if (!rawRrule) {
+    return [{ day: startDay, date: startDate }];
+  }
+
+  const parts = parseRruleParts(rawRrule);
+  const freq = String(parts.FREQ || "").trim().toUpperCase();
+  const byDays = sortInternalDays(extractByDayFromRrule(rawRrule).length ? extractByDayFromRrule(rawRrule) : [startDay]);
+  if (!byDays.length) return [{ day: startDay, date: startDate }];
+  if (freq && freq !== "WEEKLY") {
+    return [{ day: startDay, date: startDate }];
+  }
+
+  const interval = Math.max(1, Number.parseInt(parts.INTERVAL || "1", 10) || 1);
+  const countLimit = Math.max(0, Number.parseInt(parts.COUNT || "0", 10) || 0);
+  const dtStartContext = getIcsDateTimeContext(event, "DTSTART", calendarTimeZone, preferredTimeZone);
+  const untilDate = parseRruleUntilDate(parts.UNTIL || "", dtStartContext.timeZone);
+  const hardStopDate = untilDate || addDaysToDateOnly(startDate, 7 * 26);
+
+  const occurrences = [];
+  let weekCursor = normalizeWeekStart(startDate);
+
+  while (weekCursor && compareDateOnly(weekCursor, hardStopDate) <= 0) {
+    for (const day of byDays) {
+      const occurrenceDate = getDateForWeekday(weekCursor, day);
+      if (!occurrenceDate) continue;
+      if (compareDateOnly(occurrenceDate, startDate) < 0) continue;
+      if (untilDate && compareDateOnly(occurrenceDate, untilDate) > 0) continue;
+      occurrences.push({ day, date: occurrenceDate });
+      if (countLimit > 0 && occurrences.length >= countLimit) return occurrences;
+    }
+    weekCursor = addDaysToDateOnly(weekCursor, interval * 7);
+  }
+
+  return occurrences.length ? occurrences : [{ day: startDay, date: startDate }];
+}
+
 function addMinutesToClock(clock, deltaMinutes) {
   const base = hourToInt(normalizeClockTime(clock));
   const total = Math.max(0, Math.min((24 * 60) - 1, base + Number(deltaMinutes || 0)));
@@ -526,17 +617,16 @@ function parseIcsOccurrences(buffer, options = {}) {
     }
 
     const summary = normalizeConceptLabel(event.SUMMARY || "School Block") || "School Block";
-    const days = extractByDayFromRrule(event.RRULE);
-    if (!days.length && startInfo.day) days.push(startInfo.day);
+    const eventOccurrences = buildEventOccurrences(event, startInfo, calendarTimeZone, preferredTimeZone);
 
-    days.forEach((day) => {
-      if (!DAYS.includes(day)) return;
+    eventOccurrences.forEach((item) => {
+      if (!DAYS.includes(item.day)) return;
       occurrences.push({
-        day,
+        day: item.day,
         start,
         end,
         subject: summary,
-        date: startInfo.date || ""
+        date: item.date || startInfo.date || ""
       });
     });
   });

@@ -1320,24 +1320,125 @@ function buildDashboardHeader(runtime, tmState) {
   };
 }
 
-function buildDashboardInsights(topics, tmState, weeklyMinutes) {
-  const sortedTopics = topics
-    .slice()
-    .sort((a, b) => Number(b?.weakScore || 0) - Number(a?.weakScore || 0));
+function getDashboardFeedback(state) {
+  return state?.dashboardFeedback && typeof state.dashboardFeedback === "object"
+    ? state.dashboardFeedback
+    : {};
+}
 
+function formatProductiveWindows(productiveHours) {
+  const windows = Array.isArray(productiveHours) ? productiveHours.filter(Boolean) : [];
+  return windows.join(" and ") || "your productive windows";
+}
+
+function isHourWithinProductiveRanges(hour, productiveHours) {
+  const [hh, mm] = String(hour || "00:00").split(":").map((part) => toInt(part, 0));
+  const target = (hh * 60) + (mm || 0);
+  return (productiveHours || []).some((range) => {
+    const [start, end] = String(range || "").split("-");
+    const [startH, startM] = String(start || "").split(":").map((part) => toInt(part, 0));
+    const [endH, endM] = String(end || "").split(":").map((part) => toInt(part, 0));
+    const startMinutes = (startH * 60) + (startM || 0);
+    const endMinutes = (endH * 60) + (endM || 0);
+    return target >= startMinutes && target < endMinutes;
+  });
+}
+
+function getNearestExamDays(tmState) {
+  const dates = Array.isArray(tmState?.profile?.examDates) ? tmState.profile.examDates : [];
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  let best = null;
+
+  dates.forEach((value) => {
+    const exam = parseDate(`${value}T00:00:00`);
+    if (!exam) return;
+    const examStart = new Date(exam.getFullYear(), exam.getMonth(), exam.getDate());
+    const diffDays = Math.round((examStart.getTime() - todayStart.getTime()) / 86400000);
+    if (diffDays < 0) return;
+    if (best === null || diffDays < best) best = diffDays;
+  });
+
+  return best;
+}
+
+function dedupeInsightCandidates(candidates) {
+  const seen = new Set();
+  return (candidates || []).filter((candidate) => {
+    if (!candidate?.type || !candidate?.text) return false;
+    const key = `${candidate.type}|${candidate.text}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function selectInsightCandidate(candidates, feedbackValue, fallback) {
+  const available = dedupeInsightCandidates(candidates);
+  if (!available.length) return fallback;
+  if (String(feedbackValue || "") === "down" && available.length > 1) {
+    return available[1];
+  }
+  return available[0];
+}
+
+function buildWeakTopicInsight(sortedTopics) {
   const weakest = sortedTopics[0] || null;
-  const weakMastery = weakest ? getMasteryFromTopic(weakest) : 0;
+  if (!weakest) return null;
+  const weakMastery = getMasteryFromTopic(weakest);
+  return {
+    type: weakMastery < 50 ? "Knowledge Gap Detected" : "Reinforcement Suggested",
+    text: `${normalizeTopicName(weakest.name)} is at ${toInt(weakMastery)}% mastery (weak score ${toInt(weakest.weakScore || 0)}). Prioritize this concept in your next focused session.`
+  };
+}
 
-  const primary = weakest
-    ? {
-      type: weakMastery < 50 ? "Knowledge Gap Detected" : "Reinforcement Suggested",
-      text: `${normalizeTopicName(weakest.name)} is at ${toInt(weakMastery)}% mastery (weak score ${toInt(weakest.weakScore || 0)}). Prioritize this concept in your next focused session.`
-    }
-    : {
-      type: "Baseline Building",
-      text: "No topic weakness data yet. Complete a practice analysis or tutor session to unlock targeted gap insights."
-    };
+function buildWeightedSubjectInsight(subjectSignals) {
+  const weighted = (subjectSignals || [])
+    .slice()
+    .sort((a, b) => {
+      if (Number(a.mastery || 0) !== Number(b.mastery || 0)) return Number(a.mastery || 0) - Number(b.mastery || 0);
+      if (Number(b.importanceScore || 0) !== Number(a.importanceScore || 0)) return Number(b.importanceScore || 0) - Number(a.importanceScore || 0);
+      return Number(b.schoolMinutes || 0) - Number(a.schoolMinutes || 0);
+    })
+    .find((item) => Number(item?.importanceScore || 0) > 0);
 
+  if (!weighted) return null;
+  const share = toInt(weighted.importanceScore || Math.round(Number(weighted.importanceRatio || 0) * 100));
+  const remainingMinutes = Math.max(30, toInt((Number(weighted.schoolMinutes || 0) * 1.2) - Number(weighted.completedMinutes || 0), 0));
+  return {
+    type: weighted.mastery < 55 ? "High-Weight Module Risk" : "High-Weight Module Focus",
+    text: `${normalizeTopicName(weighted.name)} carries about ${share}% of your weekly class load and is sitting at ${toInt(weighted.mastery)}% mastery. Add ${formatMinutes(remainingMinutes)} of focused work to protect this module.`
+  };
+}
+
+function buildDecayRiskInsight(sortedTopics, stats) {
+  const inactivityDays = Number(stats?.streak?.inactivityDays || 0);
+  const decay = Number(stats?.streak?.confidenceDecayPct || 0);
+  if (!inactivityDays && decay < 12) return null;
+  const weakest = sortedTopics[0] || null;
+  const label = weakest ? normalizeTopicName(weakest.name) : "your weakest material";
+  return {
+    type: "Retention Risk Rising",
+    text: inactivityDays > 0
+      ? `You have ${inactivityDays} low-activity day(s) in a row, pushing mastery decay risk to ${toInt(decay)}%. Revisit ${label} before the gap gets harder to recover.`
+      : `${label} is beginning to decay. Schedule one retrieval session this week to keep mastery from slipping.`
+  };
+}
+
+function buildExamProximityInsight(sortedTopics, tmState) {
+  const nearestDays = getNearestExamDays(tmState);
+  if (nearestDays === null || nearestDays > 14) return null;
+  const weakest = sortedTopics[0] || null;
+  const label = weakest ? normalizeTopicName(weakest.name) : "your weakest topic";
+  return {
+    type: nearestDays <= 3 ? "Exam Pressure Alert" : "Exam Readiness Check",
+    text: nearestDays <= 0
+      ? `Today is an exam day. Do a short confidence check on ${label} instead of opening broad new content.`
+      : `Your next exam is in ${nearestDays} day${nearestDays === 1 ? "" : "s"}. Keep ${label} near the top of your revision queue this week.`
+  };
+}
+
+function buildGoalCoverageInsight(tmState, weeklyMinutes) {
   const profile = tmState?.profile || {};
   const productiveHours = Array.isArray(profile.productiveHours) ? profile.productiveHours : [];
   const weeklyGoalHours = clamp(profile.weeklyGoalsHours || 14, 1, 60);
@@ -1345,12 +1446,113 @@ function buildDashboardInsights(topics, tmState, weeklyMinutes) {
   const loggedHours = Number((loggedMinutes / 60).toFixed(1));
   const remainingHours = Math.max(0, Number((weeklyGoalHours - loggedHours).toFixed(1)));
 
-  const secondary = {
+  return {
     type: loggedHours >= weeklyGoalHours ? "Goal Coverage On Track" : "Goal Coverage Gap",
     text: loggedHours >= weeklyGoalHours
-      ? `You have already logged ${loggedHours}h against a ${weeklyGoalHours}h weekly goal. Keep your next sessions aligned to productive windows: ${productiveHours.join(" and ") || "not set"}.`
-      : `You have logged ${loggedHours}h of ${weeklyGoalHours}h this week. Add ${remainingHours}h in productive windows (${productiveHours.join(" and ") || "set your productive hours"}) to stay on target.`
+      ? `You have already logged ${loggedHours}h against a ${weeklyGoalHours}h weekly goal. Keep your next sessions aligned to productive windows: ${formatProductiveWindows(productiveHours)}.`
+      : `You have logged ${loggedHours}h of ${weeklyGoalHours}h this week. Add ${remainingHours}h in productive windows (${formatProductiveWindows(productiveHours)}) to stay on target.`
   };
+}
+
+function buildSchedulingGapInsight(tmState) {
+  const tasks = Array.isArray(tmState?.tasks) ? tmState.tasks : [];
+  const pending = tasks.filter((task) => task && !isSchoolTask(task) && String(task.status || "").toLowerCase() !== "completed");
+  if (!pending.length) return null;
+
+  const assigned = new Set(
+    (Array.isArray(tmState?.slots) ? tmState.slots : [])
+      .map((slot) => String(slot?.taskId || "").trim())
+      .filter(Boolean)
+  );
+  const unscheduled = pending.filter((task) => !assigned.has(String(task.id || "").trim()));
+  if (!unscheduled.length) return null;
+
+  const top = unscheduled
+    .slice()
+    .sort((a, b) => Number(b?.priority || 0) - Number(a?.priority || 0))[0];
+  const label = normalizeTopicName(top?.title || top?.subject || "your highest-priority task");
+  return {
+    type: "Scheduling Gap",
+    text: `${unscheduled.length} pending study session${unscheduled.length === 1 ? "" : "s"} still have no timetable slot this week. Place ${label} on the calendar next so your plan is actually executable.`
+  };
+}
+
+function buildProductiveWindowInsight(tmState) {
+  const profile = tmState?.profile || {};
+  const productiveHours = Array.isArray(profile.productiveHours) ? profile.productiveHours.filter(Boolean) : [];
+  if (!productiveHours.length) return null;
+
+  const taskById = new Map((Array.isArray(tmState?.tasks) ? tmState.tasks : []).map((task) => [String(task.id || ""), task]));
+  let assigned = 0;
+  let outside = 0;
+
+  (Array.isArray(tmState?.slots) ? tmState.slots : []).forEach((slot) => {
+    const task = taskById.get(String(slot?.taskId || ""));
+    if (!task || isSchoolTask(task)) return;
+    assigned += 1;
+    if (!isHourWithinProductiveRanges(slot?.hour, productiveHours)) outside += 1;
+  });
+
+  if (!assigned || !outside) return null;
+  return {
+    type: "Productive Window Drift",
+    text: `${outside} scheduled session${outside === 1 ? "" : "s"} sit outside your productive windows (${formatProductiveWindows(productiveHours)}). Move the hardest block into those hours for better follow-through.`
+  };
+}
+
+function buildMomentumInsight(stats, tmState) {
+  const streakDays = Number(stats?.streak?.streakDays || 0);
+  const pending = (Array.isArray(tmState?.tasks) ? tmState.tasks : [])
+    .filter((task) => task && !isSchoolTask(task) && String(task.status || "").toLowerCase() !== "completed");
+
+  if (streakDays >= 3) {
+    return {
+      type: "Momentum Building",
+      text: `You are on a ${streakDays}-day study streak. Keep tomorrow's first block short and specific so the streak converts into another completed session.`
+    };
+  }
+  if (pending.length) {
+    return {
+      type: "Execution Focus",
+      text: `${pending.length} planned study session${pending.length === 1 ? "" : "s"} are still open this week. Finish one already-scheduled block before generating more tasks.`
+    };
+  }
+  return null;
+}
+
+function buildDashboardInsights(topics, tmState, weeklyMinutes, subjectSignals, stats, state) {
+  const sortedTopics = topics
+    .slice()
+    .sort((a, b) => Number(b?.weakScore || 0) - Number(a?.weakScore || 0));
+
+  const feedback = getDashboardFeedback(state);
+  const primary = selectInsightCandidate(
+    [
+      buildWeakTopicInsight(sortedTopics),
+      buildWeightedSubjectInsight(subjectSignals),
+      buildDecayRiskInsight(sortedTopics, stats),
+      buildExamProximityInsight(sortedTopics, tmState)
+    ],
+    feedback["dashboard-primary"],
+    {
+      type: "Baseline Building",
+      text: "No topic weakness data yet. Complete a practice analysis or tutor session to unlock targeted gap insights."
+    }
+  );
+
+  const secondary = selectInsightCandidate(
+    [
+      buildGoalCoverageInsight(tmState, weeklyMinutes),
+      buildSchedulingGapInsight(tmState),
+      buildProductiveWindowInsight(tmState),
+      buildMomentumInsight(stats, tmState)
+    ],
+    feedback["dashboard-secondary"],
+    {
+      type: "Plan Setup",
+      text: "Set a weekly goal and productive windows to unlock more specific timetable guidance."
+    }
+  );
 
   return { primary, secondary };
 }
@@ -1605,7 +1807,7 @@ export function initFeature6(ctx) {
     const topicBreakdown = buildTopicBreakdown(dashboardTopics);
     const masteryTrend = buildMasteryTrend(runtime, topics, overallMastery, preview?.masterySnapshots || null);
     const dashboardHeader = buildDashboardHeader(runtime, effectiveTmState);
-    const dashboardInsights = buildDashboardInsights(dashboardTopics, effectiveTmState, stats.weeklyMinutes);
+    const dashboardInsights = buildDashboardInsights(dashboardTopics, effectiveTmState, stats.weeklyMinutes, subjectSignals, stats, state);
 
     return {
       weeklyMinutes: stats.weeklyMinutes,
