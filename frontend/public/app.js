@@ -6,6 +6,7 @@ import { initFeature5 } from "./src/feature-modules/feature5.js";
 import { initFeature6 } from "./src/feature-modules/feature6.js";
 import { initFeature7 } from "./src/feature-modules/feature7.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
+import { initFeature9StudyPack } from "./src/feature-modules/feature9-study-pack.js";
 
 const STORAGE_KEY_PREFIX = "speedup_dashboard_reference_v1";
 const STUDENT_ID = "";
@@ -28,6 +29,10 @@ const API = {
   practiceGenerateFlashcards: "/api/practice/generate-flashcards",
   explain: "/api/explain",
   tutorQuery: "/api/tutor/query",
+  studyPackUploadPdf: "/api/study-pack/upload-pdf",
+  studyPackCheckpointQuiz: "/api/study-pack/checkpoint-quiz",
+  studyPackCheatsheet: "/api/study-pack/cheatsheet",
+  studyPackTeachMode: "/api/study-pack/teach-mode",
   highlightAnalyze: "/api/highlight/analyze",
   ragQuery: "/api/rag/query",
   ragIndexNote: "/api/rag/index-note",
@@ -75,6 +80,8 @@ const defaultState = {
   notes: {},
   highlights: [],
   practiceUploads: [],
+  focusSessions: [],
+  dashboardFeedback: {},
   examHistory: [],
   responsibleControls: {
     explainability: true,
@@ -89,7 +96,8 @@ const defaultState = {
 const flashcards = [];
 
 const modals = {
-  focus: { title: "Start Focus Session", body: "<div class='form-group'><label class='form-label'>Mode</label><select class='select'><option>Active Reading</option><option>AI Tutor</option><option>Practice Questions</option></select></div>", confirm: "Start" },
+  focus: { title: "Start Focus Session", body: "", confirm: "Start" },
+  reschedule: { title: "Reschedule Session", body: "", confirm: "Open timetable" },
   visual: { title: "Concept Visualization", body: "<div class='form-group'><label class='form-label'>Concept</label><input class='input' placeholder='Enter concept...'></div>", confirm: "Generate" },
   export: { title: "Export Highlights", body: "<div style='font-size:13px;color:var(--text3);line-height:1.7;'>Export current highlights to JSON report from dashboard.</div>", confirm: "Close" },
   "full-plan": { title: "Generate Full Plan", body: "<div class='form-group'><label class='form-label'>Available hours</label><input class='input' type='number' value='12'></div>", confirm: "Generate" },
@@ -147,6 +155,7 @@ const feature5 = initFeature5(ctx);
 const feature6 = initFeature6(ctx);
 const feature7 = initFeature7(ctx);
 const feature8 = initFeature8(ctx);
+const feature9 = initFeature9StudyPack(ctx);
 const appPath = (p) => (window.toAppPath ? window.toAppPath(p) : p);
 const apiUrl = (p) => (window.toApiUrl ? window.toApiUrl(p) : p);
 
@@ -174,7 +183,9 @@ async function init() {
   renderCloudStatus();
   feature2.renderFlashcard();
   await feature6.refreshFeature6();
+  feature8.hydrateFeedbackSelections();
   feature7.initPracticeFeature();
+  feature9.initStudyPack();
 
   renderTutorPanel();
   feature4.initTimeManagement();
@@ -766,6 +777,7 @@ function resetAiProfile() {
   runtime.state.tutorRevisitQueue = [];
 
   renderResponsibleControls();
+  feature8.hydrateFeedbackSelections();
   logAudit("AI profile reset by user.");
   scheduleSave();
 }
@@ -781,6 +793,7 @@ function deleteAllUserData() {
   }
   logAudit("All user data deleted by user.");
   renderResponsibleControls();
+  feature8.hydrateFeedbackSelections();
   scheduleSave();
 }
 
@@ -809,7 +822,13 @@ function navigate(page) {
     feature4.refreshTimeManagement();
   }
   if (page === "dashboard" || page === "progress") {
-    feature6.refreshFeature6();
+    feature6.refreshFeature6().then(() => {
+      feature8.hydrateFeedbackSelections();
+    });
+  }
+
+  if (page === "study-notes") {
+    feature9.refreshStudyPack();
   }
 }
 
@@ -1022,17 +1041,11 @@ function buildTutorContext(type) {
   const highlights = Array.isArray(runtime.state.highlights) ? runtime.state.highlights.slice(0, 4) : [];
 
   if (resolvedType === "study-notes") {
-    const packName = runtime.state.student?.focus ? `${runtime.state.student.focus} Study Pack` : "Study Notes Pack";
-    const section = document.querySelector("#page-study-notes .section-title")?.textContent?.trim() || "Captured Highlights";
+    const packContext = feature9.getTutorContextPayload();
     return {
       contextType: "study-notes",
-      details: { packName, section },
-      context: {
-        packName,
-        section,
-        selection: highlights[0]?.summary || highlights[0]?.text || "",
-        highlights: highlights.map((h) => ({ text: h.text, summary: h.summary, section }))
-      }
+      details: { packName: packContext.packName, section: packContext.sectionLabel },
+      context: packContext.context
     };
   }
 
@@ -1292,6 +1305,11 @@ function addDaysIso(days) {
 
 function jumpTutorSource(jumpRef) {
   if (!jumpRef) return;
+  if (jumpRef.startsWith("study-pack-section-")) {
+    navigate("study-notes");
+    feature9.focusSectionByAnchor(jumpRef);
+    return;
+  }
   if (jumpRef === "study-notes") {
     navigate("study-notes");
     closeTutorPanel();
@@ -1322,7 +1340,7 @@ function runTutorAction(msgIndex, actionIndex) {
   const action = row?.actions?.[actionIndex];
   if (!action) return;
 
-  if (action.type === "jump") {
+  if (action.type === "jump" || action.type === "jump-section") {
     jumpTutorSource(action.jumpRef);
     return;
   }
@@ -1333,10 +1351,20 @@ function runTutorAction(msgIndex, actionIndex) {
     return;
   }
 
-  if (action.type === "add-note") {
+  if (action.type === "add-note" || action.type === "add-to-notes") {
+    const noteText = action.text || row.answer || "";
+    if (runtime.tutorContextType === "study-notes") {
+      feature9.addTutorNote(noteText, {
+        source: "tutor-action",
+        sectionLabel: runtime.tutorScopeMeta?.[1] || "Study Pack"
+      });
+      logAudit("Tutor answer added to Study Pack notes.");
+      return;
+    }
+
     const key = `tutor-${Date.now()}`;
     runtime.state.notes[key] = {
-      text: action.text || row.answer || "",
+      text: noteText,
       status: "saved",
       attempt: 0
     };
@@ -1697,6 +1725,7 @@ export function bootstrapApp() {
   window.askTutorQuick = askTutorQuick;
   window.jumpTutorSource = jumpTutorSource;
   window.runTutorAction = runTutorAction;
+  window.openLatestStudyPack = feature9.openLatestPack;
   window.openSettingsModal = openSettingsModal;
   window.saveSettingsProfile = saveSettingsProfile;
   window.resetSidebarOrder = resetSidebarOrder;
