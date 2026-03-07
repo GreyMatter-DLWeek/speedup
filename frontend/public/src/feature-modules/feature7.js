@@ -280,12 +280,16 @@ export function initFeature7(ctx) {
     if (!ok) return;
     const status = document.getElementById("practiceStatus");
     if (status) status.textContent = "Deleting source...";
-    const forceFallback = id.startsWith("legacy-") || !supportsPracticeUploadRoutes;
-    try {
-      if (forceFallback) throw new Error("state-fallback");
-      await apiDelete(API.practiceUpload(id));
-    } catch (error) {
-      if (!forceFallback && !isDeleteEndpointMissing(error)) throw error;
+    let deletedViaApi = false;
+    if (!id.startsWith("legacy-") && supportsPracticeUploadRoutes) {
+      try {
+        await apiDelete(API.practiceUpload(id));
+        deletedViaApi = true;
+      } catch {
+        deletedViaApi = false;
+      }
+    }
+    if (!deletedViaApi) {
       await deleteUploadsViaStateFallback([id]);
     }
     selectedUploadIds.delete(id);
@@ -303,13 +307,16 @@ export function initFeature7(ctx) {
     if (!ok) return;
     const status = document.getElementById("practiceStatus");
     if (status) status.textContent = "Deleting selected sources...";
-    const allLegacy = ids.every((id) => String(id).startsWith("legacy-"));
-    const forceFallback = allLegacy || !supportsPracticeUploadRoutes;
-    try {
-      if (forceFallback) throw new Error("state-fallback");
-      await apiPost(API.practiceDeleteUploads, { uploadIds: ids });
-    } catch (error) {
-      if (!forceFallback && !isDeleteEndpointMissing(error)) throw error;
+    let deletedViaApi = false;
+    if (!ids.every((id) => String(id).startsWith("legacy-")) && supportsPracticeUploadRoutes) {
+      try {
+        await apiPost(API.practiceDeleteUploads, { uploadIds: ids });
+        deletedViaApi = true;
+      } catch {
+        deletedViaApi = false;
+      }
+    }
+    if (!deletedViaApi) {
       await deleteUploadsViaStateFallback(ids);
     }
     selectedUploadIds = new Set();
@@ -318,15 +325,6 @@ export function initFeature7(ctx) {
     if (status) status.textContent = "Selected sources deleted.";
     logAudit(`Practice sources deleted: ${ids.length}.`);
     scheduleSave();
-  }
-
-  function isDeleteEndpointMissing(error) {
-    const msg = String(error?.message || "").toLowerCase();
-    return msg.includes("cannot delete /api/practice/uploads")
-      || msg.includes("cannot post /api/practice/uploads/delete-bulk")
-      || msg.includes("/api/practice/uploads/")
-      || msg.includes("delete /api/practice/uploads/")
-      || msg.includes("post /api/practice/uploads/delete-bulk failed");
   }
 
   async function deleteUploadsViaStateFallback(uploadIds) {
@@ -352,19 +350,21 @@ export function initFeature7(ctx) {
     if (!list) return;
     list.addEventListener("change", (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-      if (!target.classList.contains("upload-select-checkbox")) return;
-      const id = String(target.getAttribute("data-upload-id") || "");
+      if (!(target instanceof Element)) return;
+      const checkbox = target.closest(".upload-select-checkbox");
+      if (!(checkbox instanceof HTMLInputElement)) return;
+      const id = String(checkbox.getAttribute("data-upload-id") || "");
       if (!id) return;
-      if (target.checked) selectedUploadIds.add(id);
+      if (checkbox.checked) selectedUploadIds.add(id);
       else selectedUploadIds.delete(id);
       updateSelectionCount();
     });
     list.addEventListener("click", async (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-      if (!target.classList.contains("delete-upload-btn")) return;
-      const id = String(target.getAttribute("data-upload-id") || "");
+      if (!(target instanceof Element)) return;
+      const btn = target.closest(".delete-upload-btn");
+      if (!(btn instanceof HTMLButtonElement)) return;
+      const id = String(btn.getAttribute("data-upload-id") || "");
       try {
         await deleteSingleUpload(id);
       } catch (error) {
