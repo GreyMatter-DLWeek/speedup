@@ -579,6 +579,7 @@ export function initFeature4(ctx) {
         form.append("weekStart", activeWeekStart);
         form.append("examDatesText", examDatesText);
         form.append("weeklyGoalsHours", String(weeklyGoalsHours));
+        form.append("browserTimeZone", Intl.DateTimeFormat().resolvedOptions().timeZone || "");
 
         await apiPostForm(API.timeManagementUploadSchoolTimetable(requireStudentId()), form);
       } else {
