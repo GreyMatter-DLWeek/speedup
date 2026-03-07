@@ -219,6 +219,19 @@
     max-width: 100%;
   }
 
+  .content > * {
+    max-width: 100%;
+  }
+
+  img, svg, canvas, video {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .card, .stat-card, .notes-content, .chat-container, .practice-panel {
+    min-width: 0;
+  }
+
   /* CARDS */
   .card {
     background: var(--surface);
@@ -1641,12 +1654,62 @@
       min-width: 0;
       border-right: none;
       border-bottom: 1px solid var(--border);
-      padding: 12px 0;
+      padding: 10px 10px 8px;
+      gap: 8px;
+      overflow-x: auto;
+    }
+
+    .logo {
+      padding: 0 6px 8px;
+      margin-bottom: 4px;
+    }
+
+    .logo-mark {
+      font-size: 20px;
+    }
+
+    .nav-section {
+      padding: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      overflow-x: auto;
+      scrollbar-width: thin;
+    }
+
+    .nav-label {
+      flex: 0 0 auto;
+      padding: 4px 2px;
+      font-size: 9px;
+      white-space: nowrap;
+    }
+
+    .nav-item {
+      flex: 0 0 auto;
+      white-space: nowrap;
     }
 
     .sidebar-bottom {
-      margin-top: 10px;
+      margin-top: 6px;
       border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0 0;
+      flex-wrap: wrap;
+    }
+
+    .user-card {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 8px 10px;
+    }
+
+    #sidebarSettingsBtn,
+    #logoutBtn {
+      width: auto !important;
+      margin-top: 0 !important;
+      padding: 8px 12px;
     }
 
     .main {
@@ -1655,6 +1718,38 @@
 
     .content {
       padding: 12px;
+    }
+
+    #page-notes .grid-2-1 > div,
+    #page-tutor .grid-2-1 > div,
+    #page-practice .practice-grid > div {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    #page-tutor .chat-input-area {
+      flex-wrap: wrap;
+    }
+
+    #page-tutor .chat-input-area .send-btn,
+    #page-tutor .chat-input-area .toolbar-btn {
+      flex: 1 1 140px;
+      justify-content: center;
+    }
+
+    #page-notes .notes-toolbar {
+      overflow-x: auto;
+      white-space: nowrap;
+      scrollbar-width: thin;
+    }
+
+    #page-notes .notes-toolbar .toolbar-btn {
+      flex: 0 0 auto;
+    }
+
+    #page-practice .practice-actions .btn {
+      flex: 1 1 180px;
+      justify-content: center;
     }
 
     .chat-container {
@@ -1676,6 +1771,11 @@
       font-size: 16px;
     }
 
+    .topbar-sub {
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
     .card,
     .stat-card {
       padding: 14px;
@@ -1687,11 +1787,90 @@
       font-size: 12px;
     }
 
+    .topbar-actions {
+      gap: 8px;
+    }
+
+    .topbar-actions .btn {
+      flex: 1 1 100%;
+      justify-content: center;
+    }
+
+    .topbar-actions {
+      width: 100%;
+    }
+
+    .btn,
+    .toolbar-btn {
+      min-height: 38px;
+    }
+
     .chat-container {
       height: min(500px, 70dvh);
     }
 
+    .chat-messages,
+    .notes-body {
+      padding: 12px;
+    }
+
+    .msg-bubble {
+      max-width: 88%;
+    }
+
+    .modal {
+      width: calc(100vw - 16px);
+      max-height: 88dvh;
+      overflow: auto;
+      border-radius: 14px;
+      padding: 18px;
+    }
+
+    .modal-actions {
+      flex-wrap: wrap;
+      justify-content: stretch;
+    }
+
+    .modal-actions .btn {
+      flex: 1 1 140px;
+      justify-content: center;
+    }
+
+    .input,
+    .select,
+    .chat-input {
+      font-size: 16px;
+    }
+
     .timetable-grid {
       min-width: 560px;
+    }
+
+    #page-notes .paragraph-wrap {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    #page-notes .para-checkbox {
+      width: 30px;
+      height: 30px;
+    }
+
+    #page-tutor .chat-header {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    #page-tutor #quickQuestions > div {
+      font-size: 13px !important;
+      line-height: 1.45;
+    }
+
+    #page-practice .upload-toolbar {
+      gap: 6px;
+    }
+
+    #page-practice .upload-toolbar .btn {
+      flex: 1 1 44%;
     }
   }
