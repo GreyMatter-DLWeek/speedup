@@ -1547,6 +1547,10 @@ async function requestJson(method, url, body = undefined, isForm = false) {
   if (!res.ok && res.status === 401 && /invalid firebase token/i.test(String(payload?.error || ""))) {
     ({ res, payload } = await attempt(true));
   }
+  if (!res.ok && method === "GET" && res.status >= 500 && res.status < 600) {
+    await sleep(250);
+    ({ res, payload } = await attempt(false));
+  }
   if (!res.ok) throw new Error(extractErrorMessage(payload, `${method} ${url} failed`));
   return payload;
 }
@@ -1567,7 +1571,19 @@ async function parseMaybeJson(res) {
 
 function extractErrorMessage(payload, fallback) {
   if (!payload || typeof payload !== "object") return fallback;
-  return payload.error || payload.details || payload.message || fallback;
+  const base = payload.error || payload.details || payload.message || fallback;
+  const code = String(payload.code || "").trim();
+  const hint = String(payload.hint || "").trim();
+  const requestId = String(payload.requestId || "").trim();
+  const extras = [code && `code=${code}`, requestId && `requestId=${requestId}`].filter(Boolean).join(", ");
+  if (hint && extras) return `${base} (${extras}). ${hint}`;
+  if (hint) return `${base}. ${hint}`;
+  if (extras) return `${base} (${extras})`;
+  return base;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function bootstrapApp() {

@@ -69,7 +69,7 @@
   <div class="topbar">
     <div>
       <div class="topbar-title">Practice Studio</div>
-      <div class="topbar-sub">Upload materials, then generate quiz and flashcards with selected source</div>
+      <div class="topbar-sub">Upload materials, select one or many sources, then generate targeted quiz and flashcards.</div>
     </div>
     <div class="topbar-actions">
       <button class="btn btn-secondary" onclick="openTutorPanel('practice-papers')">🤖 Ask Tutor</button>
@@ -113,6 +113,12 @@
 
         <section class="practice-panel">
           <h3>2) Generate Quiz</h3>
+          <div class="form-group context-select" style="margin-bottom:8px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);">
+              <input id="quizUseCheckedSources" type="checkbox" checked>
+              Use checked uploads below (falls back to dropdown if none checked)
+            </label>
+          </div>
           <div class="form-group context-select">
             <label class="form-label">Choose Uploaded Source</label>
             <select id="quizSourceSelect" class="select"></select>
@@ -150,6 +156,12 @@
       <div style="display:flex;flex-direction:column;gap:18px;">
         <section class="practice-panel">
           <h3>3) Generate Flashcards</h3>
+          <div class="form-group context-select" style="margin-bottom:8px;">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);">
+              <input id="flashUseCheckedSources" type="checkbox" checked>
+              Use checked uploads below (falls back to dropdown if none checked)
+            </label>
+          </div>
           <div class="form-group context-select">
             <label class="form-label">Choose Uploaded Source</label>
             <select id="flashcardSourceSelect" class="select"></select>
@@ -169,7 +181,7 @@
 
         <section class="practice-panel">
           <h3>Uploaded Sources</h3>
-          <p class="sub">Select any uploaded file as generation context</p>
+          <p class="sub">Check one or more sources for generation context, or use the dropdown selectors above.</p>
           <div class="upload-toolbar">
             <button id="selectAllUploadsBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Select All</button>
             <button id="clearUploadSelectionBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Clear</button>

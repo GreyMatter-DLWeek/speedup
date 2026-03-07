@@ -30,14 +30,21 @@ const FRONTEND_PUBLIC_DIR = path.resolve(__dirname, "../frontend/public");
 
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "http://localhost:3000")
   .split(",")
-  .map((v) => v.trim())
+  .map((v) => normalizeOrigin(v))
   .filter(Boolean);
+
+app.use((req, res, next) => {
+  req.requestId = `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  res.setHeader("x-request-id", req.requestId);
+  next();
+});
 
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      const normalized = normalizeOrigin(origin);
+      if (allowedOrigins.includes("*") || allowedOrigins.includes(normalized)) return callback(null, true);
       return callback(new Error("CORS blocked for origin."));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -46,10 +53,6 @@ app.use(
 );
 app.use(express.json({ limit: "2mb" }));
 app.use(express.static(FRONTEND_PUBLIC_DIR));
-app.use((req, res, next) => {
-  req.requestId = `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  next();
-});
 
 const upload = multer
   ? multer({
@@ -83,6 +86,7 @@ if (cloudinary && config.cloudinary.cloudName && config.cloudinary.apiKey && con
 }
 
 app.get("/api/health", async (req, res) => {
+  const firebaseDiagnostics = await runFirebaseDiagnostics();
   res.json({
     ok: true,
     services: {
@@ -90,6 +94,15 @@ app.get("/api/health", async (req, res) => {
       ragConfigured: Boolean(isFirebaseConfigured()),
       firebaseConfigured: Boolean(isFirebaseConfigured()),
       fileStorageConfigured: Boolean(isCloudinaryConfigured())
+    },
+    checks: {
+      openaiCallReady: Boolean(config.openai.apiKey && config.openai.model),
+      firebaseAuthReady: Boolean(isFirebaseConfigured()),
+      firestoreRead: firebaseDiagnostics.read,
+      firestoreWrite: firebaseDiagnostics.write
+    },
+    diagnostics: {
+      firestoreError: firebaseDiagnostics.error || ""
     },
     timestamp: new Date().toISOString()
   });
@@ -149,10 +162,12 @@ app.put("/api/user/profile", requireFirebaseAuth, async (req, res) => {
 app.get("/api/user/state", requireFirebaseAuth, async (req, res) => {
   try {
     const uid = req.firebaseUser.uid;
-    const state = await getUserState(uid);
-    return res.json({ ok: true, state });
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    state.student = state.student || {};
+    state.student.id = uid;
+    return res.json({ ok: true, state, requestId: req.requestId });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to load user state. Please try again." });
+    return handleError(res, "Failed to load user state", error);
   }
 });
 
@@ -161,10 +176,12 @@ app.put("/api/user/state", requireFirebaseAuth, async (req, res) => {
     const uid = req.firebaseUser.uid;
     const state = req.body?.state;
     if (!state || typeof state !== "object") return res.status(400).json({ error: "state object is required." });
+    state.student = state.student && typeof state.student === "object" ? state.student : {};
+    state.student.id = uid;
     await setUserState(uid, state);
-    return res.json({ ok: true, savedAt: new Date().toISOString() });
+    return res.json({ ok: true, savedAt: new Date().toISOString(), requestId: req.requestId });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to save user state. Please try again." });
+    return handleError(res, "Failed to save user state", error);
   }
 });
 
@@ -820,14 +837,11 @@ app.post("/api/practice/uploads/delete-bulk", requireFirebaseAuth, async (req, r
 
 app.post("/api/practice/generate-quiz", requireFirebaseAuth, withRateLimit("practice_quiz", 20, 60 * 1000), async (req, res) => {
   try {
-    const sourceText = cleanText(req.body?.sourceText, 20000);
+    const sourceBundle = await resolvePracticeSourceBundle(req);
+    const sourceText = sourceBundle.sourceText;
     const difficulty = normalizeDifficulty(req.body?.difficulty);
     const questionType = normalizeQuestionType(req.body?.questionType);
     const numQuestions = Math.max(1, Math.min(20, Number(req.body?.numQuestions || 5)));
-
-    if (!sourceText || sourceText.length < 40) {
-      return res.status(400).json({ error: "sourceText is required and must contain enough context." });
-    }
 
     const fallbackQuiz = buildFallbackQuizFromSource(sourceText, {
       numQuestions,
@@ -874,6 +888,11 @@ app.post("/api/practice/generate-quiz", requireFirebaseAuth, withRateLimit("prac
     return res.json({
       ok: true,
       provider,
+      source: {
+        mode: sourceBundle.mode,
+        uploadIds: sourceBundle.uploads.map((u) => u.uploadId),
+        uploadNames: sourceBundle.uploads.map((u) => u.name || u.uploadId)
+      },
       quiz
     });
   } catch (error) {
@@ -883,12 +902,9 @@ app.post("/api/practice/generate-quiz", requireFirebaseAuth, withRateLimit("prac
 
 app.post("/api/practice/generate-flashcards", requireFirebaseAuth, withRateLimit("practice_flashcards", 20, 60 * 1000), async (req, res) => {
   try {
-    const sourceText = cleanText(req.body?.sourceText, 20000);
+    const sourceBundle = await resolvePracticeSourceBundle(req);
+    const sourceText = sourceBundle.sourceText;
     const count = Math.max(1, Math.min(30, Number(req.body?.count || 8)));
-
-    if (!sourceText || sourceText.length < 40) {
-      return res.status(400).json({ error: "sourceText is required and must contain enough context." });
-    }
 
     const fallback = {
       title: "Generated Flashcards",
@@ -930,6 +946,11 @@ app.post("/api/practice/generate-flashcards", requireFirebaseAuth, withRateLimit
     return res.json({
       ok: true,
       provider,
+      source: {
+        mode: sourceBundle.mode,
+        uploadIds: sourceBundle.uploads.map((u) => u.uploadId),
+        uploadNames: sourceBundle.uploads.map((u) => u.name || u.uploadId)
+      },
       flashcards: flashcards?.cards?.length ? flashcards : fallback
     });
   } catch (error) {
@@ -962,6 +983,21 @@ app.get("/api/live/bootstrap/:studentId", requireFirebaseAuth, async (req, res) 
   } catch (error) {
     handleError(res, "Failed to build live bootstrap payload", error);
   }
+});
+
+app.use((error, req, res, next) => {
+  if (!error) return next();
+  const requestId = req?.requestId || `r_${Date.now().toString(36)}`;
+  const message = String(error?.message || "");
+  if (/cors blocked for origin/i.test(message)) {
+    return res.status(403).json({
+      error: "CORS blocked for origin.",
+      code: "CORS_BLOCKED",
+      hint: `Add this origin to ALLOWED_ORIGINS: ${req?.headers?.origin || "unknown-origin"}`,
+      requestId
+    });
+  }
+  return handleError(res, "Unhandled server error", error);
 });
 
 app.get("*", (req, res) => {
@@ -1001,6 +1037,13 @@ function normalizeStudentId(value) {
     .replace(/-+/g, "-");
 }
 
+function normalizeOrigin(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
 function trimSlash(url) {
   return String(url || "").replace(/\/+$/, "");
 }
@@ -1022,7 +1065,90 @@ function cleanList(input, maxItems = 10, maxItemLength = 120) {
 
 function handleError(res, label, error) {
   console.error(label, error?.message || error);
-  res.status(500).json({ error: `${label}. Please try again.` });
+  const req = res?.req;
+  const requestId = req?.requestId || "";
+  const details = mapErrorDetails(error);
+  res.status(details.status).json({
+    error: details.message || `${label}. Please try again.`,
+    code: details.code,
+    hint: details.hint,
+    requestId
+  });
+}
+
+function mapErrorDetails(error) {
+  const raw = String(error?.message || "").toLowerCase();
+  if (String(error?.code || "") === "SOURCE_UPLOADS_NOT_FOUND") {
+    return {
+      status: 404,
+      code: "SOURCE_UPLOADS_NOT_FOUND",
+      message: "Selected source uploads were not found for this account.",
+      hint: "Refresh uploads and select existing sources again."
+    };
+  }
+  if (String(error?.code || "") === "SOURCE_TEXT_TOO_SHORT" || String(error?.code || "") === "SOURCE_TEXT_REQUIRED") {
+    return {
+      status: 400,
+      code: String(error?.code || "SOURCE_TEXT_REQUIRED"),
+      message: "Not enough source context to generate content.",
+      hint: "Upload/analyze a source first, or select uploads with extracted content."
+    };
+  }
+  if (String(error?.code || "") === "STATE_TOO_LARGE" || raw.includes("too large")) {
+    return {
+      status: 413,
+      code: "STATE_TOO_LARGE",
+      message: "State payload is too large to save.",
+      hint: "Reduce uploaded source history or clear old tutor/highlight history."
+    };
+  }
+  if (raw.includes("permission_denied") || raw.includes("missing or insufficient permissions") || Number(error?.code) === 7) {
+    return {
+      status: 503,
+      code: "FIRESTORE_PERMISSION_DENIED",
+      message: "Firestore access is denied for the backend service account.",
+      hint: "Verify Render Firebase Admin credentials and IAM roles for Firestore."
+    };
+  }
+  if (raw.includes("deadline exceeded") || raw.includes("timeout") || Number(error?.code) === 4) {
+    return {
+      status: 503,
+      code: "FIRESTORE_TIMEOUT",
+      message: "Firestore operation timed out.",
+      hint: "Retry shortly and check Firestore region/availability."
+    };
+  }
+  if (raw.includes("firebase admin is not configured")) {
+    return {
+      status: 503,
+      code: "FIREBASE_NOT_CONFIGURED",
+      message: "Firebase Admin is not configured on backend.",
+      hint: "Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY."
+    };
+  }
+  return {
+    status: 500,
+    code: "INTERNAL_ERROR",
+    message: "",
+    hint: "Check backend logs using the returned requestId."
+  };
+}
+
+async function runFirebaseDiagnostics() {
+  if (!isFirebaseConfigured()) return { read: false, write: false, error: "firebase-not-configured" };
+  try {
+    const db = getFirestore();
+    const probe = db.collection("speedup_health").doc("probe");
+    await probe.get();
+    await probe.set({ lastCheckedAt: new Date().toISOString() }, { merge: true });
+    return { read: true, write: true, error: "" };
+  } catch (error) {
+    return {
+      read: false,
+      write: false,
+      error: String(error?.message || error || "").slice(0, 240)
+    };
+  }
 }
 
 function safeParseJson(raw) {
@@ -1840,6 +1966,56 @@ function normalizePracticeUploads(items) {
     };
   });
   return { uploads, changed };
+}
+
+async function resolvePracticeSourceBundle(req) {
+  const uid = normalizeStudentId(req?.firebaseUser?.uid || "");
+  const uploadIds = cleanList(req?.body?.uploadIds, 30, 120);
+  const requested = new Set(uploadIds.map((id) => String(id)));
+
+  if (requested.size) {
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
+    const matched = uploads
+      .filter((item) => requested.has(String(item.uploadId)))
+      .slice(0, 10);
+    if (!matched.length) {
+      const error = new Error("No matching uploaded sources found for this user.");
+      error.code = "SOURCE_UPLOADS_NOT_FOUND";
+      throw error;
+    }
+    const parts = matched
+      .map((item) => {
+        const sourceName = cleanText(item?.name || item?.uploadId, 180) || "Uploaded Source";
+        const body = cleanText(item?.sourceTextSnippet, 7000) || cleanText(item?.analysis?.summary, 7000);
+        if (!body) return "";
+        return `Source: ${sourceName}\n${body}`;
+      })
+      .filter(Boolean);
+    const combined = cleanText(parts.join("\n\n"), 20000);
+    if (combined.length < 40) {
+      const error = new Error("Selected uploads do not contain enough extracted text.");
+      error.code = "SOURCE_TEXT_TOO_SHORT";
+      throw error;
+    }
+    return {
+      mode: "uploads",
+      sourceText: combined,
+      uploads: matched
+    };
+  }
+
+  const sourceText = cleanText(req?.body?.sourceText, 20000);
+  if (!sourceText || sourceText.length < 40) {
+    const error = new Error("sourceText is required and must contain enough context.");
+    error.code = "SOURCE_TEXT_REQUIRED";
+    throw error;
+  }
+  return {
+    mode: "raw",
+    sourceText,
+    uploads: []
+  };
 }
 
 async function maybeDeleteStoredFile(item) {

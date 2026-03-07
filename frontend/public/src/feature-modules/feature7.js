@@ -36,6 +36,21 @@ export function initFeature7(ctx) {
     return byId || rows[0];
   }
 
+  function getSourcePayload(selectId, useChecked = true) {
+    const rows = getUploadRows();
+    const byId = new Map(rows.map((r) => [String(r.uploadId), r]));
+    const checkedIds = useChecked
+      ? [...selectedUploadIds].filter((id) => byId.has(String(id)))
+      : [];
+    const fallback = getUploadBySelected(selectId);
+    const fallbackId = fallback ? String(fallback.uploadId) : "";
+    const uploadIds = checkedIds.length ? checkedIds : (fallbackId ? [fallbackId] : []);
+    const sourceItem = rows.find((r) => String(r.uploadId) === String(uploadIds[0])) || fallback;
+    const sourceText = sourceItem ? String(sourceItem.sourceTextSnippet || sourceItem.analysis?.summary || "").trim() : "";
+    const sourceNames = uploadIds.map((id) => byId.get(String(id))?.name || id);
+    return { uploadIds, sourceText, sourceNames };
+  }
+
   function getSourceTextFor(selectId) {
     const item = getUploadBySelected(selectId);
     if (!item) return "";
@@ -417,9 +432,10 @@ export function initFeature7(ctx) {
     const difficulty = String(document.getElementById("quizDifficulty")?.value || "medium");
     const numQuestions = Math.max(1, Math.min(20, Number(document.getElementById("quizCount")?.value || 5)));
     const questionType = String(document.getElementById("quizType")?.value || "mcq");
-    const sourceText = getSourceTextFor("quizSourceSelect");
+    const useChecked = Boolean(document.getElementById("quizUseCheckedSources")?.checked);
+    const source = getSourcePayload("quizSourceSelect", useChecked);
 
-    if (!sourceText) {
+    if (!source.sourceText) {
       if (status) status.textContent = "Select an uploaded source with extracted content first.";
       return;
     }
@@ -430,10 +446,12 @@ export function initFeature7(ctx) {
         difficulty,
         numQuestions,
         questionType,
-        sourceText
+        uploadIds: source.uploadIds,
+        sourceText: source.sourceText
       });
       renderQuiz(out);
-      if (status) status.textContent = "Quiz generated.";
+      const names = out?.source?.uploadNames?.length ? out.source.uploadNames : source.sourceNames;
+      if (status) status.textContent = `Quiz generated from ${names.length} source(s): ${names.slice(0, 2).join(", ")}${names.length > 2 ? "..." : ""}`;
       logAudit("Practice quiz generated.");
     } catch (error) {
       if (status) status.textContent = error.message || "Failed to generate quiz.";
@@ -443,9 +461,10 @@ export function initFeature7(ctx) {
   async function onGenerateFlashcards() {
     const status = document.getElementById("flashcardStatus");
     const count = Math.max(1, Math.min(30, Number(document.getElementById("flashcardCount")?.value || 8)));
-    const sourceText = getSourceTextFor("flashcardSourceSelect");
+    const useChecked = Boolean(document.getElementById("flashUseCheckedSources")?.checked);
+    const source = getSourcePayload("flashcardSourceSelect", useChecked);
 
-    if (!sourceText) {
+    if (!source.sourceText) {
       if (status) status.textContent = "Select an uploaded source with extracted content first.";
       return;
     }
@@ -454,10 +473,12 @@ export function initFeature7(ctx) {
     try {
       const out = await apiPost(API.practiceGenerateFlashcards, {
         count,
-        sourceText
+        uploadIds: source.uploadIds,
+        sourceText: source.sourceText
       });
       renderFlashcards(out);
-      if (status) status.textContent = `Generated ${out?.flashcards?.cards?.length || count} flashcards.`;
+      const names = out?.source?.uploadNames?.length ? out.source.uploadNames : source.sourceNames;
+      if (status) status.textContent = `Generated ${out?.flashcards?.cards?.length || count} flashcards from ${names.length} source(s).`;
       logAudit("Practice flashcards generated.");
     } catch (error) {
       if (status) status.textContent = error.message || "Failed to generate flashcards.";
