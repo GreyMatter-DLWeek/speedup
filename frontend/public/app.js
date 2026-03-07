@@ -179,6 +179,7 @@ async function init() {
   applyUserProfileToUi();
   updateSidebarIdentity();
   bindSidebarActions();
+  bindMobileNavigation();
   ensureDynamicContainers();
   feature2.bindNotesSelectionCapture();
   bindTutorKeyboardShortcuts();
@@ -811,6 +812,7 @@ function navigate(page) {
   });
 
   syncTutorContextFromPage(page);
+  closeMobileNavigation();
 
   if (page === "timetable") {
     feature4.refreshTimeManagement();
@@ -827,6 +829,47 @@ function navigate(page) {
 
 function openPracticeLegacyFromStudyHub() {
   navigate("practice-legacy");
+}
+
+function isMobileNavViewport() {
+  return window.matchMedia("(max-width: 900px)").matches;
+}
+
+function setMobileNavigation(open) {
+  const app = document.querySelector(".app");
+  const toggle = document.getElementById("mobileNavToggle");
+  if (!app || !toggle) return;
+  app.classList.toggle("sidebar-open", open && isMobileNavViewport());
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  toggle.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+}
+
+function closeMobileNavigation() {
+  setMobileNavigation(false);
+}
+
+function bindMobileNavigation() {
+  const toggle = document.getElementById("mobileNavToggle");
+  const overlay = document.getElementById("mobileNavOverlay");
+  const sidebar = document.querySelector(".sidebar");
+  if (!toggle || !overlay || !sidebar) return;
+
+  toggle.addEventListener("click", () => {
+    const app = document.querySelector(".app");
+    const nextOpen = !app?.classList.contains("sidebar-open");
+    setMobileNavigation(nextOpen);
+  });
+
+  overlay.addEventListener("click", closeMobileNavigation);
+
+  sidebar.addEventListener("click", (event) => {
+    const navItem = event.target?.closest(".nav-item");
+    if (navItem) closeMobileNavigation();
+  });
+
+  window.addEventListener("resize", () => {
+    if (!isMobileNavViewport()) closeMobileNavigation();
+  });
 }
 
 function inferCurrentPage() {
