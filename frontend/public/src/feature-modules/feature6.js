@@ -485,10 +485,34 @@ function buildMasteryTrend(runtime, topics, overallMastery) {
     });
   }
 
+  if (labels.length < 2) {
+    const fallbackLabels = [];
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      fallbackLabels.push(d.toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+    }
+    const fallbackLabel = datasets[0]?.label || "Overall Mastery";
+    return {
+      labels: fallbackLabels,
+      datasets: [{
+        label: fallbackLabel,
+        data: fallbackLabels.map(() => 0),
+        borderColor: CHART_COLORS.accent,
+        backgroundColor: "transparent",
+        tension: 0.35,
+        borderWidth: 2.2,
+        pointRadius: 2,
+        pointHoverRadius: 4
+      }],
+      hasEnoughData: true
+    };
+  }
+
   return {
     labels,
     datasets,
-    hasEnoughData: labels.length >= 2
+    hasEnoughData: true
   };
 }
 
