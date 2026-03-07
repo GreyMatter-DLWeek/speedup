@@ -164,6 +164,7 @@ export function initFeature7(ctx) {
     }
     wrap.innerHTML = `
       <div style="font-size:16px;font-weight:700;margin-bottom:10px;">${escapeHtml(out.quiz.title || "Generated Quiz")}</div>
+      <div style="margin-bottom:10px;font-size:11px;color:var(--text3);">AI-generated questions. Verify content accuracy with your uploaded source before using for revision.</div>
       ${questions
         .map((q, idx) => {
           const options = Array.isArray(q.options) && q.options.length
@@ -184,7 +185,7 @@ export function initFeature7(ctx) {
       return;
     }
     wrap.innerHTML = cards
-      .map((c, idx) => `<div style="padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;background:var(--surface2);"><div style="font-size:14px;font-weight:700;">${idx + 1}. ${escapeHtml(c.question || "")}</div><div style="margin-top:6px;color:var(--text2);font-size:14px;">${escapeHtml(c.answer || "")}</div></div>`)
+      .map((c, idx) => `<div style="padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;background:var(--surface2);"><div style=\"margin-bottom:6px;font-size:11px;color:var(--text3);\">AI-generated flashcard. Verify with source.</div><div style="font-size:14px;font-weight:700;">${idx + 1}. ${escapeHtml(c.question || "")}</div><div style="margin-top:6px;color:var(--text2);font-size:14px;">${escapeHtml(c.answer || "")}</div></div>`)
       .join("");
   }
 

@@ -33,19 +33,20 @@ export function initFeature1(ctx) {
     if (!aiBox || !paraText) return;
 
     checkbox?.classList.add("checked");
-    checkbox.textContent = "✓";
+    checkbox.textContent = "?";
     aiBox.classList.add("visible");
     aiBox.innerHTML = `<div class="para-ai-header">AI is generating explanation...</div>`;
 
     const explanation = await getExplanation(paraText.textContent, 0, "");
     aiBox.innerHTML = `
-      <div class="para-ai-header">AI Explanation · ${escapeHtml(explanation.provider || "unknown")}</div>
+      <div class="para-ai-header">AI Explanation � ${escapeHtml(explanation.provider || "unknown")}</div>
       <div>${escapeHtml(explanation.context || "")}</div>
       <div style="margin-top:8px;color:var(--text);"><strong>Example:</strong> ${escapeHtml(explanation.example || "")}</div>
       <div style="margin-top:8px;color:var(--text3);"><strong>Check:</strong> ${escapeHtml(explanation.check || "")}</div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text3);">AI-generated explanation. Verify with your notes before relying on it.</div>
       <div class="msg-clarity">
-        <button class="clarity-btn clarity-yes" onclick="markClear(${id}, true)">✓ Clear!</button>
-        <button class="clarity-btn clarity-no" onclick="markClear(${id}, false)">✗ Still confused</button>
+        <button class="clarity-btn clarity-yes" onclick="markClear(${id}, true)">? Clear!</button>
+        <button class="clarity-btn clarity-no" onclick="markClear(${id}, false)">? Still confused</button>
       </div>
     `;
 
@@ -75,12 +76,13 @@ export function initFeature1(ctx) {
     const explanation = await getExplanation(paragraph, runtime.currentAttempt, "not clear");
 
     aiBox.innerHTML = `
-      <div class="para-ai-header">Simplified Explanation · Attempt ${runtime.currentAttempt + 1}</div>
+      <div class="para-ai-header">Simplified Explanation � Attempt ${runtime.currentAttempt + 1}</div>
       <div>${escapeHtml(explanation.context || explanation.concept || "")}</div>
       <div style="margin-top:8px;"><strong>Example:</strong> ${escapeHtml(explanation.example || "")}</div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text3);">AI-generated explanation. Verify with your notes before relying on it.</div>
       <div class="msg-clarity" style="margin-top:10px;">
-        <button class="clarity-btn clarity-yes" onclick="markClear(${id}, true)">✓ Got it now!</button>
-        <button class="clarity-btn clarity-no" onclick="markClear(${id}, false)">✗ Simplify again</button>
+        <button class="clarity-btn clarity-yes" onclick="markClear(${id}, true)">? Got it now!</button>
+        <button class="clarity-btn clarity-no" onclick="markClear(${id}, false)">? Simplify again</button>
       </div>
     `;
 

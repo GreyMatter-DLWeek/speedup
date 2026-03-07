@@ -1130,7 +1130,7 @@ function renderTutorMessages() {
       ? `<div class="tutor-actions">${actions.map((a, i) => `<button class="tutor-action-btn" onclick="runTutorAction(${rows.indexOf(m)}, ${i})">${escapeHtml(a.label || "Action")}</button>`).join("")}</div>`
       : "";
 
-    return `<div class="tutor-msg"><div class="tutor-msg-head">Tutor · ${escapeHtml(m.provider || "local")}</div><div class="tutor-msg-body">${escapeHtml(m.answer || "")}</div>${citationsHtml}${actionsHtml}</div>`;
+    return `<div class="tutor-msg"><div class="tutor-msg-head">Tutor · ${escapeHtml(m.provider || "local")}</div><div class="tutor-msg-body">${escapeHtml(m.answer || "")}</div><div class="tutor-msg-disclaimer">AI-generated response. Verify against your notes and marking rubric.</div>${citationsHtml}${actionsHtml}</div>`;
   }).join("");
 
   wrap.scrollTop = wrap.scrollHeight;
@@ -1221,6 +1221,19 @@ async function sendTutorMessage() {
   if (input) input.value = "";
   renderTutorPanel();
 
+  if (isGreetingMessage(text)) {
+    pushTutorMsg("assistant", {
+      answer: "Hi. Ask one topic or question and I will explain with short steps plus one example.",
+      provider: "system",
+      citations: [],
+      actions: [],
+      question: text,
+      attempt: 0
+    });
+    renderTutorPanel();
+    return;
+  }
+
   try {
     const out = await apiPost(API.tutorQuery, {
       contextType: built.contextType,
@@ -1233,7 +1246,9 @@ async function sendTutorMessage() {
       answer: out.answer,
       provider: out.provider,
       citations: Array.isArray(out.citations) ? out.citations : [],
-      actions: Array.isArray(out.actions) ? out.actions : []
+      actions: Array.isArray(out.actions) ? out.actions : [],
+      question: text,
+      attempt: 0
     });
 
     if (built.contextType === "practice-papers") {
@@ -1260,7 +1275,9 @@ async function sendTutorMessage() {
       answer: `Tutor unavailable: ${error.message || "unknown error"}`,
       provider: "fallback",
       citations: [],
-      actions: []
+      actions: [],
+      question: text,
+      attempt: 0
     });
   }
 
@@ -1328,6 +1345,11 @@ function runTutorAction(msgIndex, actionIndex) {
     return;
   }
 
+  if (action.type === "simplify") {
+    requestTutorSimplification(row);
+    return;
+  }
+
   if (action.type === "flashcards") {
     runtime.flashcards.unshift({
       q: "Tutor Insight",
@@ -1338,6 +1360,54 @@ function runTutorAction(msgIndex, actionIndex) {
     logAudit("Tutor answer converted to flashcard.");
     scheduleSave();
   }
+}
+
+async function requestTutorSimplification(row) {
+  const question = cleanText(row?.question || "", 900);
+  if (!question) return;
+
+  const nextAttempt = Math.max(1, Number(row?.attempt || 0) + 1);
+  const built = buildTutorContext(row?.contextType || runtime.tutorContextType);
+  const clarityHint = nextAttempt === 1
+    ? "simplify level 1: shorter wording and one concrete example"
+    : nextAttempt === 2
+      ? "simplify level 2: include analogy and 3 short steps"
+      : "simplify level 3: beginner-level explanation with no jargon";
+
+  try {
+    const out = await apiPost(API.tutorQuery, {
+      contextType: built.contextType,
+      question,
+      context: built.context,
+      studentId: runtime.state.student.id,
+      clarityHint
+    });
+
+    pushTutorMsg("assistant", {
+      answer: out.answer,
+      provider: out.provider,
+      citations: Array.isArray(out.citations) ? out.citations : [],
+      actions: Array.isArray(out.actions) ? out.actions : [],
+      question,
+      attempt: nextAttempt
+    });
+  } catch (error) {
+    pushTutorMsg("assistant", {
+      answer: `Tutor unavailable: ${error.message || "unknown error"}`,
+      provider: "fallback",
+      citations: [],
+      actions: [],
+      question,
+      attempt: nextAttempt
+    });
+  }
+
+  renderTutorPanel();
+}
+
+function isGreetingMessage(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized);
 }
 
 async function loadCloudHealth() {

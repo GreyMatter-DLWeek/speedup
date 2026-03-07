@@ -368,8 +368,23 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
   try {
     const contextType = cleanText(req.body?.contextType || "active-reading", 40).toLowerCase();
     const question = cleanText(req.body?.question, 2000);
+    const clarityHint = cleanText(req.body?.clarityHint || "", 200);
     const context = req.body?.context && typeof req.body.context === "object" ? req.body.context : {};
     if (!question) return res.status(400).json({ error: "question is required." });
+    if (isGreetingMessage(question)) {
+      return res.json({
+        ok: true,
+        provider: "system",
+        contextType,
+        scope: { label: "Greeting", contextType },
+        answer: "Hi. Share one topic or question and I will explain it in short steps with one concrete example.",
+        citations: [],
+        actions: [
+          { type: "quick", label: "Explain section", target: "explain" },
+          { type: "quick", label: "Give worked example", target: "example" }
+        ]
+      });
+    }
 
     const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
     const evidence = buildTutorEvidence(contextType, context);
@@ -395,6 +410,8 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
       "You are SpeedUp AI Tutor.",
       "Always stay within the supplied context scope.",
       "Return strict JSON with keys: answer, citations, actions.",
+      "If user message is greeting/small-talk, return a short conversational answer only.",
+      "When user asks for simplification, reduce jargon and give 3-5 short steps.",
       "citations must be an array of {docName,page,quote,jumpRef,sourceType}.",
       "actions must be an array of up to 4 items with keys {type,label,target,jumpRef,text}.",
       "If evidence is weak, clearly state uncertainty and ask user to expand scope."
@@ -403,6 +420,7 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
     const userPayload = {
       contextType,
       question,
+      clarityHint,
       scope: evidence.scope,
       localCitations: baselineCitations,
       retrievedNotes: ragHits.map((h) => ({ title: h.title, source: h.source, snippet: h.snippet }))
@@ -1046,6 +1064,11 @@ function normalizeStudentId(value) {
     .toLowerCase()
     .replace(/[^a-z0-9-_]/g, "-")
     .replace(/-+/g, "-");
+}
+
+function isGreetingMessage(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized);
 }
 
 function normalizeOrigin(value) {
@@ -2251,6 +2274,7 @@ function normalizeTutorActions(actions, contextType, citations, answer, fallback
   const hint = String(contextType || "active-reading").toLowerCase();
   const defaults = [
     citations[0]?.jumpRef ? { type: "jump", label: "Jump to source", jumpRef: citations[0].jumpRef } : null,
+    { type: "simplify", label: "Simplify further", text: cleanText(answer, 220) },
     { type: "add-note", label: "Add to my notes", text: cleanText(answer, 240) },
     hint === "practice-papers"
       ? { type: "revise-link", label: "Revise in Study Notes", target: "study-notes" }

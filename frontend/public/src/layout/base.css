@@ -1199,6 +1199,13 @@
     border-width: 1px;
   }
 
+  .tutor-ai-disclaimer {
+    margin: 0 16px 4px;
+    font-size: 11px;
+    color: var(--text3);
+    line-height: 1.45;
+  }
+
   .tutor-messages {
     flex: 1;
     overflow: auto;
@@ -1234,6 +1241,13 @@
     color: var(--text);
     line-height: 1.7;
     white-space: pre-wrap;
+  }
+
+  .tutor-msg-disclaimer {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text3);
+    line-height: 1.4;
   }
 
   .tutor-citations {
