@@ -852,11 +852,14 @@ app.post("/api/practice/uploads/delete-bulk", requireFirebaseAuth, async (req, r
 
 app.post("/api/practice/generate-quiz", requireFirebaseAuth, withRateLimit("practice_quiz", 20, 60 * 1000), async (req, res) => {
   try {
-    const sourceBundle = await resolvePracticeSourceBundle(req);
-    const sourceText = sourceBundle.sourceText;
+    const sourceText = cleanText(req.body?.sourceText, 20000);
     const difficulty = normalizeDifficulty(req.body?.difficulty);
     const questionType = normalizeQuestionType(req.body?.questionType);
     const numQuestions = Math.max(1, Math.min(20, Number(req.body?.numQuestions || 5)));
+
+    if (!sourceText || sourceText.length < 40) {
+      return res.status(400).json({ error: "sourceText is required and must contain enough context." });
+    }
 
     const fallbackQuiz = buildFallbackQuizFromSource(sourceText, {
       numQuestions,
@@ -903,11 +906,6 @@ app.post("/api/practice/generate-quiz", requireFirebaseAuth, withRateLimit("prac
     return res.json({
       ok: true,
       provider,
-      source: {
-        mode: sourceBundle.mode,
-        uploadIds: sourceBundle.uploads.map((u) => u.uploadId),
-        uploadNames: sourceBundle.uploads.map((u) => u.name || u.uploadId)
-      },
       quiz
     });
   } catch (error) {
@@ -917,9 +915,12 @@ app.post("/api/practice/generate-quiz", requireFirebaseAuth, withRateLimit("prac
 
 app.post("/api/practice/generate-flashcards", requireFirebaseAuth, withRateLimit("practice_flashcards", 20, 60 * 1000), async (req, res) => {
   try {
-    const sourceBundle = await resolvePracticeSourceBundle(req);
-    const sourceText = sourceBundle.sourceText;
+    const sourceText = cleanText(req.body?.sourceText, 20000);
     const count = Math.max(1, Math.min(30, Number(req.body?.count || 8)));
+
+    if (!sourceText || sourceText.length < 40) {
+      return res.status(400).json({ error: "sourceText is required and must contain enough context." });
+    }
 
     const fallback = {
       title: "Generated Flashcards",
@@ -961,11 +962,6 @@ app.post("/api/practice/generate-flashcards", requireFirebaseAuth, withRateLimit
     return res.json({
       ok: true,
       provider,
-      source: {
-        mode: sourceBundle.mode,
-        uploadIds: sourceBundle.uploads.map((u) => u.uploadId),
-        uploadNames: sourceBundle.uploads.map((u) => u.name || u.uploadId)
-      },
       flashcards: flashcards?.cards?.length ? flashcards : fallback
     });
   } catch (error) {
@@ -1093,22 +1089,6 @@ function handleError(res, label, error) {
 
 function mapErrorDetails(error) {
   const raw = String(error?.message || "").toLowerCase();
-  if (String(error?.code || "") === "SOURCE_UPLOADS_NOT_FOUND") {
-    return {
-      status: 404,
-      code: "SOURCE_UPLOADS_NOT_FOUND",
-      message: "Selected source uploads were not found for this account.",
-      hint: "Refresh uploads and select existing sources again."
-    };
-  }
-  if (String(error?.code || "") === "SOURCE_TEXT_TOO_SHORT" || String(error?.code || "") === "SOURCE_TEXT_REQUIRED") {
-    return {
-      status: 400,
-      code: String(error?.code || "SOURCE_TEXT_REQUIRED"),
-      message: "Not enough source context to generate content.",
-      hint: "Upload/analyze a source first, or select uploads with extracted content."
-    };
-  }
   if (String(error?.code || "") === "STATE_TOO_LARGE" || raw.includes("too large")) {
     return {
       status: 413,
@@ -2010,56 +1990,6 @@ function normalizePracticeUploads(items) {
     };
   });
   return { uploads, changed };
-}
-
-async function resolvePracticeSourceBundle(req) {
-  const uid = normalizeStudentId(req?.firebaseUser?.uid || "");
-  const uploadIds = cleanList(req?.body?.uploadIds, 30, 120);
-  const requested = new Set(uploadIds.map((id) => String(id)));
-
-  if (requested.size) {
-    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
-    const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
-    const matched = uploads
-      .filter((item) => requested.has(String(item.uploadId)))
-      .slice(0, 10);
-    if (!matched.length) {
-      const error = new Error("No matching uploaded sources found for this user.");
-      error.code = "SOURCE_UPLOADS_NOT_FOUND";
-      throw error;
-    }
-    const parts = matched
-      .map((item) => {
-        const sourceName = cleanText(item?.name || item?.uploadId, 180) || "Uploaded Source";
-        const body = cleanText(item?.sourceTextSnippet, 7000) || cleanText(item?.analysis?.summary, 7000);
-        if (!body) return "";
-        return `Source: ${sourceName}\n${body}`;
-      })
-      .filter(Boolean);
-    const combined = cleanText(parts.join("\n\n"), 20000);
-    if (combined.length < 40) {
-      const error = new Error("Selected uploads do not contain enough extracted text.");
-      error.code = "SOURCE_TEXT_TOO_SHORT";
-      throw error;
-    }
-    return {
-      mode: "uploads",
-      sourceText: combined,
-      uploads: matched
-    };
-  }
-
-  const sourceText = cleanText(req?.body?.sourceText, 20000);
-  if (!sourceText || sourceText.length < 40) {
-    const error = new Error("sourceText is required and must contain enough context.");
-    error.code = "SOURCE_TEXT_REQUIRED";
-    throw error;
-  }
-  return {
-    mode: "raw",
-    sourceText,
-    uploads: []
-  };
 }
 
 async function maybeDeleteStoredFile(item) {
