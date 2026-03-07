@@ -75,10 +75,18 @@ function getStorageBucket() {
   return a.storage().bucket();
 }
 
+async function deleteFirebaseAuthUser(uid) {
+  const a = initFirebaseAdmin();
+  if (!a) throw new Error("Firebase Admin is not configured.");
+  await a.auth().deleteUser(String(uid || "").trim());
+  return true;
+}
+
 module.exports = {
   isFirebaseConfigured,
   verifyFirebaseIdToken,
   getFirestore,
-  getStorageBucket
+  getStorageBucket,
+  deleteFirebaseAuthUser
 };
 
