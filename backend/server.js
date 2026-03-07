@@ -27,17 +27,33 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const requestCounters = new Map();
 const FRONTEND_PUBLIC_DIR = path.resolve(__dirname, "../frontend/public");
+const HEALTH_DIAGNOSTIC_TTL_MS = 60 * 1000;
+const FIREBASE_DIAGNOSTIC_TIMEOUT_MS = 1200;
+const firebaseDiagnosticsCache = {
+  read: false,
+  write: false,
+  error: "pending",
+  checkedAt: 0,
+  inFlight: false
+};
 
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "http://localhost:3000")
   .split(",")
-  .map((v) => v.trim())
+  .map((v) => normalizeOrigin(v))
   .filter(Boolean);
+
+app.use((req, res, next) => {
+  req.requestId = `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  res.setHeader("x-request-id", req.requestId);
+  next();
+});
 
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
+      const normalized = normalizeOrigin(origin);
+      if (allowedOrigins.includes("*") || allowedOrigins.includes(normalized)) return callback(null, true);
       return callback(new Error("CORS blocked for origin."));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -46,10 +62,6 @@ app.use(
 );
 app.use(express.json({ limit: "2mb" }));
 app.use(express.static(FRONTEND_PUBLIC_DIR));
-app.use((req, res, next) => {
-  req.requestId = `r_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  next();
-});
 
 const upload = multer
   ? multer({
@@ -83,6 +95,12 @@ if (cloudinary && config.cloudinary.cloudName && config.cloudinary.apiKey && con
 }
 
 app.get("/api/health", async (req, res) => {
+  refreshFirebaseDiagnosticsIfStale();
+  const firebaseDiagnostics = {
+    read: firebaseDiagnosticsCache.read,
+    write: firebaseDiagnosticsCache.write,
+    error: firebaseDiagnosticsCache.error
+  };
   res.json({
     ok: true,
     services: {
@@ -90,6 +108,16 @@ app.get("/api/health", async (req, res) => {
       ragConfigured: Boolean(isFirebaseConfigured()),
       firebaseConfigured: Boolean(isFirebaseConfigured()),
       fileStorageConfigured: Boolean(isCloudinaryConfigured())
+    },
+    checks: {
+      openaiCallReady: Boolean(config.openai.apiKey && config.openai.model),
+      firebaseAuthReady: Boolean(isFirebaseConfigured()),
+      firestoreRead: firebaseDiagnostics.read,
+      firestoreWrite: firebaseDiagnostics.write
+    },
+    diagnostics: {
+      firestoreError: firebaseDiagnostics.error || "",
+      firestoreCheckedAt: firebaseDiagnosticsCache.checkedAt || 0
     },
     timestamp: new Date().toISOString()
   });
@@ -149,10 +177,12 @@ app.put("/api/user/profile", requireFirebaseAuth, async (req, res) => {
 app.get("/api/user/state", requireFirebaseAuth, async (req, res) => {
   try {
     const uid = req.firebaseUser.uid;
-    const state = await getUserState(uid);
-    return res.json({ ok: true, state });
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    state.student = state.student || {};
+    state.student.id = uid;
+    return res.json({ ok: true, state, requestId: req.requestId });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to load user state. Please try again." });
+    return handleError(res, "Failed to load user state", error);
   }
 });
 
@@ -161,10 +191,12 @@ app.put("/api/user/state", requireFirebaseAuth, async (req, res) => {
     const uid = req.firebaseUser.uid;
     const state = req.body?.state;
     if (!state || typeof state !== "object") return res.status(400).json({ error: "state object is required." });
+    state.student = state.student && typeof state.student === "object" ? state.student : {};
+    state.student.id = uid;
     await setUserState(uid, state);
-    return res.json({ ok: true, savedAt: new Date().toISOString() });
+    return res.json({ ok: true, savedAt: new Date().toISOString(), requestId: req.requestId });
   } catch (error) {
-    return res.status(500).json({ error: "Failed to save user state. Please try again." });
+    return handleError(res, "Failed to save user state", error);
   }
 });
 
@@ -336,8 +368,23 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
   try {
     const contextType = cleanText(req.body?.contextType || "active-reading", 40).toLowerCase();
     const question = cleanText(req.body?.question, 2000);
+    const clarityHint = cleanText(req.body?.clarityHint || "", 200);
     const context = req.body?.context && typeof req.body.context === "object" ? req.body.context : {};
     if (!question) return res.status(400).json({ error: "question is required." });
+    if (isGreetingMessage(question)) {
+      return res.json({
+        ok: true,
+        provider: "system",
+        contextType,
+        scope: { label: "Greeting", contextType },
+        answer: "Hi. Share one topic or question and I will explain it in short steps with one concrete example.",
+        citations: [],
+        actions: [
+          { type: "quick", label: "Explain section", target: "explain" },
+          { type: "quick", label: "Give worked example", target: "example" }
+        ]
+      });
+    }
 
     const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
     const evidence = buildTutorEvidence(contextType, context);
@@ -363,6 +410,8 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
       "You are SpeedUp AI Tutor.",
       "Always stay within the supplied context scope.",
       "Return strict JSON with keys: answer, citations, actions.",
+      "If user message is greeting/small-talk, return a short conversational answer only.",
+      "When user asks for simplification, reduce jargon and give 3-5 short steps.",
       "citations must be an array of {docName,page,quote,jumpRef,sourceType}.",
       "actions must be an array of up to 4 items with keys {type,label,target,jumpRef,text}.",
       "For Study Pack queries, ground the answer in section snippets and mention section refs when available.",
@@ -374,6 +423,7 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
     const userPayload = {
       contextType,
       question,
+      clarityHint,
       scope: evidence.scope,
       localCitations: baselineCitations,
       retrievedNotes: ragHits.map((h) => ({ title: h.title, source: h.source, snippet: h.snippet })),
@@ -1153,6 +1203,21 @@ app.get("/api/live/bootstrap/:studentId", requireFirebaseAuth, async (req, res) 
   }
 });
 
+app.use((error, req, res, next) => {
+  if (!error) return next();
+  const requestId = req?.requestId || `r_${Date.now().toString(36)}`;
+  const message = String(error?.message || "");
+  if (/cors blocked for origin/i.test(message)) {
+    return res.status(403).json({
+      error: "CORS blocked for origin.",
+      code: "CORS_BLOCKED",
+      hint: `Add this origin to ALLOWED_ORIGINS: ${req?.headers?.origin || "unknown-origin"}`,
+      requestId
+    });
+  }
+  return handleError(res, "Unhandled server error", error);
+});
+
 app.get("*", (req, res) => {
   res.sendFile(path.resolve(FRONTEND_PUBLIC_DIR, "index.html"));
 });
@@ -1190,6 +1255,18 @@ function normalizeStudentId(value) {
     .replace(/-+/g, "-");
 }
 
+function isGreetingMessage(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized);
+}
+
+function normalizeOrigin(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
 function trimSlash(url) {
   return String(url || "").replace(/\/+$/, "");
 }
@@ -1211,7 +1288,103 @@ function cleanList(input, maxItems = 10, maxItemLength = 120) {
 
 function handleError(res, label, error) {
   console.error(label, error?.message || error);
-  res.status(500).json({ error: `${label}. Please try again.` });
+  const req = res?.req;
+  const requestId = req?.requestId || "";
+  const details = mapErrorDetails(error);
+  res.status(details.status).json({
+    error: details.message || `${label}. Please try again.`,
+    code: details.code,
+    hint: details.hint,
+    requestId
+  });
+}
+
+function mapErrorDetails(error) {
+  const raw = String(error?.message || "").toLowerCase();
+  if (String(error?.code || "") === "STATE_TOO_LARGE" || raw.includes("too large")) {
+    return {
+      status: 413,
+      code: "STATE_TOO_LARGE",
+      message: "State payload is too large to save.",
+      hint: "Reduce uploaded source history or clear old tutor/highlight history."
+    };
+  }
+  if (raw.includes("permission_denied") || raw.includes("missing or insufficient permissions") || Number(error?.code) === 7) {
+    return {
+      status: 503,
+      code: "FIRESTORE_PERMISSION_DENIED",
+      message: "Firestore access is denied for the backend service account.",
+      hint: "Verify Render Firebase Admin credentials and IAM roles for Firestore."
+    };
+  }
+  if (raw.includes("deadline exceeded") || raw.includes("timeout") || Number(error?.code) === 4) {
+    return {
+      status: 503,
+      code: "FIRESTORE_TIMEOUT",
+      message: "Firestore operation timed out.",
+      hint: "Retry shortly and check Firestore region/availability."
+    };
+  }
+  if (raw.includes("firebase admin is not configured")) {
+    return {
+      status: 503,
+      code: "FIREBASE_NOT_CONFIGURED",
+      message: "Firebase Admin is not configured on backend.",
+      hint: "Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY."
+    };
+  }
+  return {
+    status: 500,
+    code: "INTERNAL_ERROR",
+    message: "",
+    hint: "Check backend logs using the returned requestId."
+  };
+}
+
+async function runFirebaseDiagnostics() {
+  if (!isFirebaseConfigured()) return { read: false, write: false, error: "firebase-not-configured" };
+  try {
+    const db = getFirestore();
+    const probe = db.collection("speedup_health").doc("probe");
+    await withTimeout(probe.get(), FIREBASE_DIAGNOSTIC_TIMEOUT_MS);
+    return { read: true, write: true, error: "" };
+  } catch (error) {
+    return {
+      read: false,
+      write: false,
+      error: String(error?.message || error || "").slice(0, 240)
+    };
+  }
+}
+
+function refreshFirebaseDiagnosticsIfStale() {
+  const now = Date.now();
+  if (firebaseDiagnosticsCache.inFlight) return;
+  if (now - Number(firebaseDiagnosticsCache.checkedAt || 0) < HEALTH_DIAGNOSTIC_TTL_MS) return;
+  firebaseDiagnosticsCache.inFlight = true;
+  runFirebaseDiagnostics()
+    .then((result) => {
+      firebaseDiagnosticsCache.read = Boolean(result?.read);
+      firebaseDiagnosticsCache.write = Boolean(result?.write);
+      firebaseDiagnosticsCache.error = String(result?.error || "");
+      firebaseDiagnosticsCache.checkedAt = Date.now();
+    })
+    .catch((error) => {
+      firebaseDiagnosticsCache.read = false;
+      firebaseDiagnosticsCache.write = false;
+      firebaseDiagnosticsCache.error = String(error?.message || error || "diagnostic-failed").slice(0, 240);
+      firebaseDiagnosticsCache.checkedAt = Date.now();
+    })
+    .finally(() => {
+      firebaseDiagnosticsCache.inFlight = false;
+    });
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("diagnostic-timeout")), ms))
+  ]);
 }
 
 function safeParseJson(raw) {
@@ -2683,6 +2856,7 @@ function normalizeTutorActions(actions, contextType, citations, answer, fallback
           jumpRef: citations[0].jumpRef
         }
         : null,
+    { type: "simplify", label: "Simplify further", text: cleanText(answer, 220) },
     { type: isStudyPack ? "add-to-notes" : "add-note", label: "Add to my notes", text: cleanText(answer, 240) },
     hint === "practice-papers"
       ? { type: "revise-link", label: "Revise in Study Notes", target: "study-notes" }
