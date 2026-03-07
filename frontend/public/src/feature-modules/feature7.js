@@ -189,12 +189,16 @@ export function initFeature7(ctx) {
 
   async function refreshUserState() {
     try {
-      const [out, uploadsOut] = await Promise.all([
-        apiGet(API.userState),
-        apiGet(API.practiceUploads)
-      ]);
-      if (out?.state && typeof out.state === "object") runtime.state = { ...runtime.state, ...out.state, student: { ...runtime.state.student, ...(out.state.student || {}) } };
-      if (uploadsOut?.ok && Array.isArray(uploadsOut.uploads)) runtime.state.practiceUploads = uploadsOut.uploads;
+      const out = await apiGet(API.userState);
+      if (out?.state && typeof out.state === "object") {
+        runtime.state = { ...runtime.state, ...out.state, student: { ...runtime.state.student, ...(out.state.student || {}) } };
+      }
+      try {
+        const uploadsOut = await apiGet(API.practiceUploads);
+        if (uploadsOut?.ok && Array.isArray(uploadsOut.uploads)) runtime.state.practiceUploads = uploadsOut.uploads;
+      } catch {
+        // Backward-compatible: older backend may not expose /api/practice/uploads.
+      }
     } catch {
       // Keep in-memory state.
     }
@@ -272,9 +276,10 @@ export function initFeature7(ctx) {
     const status = document.getElementById("practiceStatus");
     if (status) status.textContent = "Deleting source...";
     try {
+      if (id.startsWith("legacy-")) throw new Error("legacy-id-fallback");
       await apiDelete(API.practiceUpload(id));
     } catch (error) {
-      if (!isDeleteEndpointMissing(error)) throw error;
+      if (!id.startsWith("legacy-") && !isDeleteEndpointMissing(error)) throw error;
       await deleteUploadsViaStateFallback([id]);
     }
     selectedUploadIds.delete(id);
@@ -293,9 +298,11 @@ export function initFeature7(ctx) {
     const status = document.getElementById("practiceStatus");
     if (status) status.textContent = "Deleting selected sources...";
     try {
+      if (ids.every((id) => String(id).startsWith("legacy-"))) throw new Error("legacy-id-fallback");
       await apiPost(API.practiceDeleteUploads, { uploadIds: ids });
     } catch (error) {
-      if (!isDeleteEndpointMissing(error)) throw error;
+      const allLegacy = ids.every((id) => String(id).startsWith("legacy-"));
+      if (!allLegacy && !isDeleteEndpointMissing(error)) throw error;
       await deleteUploadsViaStateFallback(ids);
     }
     selectedUploadIds = new Set();
@@ -310,6 +317,7 @@ export function initFeature7(ctx) {
     const msg = String(error?.message || "").toLowerCase();
     return msg.includes("cannot delete /api/practice/uploads")
       || msg.includes("cannot post /api/practice/uploads/delete-bulk")
+      || msg.includes("/api/practice/uploads/")
       || msg.includes("delete /api/practice/uploads/")
       || msg.includes("post /api/practice/uploads/delete-bulk failed");
   }
