@@ -43,6 +43,12 @@ async function render() {
 
   root.innerHTML = `
     <div class="app">
+      <button id="mobileNavToggle" class="mobile-nav-toggle" type="button" aria-label="Open navigation" aria-expanded="false">
+        <span class="mobile-nav-toggle-bar"></span>
+        <span class="mobile-nav-toggle-bar"></span>
+        <span class="mobile-nav-toggle-bar"></span>
+      </button>
+      <div id="mobileNavOverlay" class="mobile-nav-overlay" aria-hidden="true"></div>
       ${sidebar}
       <main class="main">
         ${pageHtml.join("\n")}

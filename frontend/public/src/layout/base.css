@@ -49,6 +49,47 @@
     overflow: hidden;
   }
 
+  .mobile-nav-toggle,
+  .mobile-nav-overlay {
+    display: none;
+  }
+
+  .mobile-nav-toggle {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1px solid var(--border2);
+    background: rgba(19, 19, 26, 0.95);
+    color: var(--text);
+    z-index: 240;
+    cursor: pointer;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 4px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  .mobile-nav-toggle-bar {
+    width: 16px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--text);
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+
+  .mobile-nav-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.52);
+    backdrop-filter: blur(1px);
+    z-index: 220;
+  }
+
   /* SIDEBAR */
   .sidebar {
     width: 240px;
@@ -217,6 +258,19 @@
     padding: clamp(14px, 2vw, 28px) clamp(12px, 2.5vw, 32px);
     width: 100%;
     max-width: 100%;
+  }
+
+  .content > * {
+    max-width: 100%;
+  }
+
+  img, svg, canvas, video {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .card, .stat-card, .notes-content, .chat-container, .practice-panel {
+    min-width: 0;
   }
 
   /* CARDS */
@@ -1636,25 +1690,136 @@
       overflow: visible;
     }
 
+    .mobile-nav-toggle {
+      display: inline-flex;
+    }
+
     .sidebar {
-      width: 100%;
-      min-width: 0;
-      border-right: none;
-      border-bottom: 1px solid var(--border);
-      padding: 12px 0;
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: min(300px, 86vw);
+      min-width: min(300px, 86vw);
+      border-right: 1px solid var(--border);
+      border-bottom: none;
+      padding: 12px 10px 10px;
+      gap: 8px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      transform: translateX(-104%);
+      transition: transform 0.24s ease;
+      z-index: 230;
+    }
+
+    .logo {
+      padding: 0 6px 8px;
+      margin-bottom: 4px;
+    }
+
+    .logo-mark {
+      font-size: 20px;
+    }
+
+    .nav-section {
+      padding: 0;
+      display: block;
+      gap: 0;
+      overflow: visible;
+    }
+
+    .nav-label {
+      padding: 4px 6px;
+      font-size: 9px;
+      white-space: normal;
+    }
+
+    .nav-item {
+      white-space: normal;
     }
 
     .sidebar-bottom {
-      margin-top: 10px;
+      margin-top: 6px;
       border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0 0;
+      flex-wrap: wrap;
+    }
+
+    .user-card {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 8px 10px;
+    }
+
+    #sidebarSettingsBtn,
+    #logoutBtn {
+      width: auto !important;
+      margin-top: 0 !important;
+      padding: 8px 12px;
+    }
+
+    .app.sidebar-open .sidebar {
+      transform: translateX(0);
+    }
+
+    .app.sidebar-open .mobile-nav-overlay {
+      display: block;
+    }
+
+    .app.sidebar-open .mobile-nav-toggle-bar:nth-child(1) {
+      transform: translateY(6px) rotate(45deg);
+    }
+
+    .app.sidebar-open .mobile-nav-toggle-bar:nth-child(2) {
+      opacity: 0;
+    }
+
+    .app.sidebar-open .mobile-nav-toggle-bar:nth-child(3) {
+      transform: translateY(-6px) rotate(-45deg);
     }
 
     .main {
       overflow: visible;
+      padding-top: 54px;
     }
 
     .content {
       padding: 12px;
+    }
+
+    #page-notes .grid-2-1 > div,
+    #page-tutor .grid-2-1 > div,
+    #page-practice .practice-grid > div {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    #page-tutor .chat-input-area {
+      flex-wrap: wrap;
+    }
+
+    #page-tutor .chat-input-area .send-btn,
+    #page-tutor .chat-input-area .toolbar-btn {
+      flex: 1 1 140px;
+      justify-content: center;
+    }
+
+    #page-notes .notes-toolbar {
+      overflow-x: auto;
+      white-space: nowrap;
+      scrollbar-width: thin;
+    }
+
+    #page-notes .notes-toolbar .toolbar-btn {
+      flex: 0 0 auto;
+    }
+
+    #page-practice .practice-actions .btn {
+      flex: 1 1 180px;
+      justify-content: center;
     }
 
     .chat-container {
@@ -1672,8 +1837,20 @@
   }
 
   @media (max-width: 560px) {
+    .mobile-nav-toggle {
+      top: 8px;
+      left: 8px;
+      width: 38px;
+      height: 38px;
+    }
+
     .topbar-title {
       font-size: 16px;
+    }
+
+    .topbar-sub {
+      font-size: 11px;
+      line-height: 1.4;
     }
 
     .card,
@@ -1687,11 +1864,90 @@
       font-size: 12px;
     }
 
+    .topbar-actions {
+      gap: 8px;
+    }
+
+    .topbar-actions .btn {
+      flex: 1 1 100%;
+      justify-content: center;
+    }
+
+    .topbar-actions {
+      width: 100%;
+    }
+
+    .btn,
+    .toolbar-btn {
+      min-height: 38px;
+    }
+
     .chat-container {
       height: min(500px, 70dvh);
     }
 
+    .chat-messages,
+    .notes-body {
+      padding: 12px;
+    }
+
+    .msg-bubble {
+      max-width: 88%;
+    }
+
+    .modal {
+      width: calc(100vw - 16px);
+      max-height: 88dvh;
+      overflow: auto;
+      border-radius: 14px;
+      padding: 18px;
+    }
+
+    .modal-actions {
+      flex-wrap: wrap;
+      justify-content: stretch;
+    }
+
+    .modal-actions .btn {
+      flex: 1 1 140px;
+      justify-content: center;
+    }
+
+    .input,
+    .select,
+    .chat-input {
+      font-size: 16px;
+    }
+
     .timetable-grid {
       min-width: 560px;
+    }
+
+    #page-notes .paragraph-wrap {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    #page-notes .para-checkbox {
+      width: 30px;
+      height: 30px;
+    }
+
+    #page-tutor .chat-header {
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    #page-tutor #quickQuestions > div {
+      font-size: 13px !important;
+      line-height: 1.45;
+    }
+
+    #page-practice .upload-toolbar {
+      gap: 6px;
+    }
+
+    #page-practice .upload-toolbar .btn {
+      flex: 1 1 44%;
     }
   }
