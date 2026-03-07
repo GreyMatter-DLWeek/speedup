@@ -80,20 +80,20 @@
                 <div class="insight-type" id="dashboard-insight-primary-type">Knowledge Gap Detected</div>
                 <div class="insight-text" id="dashboard-insight-primary-text">Analyzing your current study signals…</div>
                 <div class="insight-action" onclick="navigate('recommendations')">→ Get study plan</div>
-                <div class="feedback-row">
+                <div class="feedback-row" data-feedback-key="dashboard-primary">
                   <span class="feedback-label">Accurate?</span>
-                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')" data-tip="Agree">👍</button>
-                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')" data-tip="Disagree">👎</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')" data-feedback-key="dashboard-primary" data-feedback-direction="up" data-tip="Agree">👍</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')" data-feedback-key="dashboard-primary" data-feedback-direction="down" data-tip="Disagree">👎</button>
                 </div>
               </div>
               <div class="insight-card" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),rgba(244,114,182,0.05));border-color:rgba(251,191,36,0.15);">
                 <div class="insight-type" id="dashboard-insight-secondary-type" style="color:var(--accent4)">Optimal Study Window</div>
                 <div class="insight-text" id="dashboard-insight-secondary-text">Checking timetable alignment with your productive hours…</div>
                 <div class="insight-action" style="color:var(--accent4)" onclick="openModal('reschedule')">→ Reschedule session</div>
-                <div class="feedback-row">
+                <div class="feedback-row" data-feedback-key="dashboard-secondary">
                   <span class="feedback-label">Accurate?</span>
-                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')">👍</button>
-                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')">👎</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'up')" data-feedback-key="dashboard-secondary" data-feedback-direction="up">👍</button>
+                  <button class="feedback-btn" onclick="toggleFeedback(this,'down')" data-feedback-key="dashboard-secondary" data-feedback-direction="down">👎</button>
                 </div>
               </div>
             </div>
