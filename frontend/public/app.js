@@ -761,9 +761,10 @@ async function deleteAccount() {
   scheduleSave();
 
   try {
-    await window.firebaseAuthClient?.signOutUser?.();
-  } finally {
+    await window.firebaseAuthClient?.deleteCurrentUser?.();
     window.location.replace(appPath("/login.html"));
+  } catch {
+    window.alert("Account deletion requires a fresh login. Please log out, log in again, then retry delete account.");
   }
 }
 

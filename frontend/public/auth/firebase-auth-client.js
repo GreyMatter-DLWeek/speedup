@@ -75,6 +75,15 @@ async function signOutUser() {
   await auth.signOut();
 }
 
+async function deleteCurrentUser() {
+  await waitForAuthReady();
+  if (!auth) throw new Error("Firebase auth is not configured.");
+  const user = auth.currentUser || currentUser;
+  if (!user) throw new Error("No authenticated user.");
+  await user.delete();
+  currentUser = null;
+}
+
 async function waitForSignIn() {
   const u = await getUser();
   if (u) return u;
@@ -100,6 +109,7 @@ window.firebaseAuthClient = {
   signUpWithEmail,
   signInWithEmail,
   signOutUser,
+  deleteCurrentUser,
   waitForSignIn,
   onAuthChanged
 };
