@@ -290,14 +290,21 @@ app.post("/api/user/controls", requireFirebaseAuth, async (req, res) => {
 
 app.delete("/api/user/account", requireFirebaseAuth, async (req, res) => {
   try {
-    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
-    if (!uid) return res.status(400).json({ error: "Invalid user id." });
+    const rawUid = cleanText(req.firebaseUser?.uid || "", 200);
+    if (!rawUid) return res.status(400).json({ error: "Invalid user id." });
+    const ownerId = normalizeStudentId(rawUid);
 
-    let state = createMinimalState(uid);
+    let state = createMinimalState(rawUid);
+    let firestoreStateDeleted = false;
+    let ragDeleted = false;
+    let stateReadError = "";
+    let stateDeleteError = "";
+    let ragDeleteError = "";
     try {
-      state = mergeDeep(createMinimalState(uid), await getUserState(uid));
-    } catch {
-      state = createMinimalState(uid);
+      state = mergeDeep(createMinimalState(rawUid), await getUserState(rawUid));
+    } catch (error) {
+      state = createMinimalState(rawUid);
+      stateReadError = cleanText(error?.message || "Failed to read user state.", 240);
     }
 
     const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
@@ -305,28 +312,55 @@ app.delete("/api/user/account", requireFirebaseAuth, async (req, res) => {
     const filesDeleted = fileCleanup.filter((x) => x.status === "fulfilled" && x.value).length;
     const fileDeleteFailed = fileCleanup.filter((x) => x.status === "rejected").length;
 
-    await cleanupUserRagNotes(uid).catch(() => null);
-    await deleteUserState(uid);
+    try {
+      if (ownerId) {
+        await cleanupUserRagNotes(ownerId);
+      }
+      ragDeleted = true;
+    } catch (error) {
+      ragDeleteError = cleanText(error?.message || "Failed to delete RAG notes.", 240);
+    }
+
+    try {
+      await deleteUserState(rawUid);
+      firestoreStateDeleted = true;
+    } catch (error) {
+      stateDeleteError = cleanText(error?.message || "Failed to delete user state.", 240);
+    }
 
     let authDeleted = false;
     let authDeleteError = "";
     try {
-      await deleteFirebaseAuthUser(uid);
+      await deleteFirebaseAuthUser(rawUid);
       authDeleted = true;
     } catch (error) {
       authDeleteError = cleanText(error?.message || "Failed to delete auth user.", 300);
     }
 
+    const warnings = [stateReadError, stateDeleteError, ragDeleteError, authDeleteError].filter(Boolean);
+    const hardFailure = !authDeleted && !firestoreStateDeleted && fileDeleteFailed > 0;
+    if (hardFailure) {
+      return res.status(500).json({
+        error: "Failed to delete account. Please try again.",
+        code: "ACCOUNT_DELETE_FAILED",
+        hint: "Check backend logs using the returned requestId.",
+        requestId: req.requestId
+      });
+    }
+
     return res.json({
       ok: true,
       deleted: {
-        firestoreState: true,
+        firestoreState: firestoreStateDeleted,
+        ragNotes: ragDeleted,
         authUser: authDeleted,
         filesDeleted,
         fileDeleteFailed
       },
-      warning: authDeleted ? "" : "Data deleted, but auth account deletion failed. Please contact admin if account still exists.",
-      authDeleteError,
+      warning: warnings.length
+        ? "Account deletion completed with warnings. Some cleanup may need manual follow-up."
+        : "",
+      warnings,
       requestId: req.requestId
     });
   } catch (error) {
@@ -1377,6 +1411,14 @@ function mapErrorDetails(error) {
       code: "FIREBASE_NOT_CONFIGURED",
       message: "Firebase Admin is not configured on backend.",
       hint: "Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY."
+    };
+  }
+  if (raw.includes("decoder routines") || raw.includes("getting metadata from plugin failed")) {
+    return {
+      status: 503,
+      code: "FIREBASE_CREDENTIAL_INVALID",
+      message: "Firebase credentials are invalid or malformed.",
+      hint: "Re-check FIREBASE_PRIVATE_KEY formatting (single line with \\n) and client email/project id."
     };
   }
   return {
