@@ -27,6 +27,15 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const requestCounters = new Map();
 const FRONTEND_PUBLIC_DIR = path.resolve(__dirname, "../frontend/public");
+const HEALTH_DIAGNOSTIC_TTL_MS = 60 * 1000;
+const FIREBASE_DIAGNOSTIC_TIMEOUT_MS = 1200;
+const firebaseDiagnosticsCache = {
+  read: false,
+  write: false,
+  error: "pending",
+  checkedAt: 0,
+  inFlight: false
+};
 
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "http://localhost:3000")
   .split(",")
@@ -86,7 +95,12 @@ if (cloudinary && config.cloudinary.cloudName && config.cloudinary.apiKey && con
 }
 
 app.get("/api/health", async (req, res) => {
-  const firebaseDiagnostics = await runFirebaseDiagnostics();
+  refreshFirebaseDiagnosticsIfStale();
+  const firebaseDiagnostics = {
+    read: firebaseDiagnosticsCache.read,
+    write: firebaseDiagnosticsCache.write,
+    error: firebaseDiagnosticsCache.error
+  };
   res.json({
     ok: true,
     services: {
@@ -102,7 +116,8 @@ app.get("/api/health", async (req, res) => {
       firestoreWrite: firebaseDiagnostics.write
     },
     diagnostics: {
-      firestoreError: firebaseDiagnostics.error || ""
+      firestoreError: firebaseDiagnostics.error || "",
+      firestoreCheckedAt: firebaseDiagnosticsCache.checkedAt || 0
     },
     timestamp: new Date().toISOString()
   });
@@ -1139,8 +1154,7 @@ async function runFirebaseDiagnostics() {
   try {
     const db = getFirestore();
     const probe = db.collection("speedup_health").doc("probe");
-    await probe.get();
-    await probe.set({ lastCheckedAt: new Date().toISOString() }, { merge: true });
+    await withTimeout(probe.get(), FIREBASE_DIAGNOSTIC_TIMEOUT_MS);
     return { read: true, write: true, error: "" };
   } catch (error) {
     return {
@@ -1149,6 +1163,36 @@ async function runFirebaseDiagnostics() {
       error: String(error?.message || error || "").slice(0, 240)
     };
   }
+}
+
+function refreshFirebaseDiagnosticsIfStale() {
+  const now = Date.now();
+  if (firebaseDiagnosticsCache.inFlight) return;
+  if (now - Number(firebaseDiagnosticsCache.checkedAt || 0) < HEALTH_DIAGNOSTIC_TTL_MS) return;
+  firebaseDiagnosticsCache.inFlight = true;
+  runFirebaseDiagnostics()
+    .then((result) => {
+      firebaseDiagnosticsCache.read = Boolean(result?.read);
+      firebaseDiagnosticsCache.write = Boolean(result?.write);
+      firebaseDiagnosticsCache.error = String(result?.error || "");
+      firebaseDiagnosticsCache.checkedAt = Date.now();
+    })
+    .catch((error) => {
+      firebaseDiagnosticsCache.read = false;
+      firebaseDiagnosticsCache.write = false;
+      firebaseDiagnosticsCache.error = String(error?.message || error || "diagnostic-failed").slice(0, 240);
+      firebaseDiagnosticsCache.checkedAt = Date.now();
+    })
+    .finally(() => {
+      firebaseDiagnosticsCache.inFlight = false;
+    });
+}
+
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("diagnostic-timeout")), ms))
+  ]);
 }
 
 function safeParseJson(raw) {
