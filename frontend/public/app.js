@@ -1352,7 +1352,7 @@ async function hydrateStateFromBackend() {
     runtime.state = mergeDeep(structuredClone(defaultState), remote.state || {});
     if (runtime.authUser?.uid) runtime.state.student.id = runtime.authUser.uid;
     if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email.split("@")[0];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(runtime.state));
+    saveLocalState(runtime.authUser?.uid || runtime.state.student?.id || "");
     logAudit("Loaded user state from backend.");
   } catch {
     logAudit("User state unavailable. Using local state.");
@@ -1360,7 +1360,7 @@ async function hydrateStateFromBackend() {
 }
 
 function scheduleSave() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(runtime.state));
+  saveLocalState(runtime.authUser?.uid || runtime.state.student?.id || "");
   persistStateToBackend();
 }
 
@@ -1372,11 +1372,28 @@ async function persistStateToBackend() {
   }
 }
 
-function loadLocalState() {
+function stateStorageKeyFor(uid = "") {
+  const token = String(uid || "").trim();
+  return token ? `${STORAGE_KEY}:${token}` : STORAGE_KEY;
+}
+
+function saveLocalState(uid = "") {
+  const key = stateStorageKeyFor(uid);
+  localStorage.setItem(key, JSON.stringify(runtime.state));
+}
+
+function loadLocalState(uid = "") {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return structuredClone(defaultState);
-    return mergeDeep(structuredClone(defaultState), JSON.parse(raw));
+    const scopedKey = stateStorageKeyFor(uid);
+    const scopedRaw = localStorage.getItem(scopedKey);
+    if (scopedRaw) return mergeDeep(structuredClone(defaultState), JSON.parse(scopedRaw));
+
+    if (!uid) return structuredClone(defaultState);
+
+    // Legacy fallback for installs that used a single global key.
+    const legacyRaw = localStorage.getItem(STORAGE_KEY);
+    if (!legacyRaw) return structuredClone(defaultState);
+    return mergeDeep(structuredClone(defaultState), JSON.parse(legacyRaw));
   } catch {
     return structuredClone(defaultState);
   }
@@ -1427,6 +1444,7 @@ async function ensureAuthenticated() {
       window.location.replace(appPath("/login.html"));
       return false;
     }
+    runtime.state = loadLocalState(user.uid || "");
     runtime.authUser = user;
     runtime.state.student.id = user.uid || runtime.state.student.id || "";
     if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
