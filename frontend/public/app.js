@@ -696,22 +696,16 @@ function initResponsibleAiPage() {
     });
   }
 
-  const downloadBtn = document.getElementById("downloadDataBtn");
-  if (downloadBtn && !downloadBtn.dataset.bound) {
-    downloadBtn.dataset.bound = "1";
-    downloadBtn.addEventListener("click", downloadResponsibleData);
-  }
-
   const resetBtn = document.getElementById("resetAiProfileBtn");
   if (resetBtn && !resetBtn.dataset.bound) {
     resetBtn.dataset.bound = "1";
     resetBtn.addEventListener("click", resetAiProfile);
   }
 
-  const deleteBtn = document.getElementById("deleteAllDataBtn");
+  const deleteBtn = document.getElementById("deleteAccountBtn");
   if (deleteBtn && !deleteBtn.dataset.bound) {
     deleteBtn.dataset.bound = "1";
-    deleteBtn.addEventListener("click", deleteAllUserData);
+    deleteBtn.addEventListener("click", deleteAccount);
   }
 }
 
@@ -736,33 +730,6 @@ function setResponsibleControl(key, enabled) {
   apiPost(API.userControls, { controls: { [key]: Boolean(enabled) } }).catch(() => {});
 }
 
-async function downloadResponsibleData() {
-  let payload = runtime.state;
-  try {
-    const remote = await apiGet(API.userState);
-    payload = remote?.state || payload;
-  } catch {
-    // Keep local payload fallback.
-  }
-
-  const exported = {
-    exportedAt: new Date().toISOString(),
-    studentId: runtime.authUser?.uid || runtime.state.student?.id || "",
-    state: payload
-  };
-  const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `speedup-data-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  logAudit("User exported data copy.");
-  scheduleSave();
-}
-
 function resetAiProfile() {
   const ok = window.confirm("Reset AI profile now? This will clear learned mastery and recommendation signals.");
   if (!ok) return;
@@ -780,8 +747,8 @@ function resetAiProfile() {
   scheduleSave();
 }
 
-function deleteAllUserData() {
-  const ok = window.confirm("Delete all saved learning data? This action cannot be undone.");
+async function deleteAccount() {
+  const ok = window.confirm("Confirm delete your account. This will delete all your data.");
   if (!ok) return;
 
   runtime.state = structuredClone(defaultState);
@@ -789,9 +756,15 @@ function deleteAllUserData() {
   if (!runtime.state.student.name && runtime.authUser?.email) {
     runtime.state.student.name = runtime.authUser.email.split("@")[0];
   }
-  logAudit("All user data deleted by user.");
+  logAudit("User requested account deletion and data wipe.");
   renderResponsibleControls();
   scheduleSave();
+
+  try {
+    await window.firebaseAuthClient?.signOutUser?.();
+  } finally {
+    window.location.replace(appPath("/login.html"));
+  }
 }
 
 function renderCloudStatus() {
