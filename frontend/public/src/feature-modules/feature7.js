@@ -289,13 +289,14 @@ export function initFeature7(ctx) {
         deletedViaApi = false;
       }
     }
+    let savedRemotely = true;
     if (!deletedViaApi) {
-      await deleteUploadsViaStateFallback([id]);
+      savedRemotely = await deleteUploadsViaStateFallback([id]);
     }
     selectedUploadIds.delete(id);
     await refreshUserState();
     renderUploads();
-    if (status) status.textContent = "Source deleted.";
+    if (status) status.textContent = savedRemotely ? "Source deleted." : "Source deleted locally (backend sync failed).";
     logAudit("Practice source deleted.");
     scheduleSave();
   }
@@ -316,20 +317,43 @@ export function initFeature7(ctx) {
         deletedViaApi = false;
       }
     }
+    let savedRemotely = true;
     if (!deletedViaApi) {
-      await deleteUploadsViaStateFallback(ids);
+      savedRemotely = await deleteUploadsViaStateFallback(ids);
     }
     selectedUploadIds = new Set();
     await refreshUserState();
     renderUploads();
-    if (status) status.textContent = "Selected sources deleted.";
+    if (status) status.textContent = savedRemotely ? "Selected sources deleted." : "Selected sources deleted locally (backend sync failed).";
     logAudit(`Practice sources deleted: ${ids.length}.`);
     scheduleSave();
   }
 
+  function compactStateForSave(state) {
+    const safe = { ...(state || {}) };
+    const uploads = Array.isArray(safe.practiceUploads) ? safe.practiceUploads : [];
+    safe.practiceUploads = uploads.slice(0, 40).map((item) => ({
+      ...item,
+      name: String(item?.name || "").slice(0, 180),
+      type: String(item?.type || "").slice(0, 80),
+      source: String(item?.source || "").slice(0, 180),
+      sourceTextSnippet: String(item?.sourceTextSnippet || "").slice(0, 1800),
+      analysis: item?.analysis && typeof item.analysis === "object"
+        ? {
+          summary: String(item.analysis.summary || "").slice(0, 600),
+          difficultyLevel: String(item.analysis.difficultyLevel || "").slice(0, 40),
+          likelyTopics: Array.isArray(item.analysis.likelyTopics) ? item.analysis.likelyTopics.slice(0, 8).map((x) => String(x || "").slice(0, 80)) : [],
+          weakSignals: Array.isArray(item.analysis.weakSignals) ? item.analysis.weakSignals.slice(0, 8).map((x) => String(x || "").slice(0, 140)) : [],
+          recommendedNextSteps: Array.isArray(item.analysis.recommendedNextSteps) ? item.analysis.recommendedNextSteps.slice(0, 5).map((x) => String(x || "").slice(0, 220)) : []
+        }
+        : {}
+    }));
+    return safe;
+  }
+
   async function deleteUploadsViaStateFallback(uploadIds) {
     const idSet = new Set((uploadIds || []).map((x) => String(x || "")));
-    if (!idSet.size) return;
+    if (!idSet.size) return true;
     const state = runtime.state && typeof runtime.state === "object" ? runtime.state : {};
     const rows = getUploadRows();
     const filtered = rows
@@ -341,8 +365,22 @@ export function initFeature7(ctx) {
         return next;
       });
     const nextState = { ...state, practiceUploads: filtered };
-    await apiPut(API.userState, { state: nextState });
     runtime.state = { ...runtime.state, ...nextState, student: { ...runtime.state.student, ...(nextState.student || {}) } };
+    try {
+      await apiPut(API.userState, { state: nextState });
+      return true;
+    } catch {
+      try {
+        const compacted = compactStateForSave(nextState);
+        await apiPut(API.userState, { state: compacted });
+        runtime.state = { ...runtime.state, ...compacted, student: { ...runtime.state.student, ...(compacted.student || {}) } };
+        return true;
+      } catch {
+        // Keep local deletion even if backend persistence fails.
+        scheduleSave();
+        return false;
+      }
+    }
   }
 
   function bindUploadListInteractions() {
