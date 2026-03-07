@@ -107,6 +107,7 @@ const modals = {
 const runtime = {
   state: structuredClone(defaultState),
   cloudServices: { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false },
+  cloudChecks: { firestoreRead: null, firestoreWrite: null },
   highlightMode: false,
   currentParagraphId: 1,
   currentAttempt: 0,
@@ -1352,8 +1353,10 @@ async function loadCloudHealth() {
   try {
     const health = await apiGet(API.health);
     runtime.cloudServices = health.services || runtime.cloudServices;
+    runtime.cloudChecks = health.checks || runtime.cloudChecks;
   } catch {
     runtime.cloudServices = { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false };
+    runtime.cloudChecks = { firestoreRead: null, firestoreWrite: null };
   }
 }
 
@@ -1378,11 +1381,23 @@ function scheduleSave() {
   persistStateToBackend();
 }
 
+function buildBackendStateSnapshot(state) {
+  const snapshot = structuredClone(state && typeof state === "object" ? state : defaultState);
+  delete snapshot.timeManagement;
+  return snapshot;
+}
+
+function canPersistStateToBackend() {
+  return runtime.cloudChecks?.firestoreWrite !== false;
+}
+
 async function persistStateToBackend() {
+  if (!canPersistStateToBackend()) return;
   try {
-    await apiPut(API.userState, { state: runtime.state });
+    await apiPut(API.userState, { state: buildBackendStateSnapshot(runtime.state) });
+    runtime.cloudChecks.firestoreWrite = true;
   } catch {
-    // Keep local only.
+    runtime.cloudChecks.firestoreWrite = false;
   }
 }
 
