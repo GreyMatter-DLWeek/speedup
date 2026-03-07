@@ -805,6 +805,8 @@ if (registerTimeManagementRoutes) {
     safeParseJson,
     isOpenAIConfigured,
     normalizeStudentId,
+    requireFirebaseAuth,
+    resolveAuthorizedStudentId,
     upload,
     pdfParse,
     mammoth

@@ -3,3 +3,5 @@ node_modules/
 *.log
 data/
 *.sqlite
+.vscode/
+.DS_Store
