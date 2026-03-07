@@ -1,47 +1,50 @@
 <aside class="sidebar">
   <div class="logo">
-    <div class="logo-mark">⚡ SpeedUp</div>
+    <div class="logo-mark">&#9889; SpeedUp</div>
     <div class="logo-sub">AI Study Companion</div>
   </div>
 
   <div class="nav-section">
     <div class="nav-label">MAIN</div>
     <div class="nav-item active" onclick="navigate('dashboard')">
-      <span class="nav-icon">⬡</span> Dashboard
+      <span class="nav-icon">&#9723;</span> Dashboard
     </div>
   </div>
 
   <div class="nav-section">
     <div class="nav-label">PLANNING</div>
     <div class="nav-item" onclick="navigate('timetable')">
-      <span class="nav-icon">📅</span> Study Timetable
+      <span class="nav-icon">&#128197;</span> Study Timetable
     </div>
   </div>
 
   <div class="nav-section">
     <div class="nav-label">REVISION</div>
     <div class="nav-item" onclick="navigate('notes')">
-      <span class="nav-icon">📖</span> Active Reading
+      <span class="nav-icon">&#128214;</span> Active Reading
     </div>
     <div class="nav-item" onclick="navigate('study-notes')">
-      <span class="nav-icon">📝</span> Study Notes
+      <span class="nav-icon">&#128221;</span> Study Notes
     </div>
     <div class="nav-item" onclick="navigate('practice')">
-      <span class="nav-icon">🗂</span> Practice Papers
+      <span class="nav-icon">&#128466;</span> Practice Papers
+    </div>
+    <div class="nav-item" onclick="navigate('sprint')">
+      <span class="nav-icon">&#9917;</span> Sprint Challenge
     </div>
   </div>
 
   <div class="nav-section">
     <div class="nav-label">INSIGHTS</div>
     <div class="nav-item" onclick="navigate('progress')">
-      <span class="nav-icon">📈</span> Progress & Mastery
+      <span class="nav-icon">&#128200;</span> Progress & Mastery
     </div>
     <div class="nav-item" onclick="navigate('recommendations')">
-      <span class="nav-icon">🎯</span> Recommendations
+      <span class="nav-icon">&#127919;</span> Recommendations
       <span class="nav-badge" style="background:var(--accent3);color:white;">3</span>
     </div>
     <div class="nav-item" onclick="navigate('responsible')">
-      <span class="nav-icon">🛡</span> AI Transparency
+      <span class="nav-icon">&#128737;</span> AI Transparency
     </div>
   </div>
 
@@ -50,11 +53,10 @@
       <div class="avatar" id="sidebarAvatar">--</div>
       <div>
         <div class="user-name" id="sidebarUserName">Student</div>
-        <div class="user-level" id="sidebarUserMeta">Level 7 · Computer Science</div>
+        <div class="user-level" id="sidebarUserMeta">Level 7 &middot; Computer Science</div>
       </div>
     </div>
-    <button id="sidebarSettingsBtn" class="btn btn-secondary" style="width:100%;margin-top:10px;justify-content:center;">⚙ Settings</button>
+    <button id="sidebarSettingsBtn" class="btn btn-secondary" style="width:100%;margin-top:10px;justify-content:center;">&#9881; Settings</button>
     <button id="logoutBtn" class="btn btn-ghost" style="width:100%;margin-top:8px;justify-content:center;">Sign Out</button>
   </div>
 </aside>
-

@@ -987,6 +987,150 @@ app.post("/api/practice/generate-flashcards", requireFirebaseAuth, withRateLimit
   }
 });
 
+app.post("/api/game/sprint/start", requireFirebaseAuth, withRateLimit("sprint_start", 30, 60 * 1000), async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const topic = cleanText(req.body?.topic, 120)
+      || inferWeakestTopic(state)
+      || "General Revision";
+    const difficulty = normalizeDifficulty(req.body?.difficulty);
+    const count = Math.max(3, Math.min(10, Number(req.body?.count || 5)));
+    const sourceText = buildSprintSourceText(state, topic);
+
+    if (!sourceText || sourceText.length < 40) {
+      return res.status(400).json({
+        error: "Not enough source context for sprint generation.",
+        hint: "Upload and analyze at least one practice source, or add notes/highlights for this topic."
+      });
+    }
+
+    const quiz = await generateQuizForSource({
+      sourceText,
+      difficulty,
+      questionType: "mixed",
+      numQuestions: count
+    });
+
+    const sprintId = `sp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    const startedAt = new Date().toISOString();
+    state.sprintCurrent = {
+      sprintId,
+      topic,
+      difficulty,
+      startedAt,
+      questions: (quiz.questions || []).map((q, i) => ({
+        id: `q${i + 1}`,
+        question: cleanText(q.question, 400),
+        options: Array.isArray(q.options) ? q.options.slice(0, 4).map((v) => cleanText(v, 180)) : [],
+        answer: cleanText(q.answer, 220),
+        explanation: cleanText(q.explanation, 400)
+      }))
+    };
+    state.auditLog = Array.isArray(state.auditLog) ? state.auditLog : [];
+    state.auditLog.push({ ts: new Date().toISOString(), message: `Sprint started: ${topic} (${count} questions)` });
+    state.auditLog = state.auditLog.slice(-300);
+    await setUserState(uid, state);
+
+    return res.json({
+      ok: true,
+      sprint: {
+        sprintId,
+        topic,
+        difficulty,
+        startedAt,
+        questions: state.sprintCurrent.questions
+      }
+    });
+  } catch (error) {
+    handleError(res, "Failed to start sprint", error);
+  }
+});
+
+app.post("/api/game/sprint/submit", requireFirebaseAuth, withRateLimit("sprint_submit", 30, 60 * 1000), async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const sprintId = cleanText(req.body?.sprintId, 120);
+    const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+    const elapsedSec = Math.max(0, Math.min(3600, Number(req.body?.elapsedSec || 0)));
+    if (!sprintId) return res.status(400).json({ error: "sprintId is required." });
+
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const current = state.sprintCurrent && typeof state.sprintCurrent === "object" ? state.sprintCurrent : null;
+    if (!current || String(current.sprintId) !== sprintId) {
+      return res.status(400).json({ error: "Sprint session not found. Start a new sprint first." });
+    }
+
+    const answerMap = new Map();
+    answers.forEach((row) => {
+      const qid = cleanText(row?.questionId, 40);
+      if (!qid) return;
+      answerMap.set(qid, cleanText(row?.answer, 300));
+    });
+
+    const checks = (current.questions || []).map((q) => {
+      const userAnswer = answerMap.get(String(q.id)) || "";
+      const expected = cleanText(q.answer, 220).toLowerCase();
+      const actual = cleanText(userAnswer, 220).toLowerCase();
+      const correct = expected && actual && (actual === expected || expected.includes(actual) || actual.includes(expected));
+      const type = classifyMistakeType({ question: q.question, expected: q.answer, actual: userAnswer, elapsedSec });
+      return {
+        questionId: q.id,
+        question: q.question,
+        expected: q.answer,
+        actual: userAnswer,
+        correct,
+        explanation: q.explanation,
+        mistakeType: correct ? "none" : type
+      };
+    });
+
+    const correctCount = checks.filter((c) => c.correct).length;
+    const total = checks.length || 1;
+    const score = Math.round((correctCount / total) * 100);
+    const breakdown = buildMistakeBreakdown(checks);
+    const coaching = await buildSprintCoaching(current.topic, checks);
+
+    state.sprintHistory = Array.isArray(state.sprintHistory) ? state.sprintHistory : [];
+    state.sprintHistory.unshift({
+      sprintId,
+      topic: current.topic,
+      difficulty: current.difficulty,
+      total,
+      correct: correctCount,
+      score,
+      elapsedSec,
+      mistakeBreakdown: breakdown,
+      createdAt: new Date().toISOString()
+    });
+    state.sprintHistory = state.sprintHistory.slice(0, 80);
+    state.sprintCurrent = null;
+    state.auditLog = Array.isArray(state.auditLog) ? state.auditLog : [];
+    state.auditLog.push({ ts: new Date().toISOString(), message: `Sprint submitted: ${current.topic} (${score}%)` });
+    state.auditLog = state.auditLog.slice(-300);
+    await setUserState(uid, state);
+
+    return res.json({
+      ok: true,
+      result: {
+        sprintId,
+        topic: current.topic,
+        difficulty: current.difficulty,
+        score,
+        correct: correctCount,
+        total,
+        elapsedSec,
+        streakDays: computeSprintStreakDays(state.sprintHistory),
+        breakdown,
+        checks,
+        coaching
+      }
+    });
+  } catch (error) {
+    handleError(res, "Failed to submit sprint", error);
+  }
+});
+
 app.get("/api/live/bootstrap/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
     const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
@@ -1576,6 +1720,186 @@ function normalizeFlashcardsPayload(flashcards, count) {
   };
 }
 
+async function generateQuizForSource({ sourceText, difficulty, questionType, numQuestions }) {
+  const fallbackQuiz = buildFallbackQuizFromSource(sourceText, {
+    numQuestions,
+    difficulty,
+    questionType
+  });
+
+  let modelQuiz = null;
+  try {
+    const prompt = [
+      "You are an assessment generator for student revision.",
+      "Return strict JSON with key quiz only.",
+      "quiz must be an object with keys: title, difficulty, questionType, questions.",
+      "questions must be an array with EXACTLY the requested number of items.",
+      "each question item keys: question, options, answer, explanation.",
+      "If questionType is mcq, options must contain exactly 4 choices.",
+      "Use only the provided source text."
+    ].join(" ");
+    const out = await callOpenAIChat(
+      [
+        { role: "system", content: prompt },
+        {
+          role: "user",
+          content: JSON.stringify({
+            difficulty,
+            questionType,
+            numQuestions,
+            sourceText: snippet(sourceText, 14000)
+          })
+        }
+      ],
+      0.2
+    );
+    const parsed = safeParseJson(out);
+    modelQuiz = normalizeQuizPayload(parsed?.quiz, { numQuestions, difficulty, questionType });
+  } catch {
+    modelQuiz = null;
+  }
+
+  return modelQuiz?.questions?.length ? modelQuiz : fallbackQuiz;
+}
+
+function inferWeakestTopic(state) {
+  const topics = Array.isArray(state?.topics) ? state.topics : [];
+  if (!topics.length) return "";
+  const sorted = topics
+    .filter((t) => cleanText(t?.name, 120))
+    .sort((a, b) => Number(b?.weakScore || 0) - Number(a?.weakScore || 0));
+  return cleanText(sorted[0]?.name, 120);
+}
+
+function buildSprintSourceText(state, topic) {
+  const topicLower = String(topic || "").toLowerCase();
+  const uploads = Array.isArray(state?.practiceUploads) ? state.practiceUploads : [];
+  const notes = Object.values(state?.notes || {}).map((n) => String(n?.text || ""));
+  const highlights = Array.isArray(state?.highlights) ? state.highlights : [];
+
+  const uploadChunks = uploads
+    .slice(0, 20)
+    .map((u) => {
+      const name = cleanText(u?.name, 160);
+      const body = cleanText(u?.sourceTextSnippet || u?.analysis?.summary || "", 3000);
+      if (!body) return "";
+      if (topicLower && name.toLowerCase().includes(topicLower)) return `Source: ${name}\n${body}`;
+      return `Source: ${name}\n${body}`;
+    })
+    .filter(Boolean);
+
+  const noteChunks = notes
+    .filter(Boolean)
+    .slice(0, 20)
+    .map((n) => cleanText(n, 1200))
+    .filter((n) => !topicLower || n.toLowerCase().includes(topicLower));
+
+  const highlightChunks = highlights
+    .slice(0, 20)
+    .map((h) => cleanText(`${h.text || ""} ${h.summary || ""}`, 500))
+    .filter(Boolean)
+    .filter((n) => !topicLower || n.toLowerCase().includes(topicLower));
+
+  const combined = [...uploadChunks, ...noteChunks, ...highlightChunks].join("\n\n");
+  return cleanText(combined, 20000);
+}
+
+function classifyMistakeType({ question, expected, actual, elapsedSec }) {
+  const q = String(question || "").toLowerCase();
+  const exp = String(expected || "").toLowerCase();
+  const act = String(actual || "").toLowerCase();
+  if (!act) return "concept_gap";
+  if (elapsedSec && elapsedSec < 70) return "time_pressure";
+  if (act.length < 6) return "careless";
+  if ((q.includes("true or false") || q.includes("which option")) && !exp.includes(act)) return "misread_question";
+  return "concept_gap";
+}
+
+function buildMistakeBreakdown(checks) {
+  const out = { concept_gap: 0, careless: 0, time_pressure: 0, misread_question: 0 };
+  (checks || []).forEach((row) => {
+    if (row.correct) return;
+    const key = String(row.mistakeType || "concept_gap");
+    if (!(key in out)) out.concept_gap += 1;
+    else out[key] += 1;
+  });
+  return out;
+}
+
+function computeSprintStreakDays(history) {
+  const rows = Array.isArray(history) ? history : [];
+  const byDate = new Set(rows.map((r) => String(r?.createdAt || "").slice(0, 10)).filter(Boolean));
+  let streak = 0;
+  const cursor = new Date();
+  for (let i = 0; i < 60; i += 1) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (!byDate.has(key)) break;
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+async function buildSprintCoaching(topic, checks) {
+  const wrong = (checks || []).filter((c) => !c.correct).slice(0, 5);
+  if (!wrong.length) {
+    return {
+      summary: `Strong run on ${topic}. Keep momentum with one harder follow-up set.`,
+      nextActions: [
+        "Attempt one harder sprint tomorrow.",
+        "Explain one correct answer in your own words."
+      ],
+      provider: "system"
+    };
+  }
+
+  const fallback = {
+    summary: `You are improving on ${topic}, but some concepts still need reinforcement.`,
+    nextActions: [
+      "Review the missed questions and write one-line corrections.",
+      "Generate 5 flashcards from your mistakes.",
+      "Retry this topic with medium difficulty tomorrow."
+    ],
+    provider: "fallback"
+  };
+
+  if (!isOpenAIConfigured()) return fallback;
+  try {
+    const prompt = [
+      "You are a concise learning coach.",
+      "Return strict JSON with keys: summary, nextActions.",
+      "summary <= 35 words. nextActions is array of 2-4 concrete steps."
+    ].join(" ");
+    const output = await callOpenAIChat(
+      [
+        { role: "system", content: prompt },
+        {
+          role: "user",
+          content: JSON.stringify({
+            topic,
+            wrong: wrong.map((w) => ({
+              question: w.question,
+              expected: w.expected,
+              actual: w.actual,
+              mistakeType: w.mistakeType
+            }))
+          })
+        }
+      ],
+      0.2
+    );
+    const parsed = safeParseJson(output);
+    if (!parsed) return fallback;
+    return {
+      summary: cleanText(parsed.summary, 240) || fallback.summary,
+      nextActions: cleanList(parsed.nextActions, 4, 200).length ? cleanList(parsed.nextActions, 4, 200) : fallback.nextActions,
+      provider: "openai-api"
+    };
+  } catch {
+    return fallback;
+  }
+}
+
 async function loadStateWithFallback(studentId) {
   if (!isFirebaseConfigured()) return {};
   try {
@@ -1605,6 +1929,8 @@ function createMinimalState(studentId) {
     highlights: [],
     notes: {},
     practiceUploads: [],
+    sprintCurrent: null,
+    sprintHistory: [],
     examHistory: [],
     responsibleControls: {},
     auditLog: []

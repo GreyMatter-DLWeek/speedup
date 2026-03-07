@@ -4,6 +4,7 @@ const pages = [
   "study-notes",
   "timetable",
   "practice",
+  "sprint",
   "progress",
   "recommendations",
   "responsible"
