@@ -1432,6 +1432,8 @@ function createMinimalState(studentId) {
     highlights: [],
     notes: {},
     practiceUploads: [],
+    focusSessions: [],
+    dashboardFeedback: {},
     examHistory: [],
     responsibleControls: {},
     auditLog: []

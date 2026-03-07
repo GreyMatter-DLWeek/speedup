@@ -75,6 +75,8 @@ const defaultState = {
   notes: {},
   highlights: [],
   practiceUploads: [],
+  focusSessions: [],
+  dashboardFeedback: {},
   examHistory: [],
   responsibleControls: {
     explainability: true,
@@ -89,7 +91,8 @@ const defaultState = {
 const flashcards = [];
 
 const modals = {
-  focus: { title: "Start Focus Session", body: "<div class='form-group'><label class='form-label'>Mode</label><select class='select'><option>Active Reading</option><option>AI Tutor</option><option>Practice Questions</option></select></div>", confirm: "Start" },
+  focus: { title: "Start Focus Session", body: "", confirm: "Start" },
+  reschedule: { title: "Reschedule Session", body: "", confirm: "Open timetable" },
   visual: { title: "Concept Visualization", body: "<div class='form-group'><label class='form-label'>Concept</label><input class='input' placeholder='Enter concept...'></div>", confirm: "Generate" },
   export: { title: "Export Highlights", body: "<div style='font-size:13px;color:var(--text3);line-height:1.7;'>Export current highlights to JSON report from dashboard.</div>", confirm: "Close" },
   "full-plan": { title: "Generate Full Plan", body: "<div class='form-group'><label class='form-label'>Available hours</label><input class='input' type='number' value='12'></div>", confirm: "Generate" },
@@ -174,6 +177,7 @@ async function init() {
   renderCloudStatus();
   feature2.renderFlashcard();
   await feature6.refreshFeature6();
+  feature8.hydrateFeedbackSelections();
   feature7.initPracticeFeature();
 
   renderTutorPanel();
@@ -766,6 +770,7 @@ function resetAiProfile() {
   runtime.state.tutorRevisitQueue = [];
 
   renderResponsibleControls();
+  feature8.hydrateFeedbackSelections();
   logAudit("AI profile reset by user.");
   scheduleSave();
 }
@@ -781,6 +786,7 @@ function deleteAllUserData() {
   }
   logAudit("All user data deleted by user.");
   renderResponsibleControls();
+  feature8.hydrateFeedbackSelections();
   scheduleSave();
 }
 
@@ -809,7 +815,9 @@ function navigate(page) {
     feature4.refreshTimeManagement();
   }
   if (page === "dashboard" || page === "progress") {
-    feature6.refreshFeature6();
+    feature6.refreshFeature6().then(() => {
+      feature8.hydrateFeedbackSelections();
+    });
   }
 }
 
