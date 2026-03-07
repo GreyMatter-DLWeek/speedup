@@ -18,6 +18,7 @@ let settingsDragState = null;
 const API = {
   health: "/api/health",
   userState: "/api/user/state",
+  userControls: "/api/user/controls",
   userExam: "/api/user/exam",
   practiceAnalyze: "/api/practice/analyze",
   practiceUploads: "/api/practice/uploads",
@@ -79,7 +80,8 @@ const defaultState = {
     explainability: true,
     personalization: true,
     decayModeling: true,
-    errorTypeDetection: true
+    errorTypeDetection: true,
+    externalStudyCredit: false
   },
   auditLog: []
 };
@@ -166,6 +168,7 @@ async function init() {
   await hydrateStateFromBackend();
 
   hydrateFromDom();
+  initResponsibleAiPage();
   feature2.renderHighlights();
   feature5.renderRecommendations();
   renderCloudStatus();
@@ -648,6 +651,136 @@ function hydrateFromDom() {
       };
     }
   });
+  scheduleSave();
+}
+
+function initResponsibleAiPage() {
+  const page = document.getElementById("page-responsible");
+  if (!page) return;
+
+  const defaultControls = structuredClone(defaultState.responsibleControls || {});
+  runtime.state.responsibleControls = mergeDeep(defaultControls, runtime.state.responsibleControls || {});
+  renderResponsibleControls();
+
+  if (!page.dataset.responsibleBound) {
+    page.dataset.responsibleBound = "1";
+
+    page.addEventListener("click", (event) => {
+      const toggle = event.target.closest("[data-responsible-control]");
+      if (!toggle) return;
+      const key = toggle.dataset.responsibleControl;
+      if (!key) return;
+      const current = Boolean(runtime.state.responsibleControls?.[key]);
+      setResponsibleControl(key, !current);
+    });
+
+    page.addEventListener("keydown", (event) => {
+      const toggle = event.target.closest("[data-responsible-control]");
+      if (!toggle) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      const key = toggle.dataset.responsibleControl;
+      if (!key) return;
+      const current = Boolean(runtime.state.responsibleControls?.[key]);
+      setResponsibleControl(key, !current);
+    });
+  }
+
+  const downloadBtn = document.getElementById("downloadDataBtn");
+  if (downloadBtn && !downloadBtn.dataset.bound) {
+    downloadBtn.dataset.bound = "1";
+    downloadBtn.addEventListener("click", downloadResponsibleData);
+  }
+
+  const resetBtn = document.getElementById("resetAiProfileBtn");
+  if (resetBtn && !resetBtn.dataset.bound) {
+    resetBtn.dataset.bound = "1";
+    resetBtn.addEventListener("click", resetAiProfile);
+  }
+
+  const deleteBtn = document.getElementById("deleteAllDataBtn");
+  if (deleteBtn && !deleteBtn.dataset.bound) {
+    deleteBtn.dataset.bound = "1";
+    deleteBtn.addEventListener("click", deleteAllUserData);
+  }
+}
+
+function renderResponsibleControls() {
+  const controls = runtime.state.responsibleControls || {};
+  document.querySelectorAll("[data-responsible-control]").forEach((el) => {
+    const key = el.dataset.responsibleControl;
+    const on = Boolean(controls[key]);
+    el.classList.toggle("on", on);
+    el.setAttribute("aria-checked", on ? "true" : "false");
+  });
+}
+
+function setResponsibleControl(key, enabled) {
+  if (!runtime.state.responsibleControls || typeof runtime.state.responsibleControls !== "object") {
+    runtime.state.responsibleControls = structuredClone(defaultState.responsibleControls || {});
+  }
+  runtime.state.responsibleControls[key] = Boolean(enabled);
+  renderResponsibleControls();
+  logAudit(`Responsible setting changed: ${key}=${Boolean(enabled) ? "on" : "off"}.`);
+  scheduleSave();
+  apiPost(API.userControls, { controls: { [key]: Boolean(enabled) } }).catch(() => {});
+}
+
+async function downloadResponsibleData() {
+  let payload = runtime.state;
+  try {
+    const remote = await apiGet(API.userState);
+    payload = remote?.state || payload;
+  } catch {
+    // Keep local payload fallback.
+  }
+
+  const exported = {
+    exportedAt: new Date().toISOString(),
+    studentId: runtime.authUser?.uid || runtime.state.student?.id || "",
+    state: payload
+  };
+  const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `speedup-data-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  logAudit("User exported data copy.");
+  scheduleSave();
+}
+
+function resetAiProfile() {
+  const ok = window.confirm("Reset AI profile now? This will clear learned mastery and recommendation signals.");
+  if (!ok) return;
+
+  runtime.state.responsibleControls = structuredClone(defaultState.responsibleControls || {});
+  runtime.state.mastery = [];
+  runtime.state.topics = [];
+  runtime.state.recommendedActions = [];
+  runtime.state.liveRecommendation = structuredClone(defaultState.liveRecommendation || {});
+  runtime.state.practiceErrorLog = [];
+  runtime.state.tutorRevisitQueue = [];
+
+  renderResponsibleControls();
+  logAudit("AI profile reset by user.");
+  scheduleSave();
+}
+
+function deleteAllUserData() {
+  const ok = window.confirm("Delete all saved learning data? This action cannot be undone.");
+  if (!ok) return;
+
+  runtime.state = structuredClone(defaultState);
+  runtime.state.student.id = runtime.authUser?.uid || runtime.state.student.id || "";
+  if (!runtime.state.student.name && runtime.authUser?.email) {
+    runtime.state.student.name = runtime.authUser.email.split("@")[0];
+  }
+  logAudit("All user data deleted by user.");
+  renderResponsibleControls();
   scheduleSave();
 }
 
@@ -1222,7 +1355,7 @@ async function hydrateStateFromBackend() {
     runtime.state = mergeDeep(structuredClone(defaultState), remote.state || {});
     if (runtime.authUser?.uid) runtime.state.student.id = runtime.authUser.uid;
     if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email.split("@")[0];
-    localStorage.setItem(getStateStorageKey(runtime.authUser?.uid), JSON.stringify(runtime.state));
+    saveLocalState(runtime.authUser?.uid || runtime.state.student?.id || "");
     logAudit("Loaded user state from backend.");
   } catch {
     logAudit("User state unavailable. Using local state.");
@@ -1230,7 +1363,7 @@ async function hydrateStateFromBackend() {
 }
 
 function scheduleSave() {
-  localStorage.setItem(getStateStorageKey(runtime.authUser?.uid), JSON.stringify(runtime.state));
+  saveLocalState(runtime.authUser?.uid || runtime.state.student?.id || "");
   persistStateToBackend();
 }
 
@@ -1242,19 +1375,33 @@ async function persistStateToBackend() {
   }
 }
 
+function stateStorageKeyFor(uid = "") {
+  const safeUid = String(uid || "").trim();
+  return safeUid ? `${STORAGE_KEY_PREFIX}:${safeUid}` : STORAGE_KEY_PREFIX;
+}
+
+function saveLocalState(uid = "") {
+  localStorage.setItem(stateStorageKeyFor(uid), JSON.stringify(runtime.state));
+}
+
 function loadLocalStateForUser(uid) {
   try {
-    const raw = localStorage.getItem(getStateStorageKey(uid));
-    if (!raw) return structuredClone(defaultState);
-    return mergeDeep(structuredClone(defaultState), JSON.parse(raw));
+    const scopedRaw = localStorage.getItem(stateStorageKeyFor(uid));
+    if (scopedRaw) return mergeDeep(structuredClone(defaultState), JSON.parse(scopedRaw));
+
+    if (!uid) return structuredClone(defaultState);
+
+    // Legacy fallback for installs that used a shared single key.
+    const legacyRaw = localStorage.getItem(STORAGE_KEY_PREFIX);
+    if (!legacyRaw) return structuredClone(defaultState);
+    return mergeDeep(structuredClone(defaultState), JSON.parse(legacyRaw));
   } catch {
     return structuredClone(defaultState);
   }
 }
 
-function getStateStorageKey(uid) {
-  const safeUid = String(uid || "").trim();
-  return safeUid ? `${STORAGE_KEY_PREFIX}:${safeUid}` : STORAGE_KEY_PREFIX;
+function loadLocalState(uid = "") {
+  return loadLocalStateForUser(uid);
 }
 
 function mergeDeep(target, source) {

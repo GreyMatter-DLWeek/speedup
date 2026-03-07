@@ -33,35 +33,35 @@
                 <div class="override-label">Show reasoning for all recommendations</div>
                 <div class="override-meta">Always explain why each suggestion is made</div>
               </div>
-              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="explainability" aria-label="Toggle explainability"></div>
             </div>
             <div class="override-row">
               <div>
                 <div class="override-label">Personalized learning style detection</div>
                 <div class="override-meta">AI learns your optimal study patterns</div>
               </div>
-              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="personalization" aria-label="Toggle personalization"></div>
             </div>
             <div class="override-row">
               <div>
                 <div class="override-label">Mastery decay modeling</div>
                 <div class="override-meta">Adjust mastery scores during inactivity gaps</div>
               </div>
-              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="decayModeling" aria-label="Toggle mastery decay modeling"></div>
             </div>
             <div class="override-row">
               <div>
                 <div class="override-label">Careless vs gap error detection</div>
                 <div class="override-meta">Distinguish error types from attempt history</div>
               </div>
-              <div class="toggle on" onclick="this.classList.toggle('on')"></div>
+              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="errorTypeDetection" aria-label="Toggle error type detection"></div>
             </div>
             <div class="override-row">
               <div>
                 <div class="override-label">External study credit</div>
                 <div class="override-meta">Allow manual logging of offline study sessions</div>
               </div>
-              <div class="toggle" onclick="this.classList.toggle('on')"></div>
+              <div class="toggle" role="switch" tabindex="0" data-responsible-control="externalStudyCredit" aria-label="Toggle external study credit"></div>
             </div>
           </div>
 
@@ -112,9 +112,9 @@
         <div class="card">
           <div class="card-title">Data Usage & Control</div>
           <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap;">
-            <button class="btn btn-secondary">📥 Download My Data</button>
-            <button class="btn btn-secondary">🔄 Reset AI Profile</button>
-            <button class="btn btn-secondary" style="color:var(--danger);border-color:rgba(248,113,113,0.3);">🗑 Delete All Data</button>
+            <button id="downloadDataBtn" class="btn btn-secondary">📥 Download My Data</button>
+            <button id="resetAiProfileBtn" class="btn btn-secondary">🔄 Reset AI Profile</button>
+            <button id="deleteAllDataBtn" class="btn btn-secondary" style="color:var(--danger);border-color:rgba(248,113,113,0.3);">🗑 Delete All Data</button>
           </div>
         </div>
 
