@@ -3,6 +3,7 @@ export function initFeature7(ctx) {
 
   let initialized = false;
   let selectedUploadIds = new Set();
+  let supportsPracticeUploadRoutes = false;
 
   function formatBytes(value) {
     const size = Number(value || 0);
@@ -195,9 +196,13 @@ export function initFeature7(ctx) {
       }
       try {
         const uploadsOut = await apiGet(API.practiceUploads);
-        if (uploadsOut?.ok && Array.isArray(uploadsOut.uploads)) runtime.state.practiceUploads = uploadsOut.uploads;
+        if (uploadsOut?.ok && Array.isArray(uploadsOut.uploads)) {
+          runtime.state.practiceUploads = uploadsOut.uploads;
+          supportsPracticeUploadRoutes = true;
+        }
       } catch {
         // Backward-compatible: older backend may not expose /api/practice/uploads.
+        supportsPracticeUploadRoutes = false;
       }
     } catch {
       // Keep in-memory state.
@@ -275,11 +280,12 @@ export function initFeature7(ctx) {
     if (!ok) return;
     const status = document.getElementById("practiceStatus");
     if (status) status.textContent = "Deleting source...";
+    const forceFallback = id.startsWith("legacy-") || !supportsPracticeUploadRoutes;
     try {
-      if (id.startsWith("legacy-")) throw new Error("legacy-id-fallback");
+      if (forceFallback) throw new Error("state-fallback");
       await apiDelete(API.practiceUpload(id));
     } catch (error) {
-      if (!id.startsWith("legacy-") && !isDeleteEndpointMissing(error)) throw error;
+      if (!forceFallback && !isDeleteEndpointMissing(error)) throw error;
       await deleteUploadsViaStateFallback([id]);
     }
     selectedUploadIds.delete(id);
@@ -297,12 +303,13 @@ export function initFeature7(ctx) {
     if (!ok) return;
     const status = document.getElementById("practiceStatus");
     if (status) status.textContent = "Deleting selected sources...";
+    const allLegacy = ids.every((id) => String(id).startsWith("legacy-"));
+    const forceFallback = allLegacy || !supportsPracticeUploadRoutes;
     try {
-      if (ids.every((id) => String(id).startsWith("legacy-"))) throw new Error("legacy-id-fallback");
+      if (forceFallback) throw new Error("state-fallback");
       await apiPost(API.practiceDeleteUploads, { uploadIds: ids });
     } catch (error) {
-      const allLegacy = ids.every((id) => String(id).startsWith("legacy-"));
-      if (!allLegacy && !isDeleteEndpointMissing(error)) throw error;
+      if (!forceFallback && !isDeleteEndpointMissing(error)) throw error;
       await deleteUploadsViaStateFallback(ids);
     }
     selectedUploadIds = new Set();
@@ -325,11 +332,10 @@ export function initFeature7(ctx) {
   async function deleteUploadsViaStateFallback(uploadIds) {
     const idSet = new Set((uploadIds || []).map((x) => String(x || "")));
     if (!idSet.size) return;
-    const out = await apiGet(API.userState);
-    const state = out?.state && typeof out.state === "object" ? out.state : runtime.state;
-    const rows = Array.isArray(state.practiceUploads) ? state.practiceUploads : [];
+    const state = runtime.state && typeof runtime.state === "object" ? runtime.state : {};
+    const rows = getUploadRows();
     const filtered = rows
-      .map((item, index) => ({ ...item, __uploadId: String(item?.uploadId || `legacy-${index}`) }))
+      .map((item) => ({ ...item, __uploadId: String(item?.uploadId || "") }))
       .filter((item) => !idSet.has(item.__uploadId))
       .map((item) => {
         const next = { ...item };
