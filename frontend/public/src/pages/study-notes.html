@@ -1,61 +1,354 @@
 <div id="page-study-notes" class="page">
   <div class="topbar">
     <div>
-      <div class="topbar-title">Study Notes</div>
-      <div class="topbar-sub">Summarize highlights, build flashcards, and query your notes with RAG</div>
+      <div class="topbar-title">Study Notes + AI Tutor (Study Pack Hub)</div>
+      <div class="topbar-sub">Upload PDFs, create packs, ask grounded tutor questions, and revise weak topics with linked actions</div>
     </div>
     <div class="topbar-actions">
       <button class="btn btn-secondary" onclick="openTutorPanel('study-notes')">🤖 Ask Tutor</button>
       <button class="btn btn-secondary" onclick="navigate('notes')">📖 Back to Active Reading</button>
-      <button class="btn btn-primary" onclick="openModal('full-plan')">🧠 Generate Study Plan</button>
+      <button class="btn btn-primary" onclick="openLatestStudyPack()">📦 Open Latest Pack</button>
     </div>
   </div>
 
   <div class="content">
-    <div class="grid-2-1">
-      <div>
-        <div class="section-head">
-          <div class="section-title">Captured Highlights & AI Context</div>
-          <div class="section-link" onclick="navigate('notes')">+ Add from Active Reading</div>
+    <style>
+      .study-pack-layout {
+        display: grid;
+        grid-template-columns: minmax(300px, 0.9fr) minmax(0, 1.35fr);
+        gap: 16px;
+      }
+
+      .study-pack-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .study-pack-upload-list,
+      .study-pack-library,
+      .study-pack-toc,
+      .study-pack-weak-list,
+      .study-pack-notes-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .study-pack-upload-item,
+      .study-pack-weak-item,
+      .study-pack-note-item {
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface2);
+      }
+
+      .study-pack-upload-title,
+      .study-pack-library-title,
+      .study-pack-note-meta {
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .study-pack-upload-meta,
+      .study-pack-library-meta,
+      .study-pack-weak-sub,
+      .study-pack-note-meta {
+        font-size: 11px;
+        color: var(--text3);
+      }
+
+      .study-pack-library-item,
+      .study-pack-toc-item {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface2);
+        color: var(--text);
+        cursor: pointer;
+        text-align: left;
+        padding: 10px;
+        width: 100%;
+      }
+
+      .study-pack-library-item.active,
+      .study-pack-toc-item.active {
+        border-color: rgba(110,231,183,0.5);
+        background: rgba(110,231,183,0.12);
+      }
+
+      .study-pack-library-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .study-pack-library-main {
+        min-width: 0;
+      }
+
+      .study-pack-library-pill {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+        color: var(--accent);
+      }
+
+      .study-pack-toc-item {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .study-pack-toc-ref {
+        font-size: 10px;
+        letter-spacing: 0.7px;
+        text-transform: uppercase;
+        color: var(--text3);
+      }
+
+      .study-pack-toc-title {
+        font-size: 12px;
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .study-pack-viewer {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .study-pack-viewer-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .study-pack-viewer-meta {
+        font-size: 12px;
+        color: var(--text3);
+      }
+
+      .study-pack-section-card {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--surface2);
+        padding: 14px;
+      }
+
+      .study-pack-section-title {
+        font-size: 15px;
+        font-family: 'Syne', sans-serif;
+        margin-bottom: 4px;
+      }
+
+      .study-pack-section-meta {
+        font-size: 11px;
+        color: var(--text3);
+        margin-bottom: 10px;
+      }
+
+      .study-pack-section-article {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .study-pack-section-summary {
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgba(129,140,248,0.12);
+        border: 1px solid rgba(129,140,248,0.22);
+        font-size: 12px;
+        color: var(--text2);
+      }
+
+      .study-pack-section-text {
+        max-height: 250px;
+        overflow: auto;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+
+      .study-pack-highlight-jump {
+        outline: 2px solid rgba(110,231,183,0.55);
+        border-radius: 8px;
+      }
+
+      .study-pack-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .study-pack-mini-head {
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+
+      .study-pack-quiz-q {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+
+      .study-pack-quiz-q ul {
+        margin: 6px 0 6px 20px;
+      }
+
+      .study-pack-quiz-a {
+        font-size: 11px;
+        color: var(--text3);
+      }
+
+      .study-pack-generated-text {
+        font-size: 13px;
+        line-height: 1.75;
+      }
+
+      .study-pack-empty {
+        font-size: 12px;
+        color: var(--text3);
+        border: 1px dashed var(--border2);
+        border-radius: 8px;
+        padding: 10px;
+      }
+
+      .study-pack-ask-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .study-pack-note-text,
+      .study-pack-weak-text {
+        font-size: 12px;
+        line-height: 1.6;
+      }
+
+      @media (max-width: 1100px) {
+        .study-pack-layout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+
+    <div class="study-pack-layout">
+      <div class="study-pack-stack">
+        <div class="card">
+          <div class="card-title">1) Upload PDFs</div>
+          <div class="form-group">
+            <label class="form-label">Select PDFs (multiple allowed)</label>
+            <input id="studyPackPdfInput" class="input" type="file" accept="application/pdf,.pdf" multiple>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary" id="studyPackUploadBtn">Upload PDFs</button>
+            <button class="btn btn-ghost" id="studyPackClearUploadsBtn">Clear queue</button>
+          </div>
+          <div id="studyPackUploadStatus" style="margin-top:8px;font-size:12px;color:var(--text3);"></div>
+          <div id="studyPackUploadList" class="study-pack-upload-list" style="margin-top:10px;"></div>
         </div>
 
-        <div class="card mb-16">
-          <div class="card-title">Quick Actions</div>
-          <div style="display:flex;gap:10px;flex-wrap:wrap;">
-            <button class="btn btn-secondary" onclick="indexLatestHighlight()">📥 Index Latest Highlight</button>
-            <button class="btn btn-ghost" onclick="navigate('practice')">📝 Open Practice Papers</button>
+        <div class="card">
+          <div class="card-title">2) Create Study Pack</div>
+          <div class="form-group">
+            <label class="form-label">Pack title</label>
+            <input id="studyPackTitleInput" class="input" placeholder="e.g. CS101 Midterms Pack">
           </div>
-          <div style="font-size:12px;color:var(--text3);margin-top:10px;line-height:1.6;">
-            Tip: Save highlights in Active Reading, then use this page to search them semantically and turn them into revision-ready notes.
+          <div class="form-group">
+            <label class="form-label">Description (optional)</label>
+            <input id="studyPackDescInput" class="input" placeholder="e.g. Graphs + DP + Complexity">
           </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-primary" id="studyPackCreateBtn">Create Study Pack</button>
+            <button class="btn btn-secondary" id="studyPackOpenLatestBtn">Open latest</button>
+          </div>
+          <div id="studyPackCreateStatus" style="margin-top:8px;font-size:12px;color:var(--text3);"></div>
         </div>
 
-        <div id="dynamicHighlights"></div>
+        <div class="card">
+          <div class="card-title">Pack Library</div>
+          <div id="studyPackLibraryList" class="study-pack-library"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Weakness Detection</div>
+          <div style="font-size:12px;color:var(--text3);margin-bottom:8px;">
+            If your practice papers show repeated errors, we suggest sections to revise.
+          </div>
+          <div id="studyPackWeaknessList" class="study-pack-weak-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">My Study Pack Notes</div>
+          <div class="study-pack-ask-grid" style="margin-bottom:10px;">
+            <input id="studyPackQuickNoteInput" class="input" placeholder="Write a quick note from this pack...">
+            <button class="btn btn-secondary" id="studyPackQuickNoteBtn">Save note</button>
+          </div>
+          <div id="studyPackMyNotesList" class="study-pack-notes-list"></div>
+        </div>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:16px;">
-        <div class="card">
-          <div class="card-title">Study Notes Snapshot</div>
-          <div class="progress-wrap">
-            <div class="progress-header"><span class="progress-label">Indexed notes coverage</span><span class="progress-val">68%</span></div>
-            <div class="progress-bar"><div class="progress-fill fill-purple" style="width:68%"></div></div>
+      <div class="study-pack-stack">
+        <div class="card study-pack-viewer">
+          <div class="study-pack-viewer-header">
+            <div>
+              <div class="section-title" id="studyPackActiveTitle">Pack Viewer</div>
+              <div class="study-pack-viewer-meta" id="studyPackActiveMeta">Select or create a Study Pack to begin.</div>
+            </div>
+            <button class="btn btn-secondary" onclick="navigate('notes')">+ Add highlight from Active Reading</button>
           </div>
-          <div class="progress-wrap">
-            <div class="progress-header"><span class="progress-label">Weak-topic notes completed</span><span class="progress-val">42%</span></div>
-            <div class="progress-bar"><div class="progress-fill fill-yellow" style="width:42%"></div></div>
-          </div>
-          <div class="progress-wrap" style="margin-bottom:0;">
-            <div class="progress-header"><span class="progress-label">Ready-for-practice topics</span><span class="progress-val">5</span></div>
-            <div class="progress-bar"><div class="progress-fill fill-green" style="width:55%"></div></div>
-          </div>
-        </div>
 
-        <div class="card">
-          <div class="card-title">Recommended Next Step</div>
-          <div class="insight-card" style="margin-bottom:0;">
-            <div class="insight-type">High ROI Revision</div>
-            <div class="insight-text">Review your Graph Theory highlights and run one targeted practice set to close your largest current gap.</div>
-            <div class="insight-action" onclick="navigate('practice')">→ Open Practice Papers</div>
+          <div class="grid-2" style="gap:12px;align-items:start;">
+            <div class="study-pack-section-card">
+              <div class="study-pack-mini-head">Table of Contents (TOC)</div>
+              <div id="studyPackToc" class="study-pack-toc"></div>
+            </div>
+
+            <div class="study-pack-section-card">
+              <div class="study-pack-section-title" id="studyPackSectionTitle">No section selected</div>
+              <div class="study-pack-section-meta" id="studyPackSectionMeta"></div>
+              <div id="studyPackSectionBody"></div>
+            </div>
+          </div>
+
+          <div class="study-pack-section-card">
+            <div class="study-pack-mini-head">Checkpoint Quiz (for selected section)</div>
+            <div class="study-pack-actions" style="margin-bottom:10px;">
+              <button class="btn btn-secondary" id="studyPackCheckpointBtn">Generate checkpoint quiz</button>
+            </div>
+            <div id="studyPackCheckpointPanel"></div>
+          </div>
+
+          <div class="study-pack-section-card">
+            <div class="study-pack-mini-head">AI Tutor — Ask Anything About This Pack (grounded + citations)</div>
+            <div class="study-pack-ask-grid" style="margin-bottom:10px;">
+              <input id="studyPackAskInput" class="input" placeholder="Ask anything about this pack...">
+              <button class="btn btn-primary" id="studyPackAskBtn">Ask Tutor</button>
+            </div>
+            <div class="study-pack-actions" style="margin-bottom:8px;">
+              <button class="btn btn-ghost" id="studyPackCheatsheetBtn">Summarise cheatsheet</button>
+              <button class="btn btn-ghost" id="studyPackTeachBtn">Teach mode (lecture)</button>
+            </div>
+            <div id="studyPackTutorHint" style="font-size:12px;color:var(--text3);"></div>
+          </div>
+
+          <div class="grid-2" style="gap:12px;align-items:start;">
+            <div class="study-pack-section-card">
+              <div class="study-pack-mini-head">Cheatsheet Output</div>
+              <div id="studyPackCheatsheetOutput"></div>
+            </div>
+            <div class="study-pack-section-card">
+              <div class="study-pack-mini-head">Teach Mode Output</div>
+              <div id="studyPackTeachOutput"></div>
+            </div>
           </div>
         </div>
       </div>

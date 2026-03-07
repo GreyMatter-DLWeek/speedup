@@ -116,6 +116,11 @@ Quick health check:
 - `POST /api/user/exam` (auth)
 - `POST /api/user/controls` (auth)
 - `POST /api/explain`
+- `POST /api/tutor/query`
+- `POST /api/study-pack/upload-pdf` (multipart: `pdf`)
+- `POST /api/study-pack/checkpoint-quiz`
+- `POST /api/study-pack/cheatsheet`
+- `POST /api/study-pack/teach-mode`
 - `POST /api/highlight/analyze`
 - `POST /api/rag/index-note`
 - `POST /api/rag/query`
