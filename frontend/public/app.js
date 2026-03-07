@@ -6,7 +6,6 @@ import { initFeature5 } from "./src/feature-modules/feature5.js";
 import { initFeature6 } from "./src/feature-modules/feature6.js";
 import { initFeature7 } from "./src/feature-modules/feature7.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
-import { initFeature9 } from "./src/feature-modules/feature9.js";
 
 const STORAGE_KEY_PREFIX = "speedup_dashboard_reference_v1";
 const STUDENT_ID = "";
@@ -27,8 +26,6 @@ const API = {
   practiceDeleteUploads: "/api/practice/uploads/delete-bulk",
   practiceGenerateQuiz: "/api/practice/generate-quiz",
   practiceGenerateFlashcards: "/api/practice/generate-flashcards",
-  sprintStart: "/api/game/sprint/start",
-  sprintSubmit: "/api/game/sprint/submit",
   explain: "/api/explain",
   tutorQuery: "/api/tutor/query",
   highlightAnalyze: "/api/highlight/analyze",
@@ -78,8 +75,6 @@ const defaultState = {
   notes: {},
   highlights: [],
   practiceUploads: [],
-  sprintCurrent: null,
-  sprintHistory: [],
   examHistory: [],
   responsibleControls: {
     explainability: true,
@@ -152,7 +147,6 @@ const feature5 = initFeature5(ctx);
 const feature6 = initFeature6(ctx);
 const feature7 = initFeature7(ctx);
 const feature8 = initFeature8(ctx);
-const feature9 = initFeature9(ctx);
 const appPath = (p) => (window.toAppPath ? window.toAppPath(p) : p);
 const apiUrl = (p) => (window.toApiUrl ? window.toApiUrl(p) : p);
 
@@ -181,7 +175,6 @@ async function init() {
   feature2.renderFlashcard();
   await feature6.refreshFeature6();
   feature7.initPracticeFeature();
-  feature9.initSprintFeature();
 
   renderTutorPanel();
   feature4.initTimeManagement();
@@ -827,7 +820,7 @@ function inferCurrentPage() {
 
 function mapPageToTutorContext(page) {
   if (page === "study-notes") return "study-notes";
-  if (page === "practice" || page === "sprint") return "practice-papers";
+  if (page === "practice") return "practice-papers";
   return "active-reading";
 }
 
@@ -1696,8 +1689,6 @@ export function bootstrapApp() {
   window.initHeatmap = feature6.initHeatmap;
   window.runRagQuery = feature5.runRagQuery;
   window.indexLatestHighlight = feature5.indexLatestHighlight;
-  window.startSprintChallenge = feature9.startSprintChallenge;
-  window.submitSprintChallenge = feature9.submitSprintChallenge;
   window.openTutorPanel = openTutorPanel;
   window.closeTutorPanel = closeTutorPanel;
   window.dockTutorPanel = dockTutorPanel;

@@ -75,21 +75,6 @@ function normalizeState(uid, state) {
     analysis: normalizeAnalysis(item?.analysis)
   }));
 
-  next.sprintCurrent = normalizeSprintCurrent(next.sprintCurrent);
-  next.sprintHistory = Array.isArray(next.sprintHistory)
-    ? next.sprintHistory.slice(0, 120).map((row) => ({
-      sprintId: String(row?.sprintId || "").slice(0, 120),
-      topic: String(row?.topic || "").slice(0, 140),
-      difficulty: String(row?.difficulty || "").slice(0, 20),
-      total: Number(row?.total || 0),
-      correct: Number(row?.correct || 0),
-      score: Number(row?.score || 0),
-      elapsedSec: Number(row?.elapsedSec || 0),
-      createdAt: String(row?.createdAt || "").slice(0, 40),
-      mistakeBreakdown: normalizeMistakeBreakdown(row?.mistakeBreakdown)
-    }))
-    : [];
-
   return next;
 }
 
@@ -103,35 +88,6 @@ function normalizeAnalysis(analysis) {
     recommendedNextSteps: Array.isArray(a.recommendedNextSteps)
       ? a.recommendedNextSteps.slice(0, 8).map((x) => String(x || "").slice(0, 260))
       : []
-  };
-}
-
-function normalizeSprintCurrent(current) {
-  if (!current || typeof current !== "object") return null;
-  return {
-    sprintId: String(current.sprintId || "").slice(0, 120),
-    topic: String(current.topic || "").slice(0, 140),
-    difficulty: String(current.difficulty || "").slice(0, 20),
-    startedAt: String(current.startedAt || "").slice(0, 40),
-    questions: Array.isArray(current.questions)
-      ? current.questions.slice(0, 10).map((q, i) => ({
-        id: String(q?.id || `q${i + 1}`).slice(0, 30),
-        question: String(q?.question || "").slice(0, 500),
-        options: Array.isArray(q?.options) ? q.options.slice(0, 4).map((v) => String(v || "").slice(0, 180)) : [],
-        answer: String(q?.answer || "").slice(0, 240),
-        explanation: String(q?.explanation || "").slice(0, 600)
-      }))
-      : []
-  };
-}
-
-function normalizeMistakeBreakdown(breakdown) {
-  const safe = breakdown && typeof breakdown === "object" ? breakdown : {};
-  return {
-    concept_gap: Number(safe.concept_gap || 0),
-    careless: Number(safe.careless || 0),
-    time_pressure: Number(safe.time_pressure || 0),
-    misread_question: Number(safe.misread_question || 0)
   };
 }
 
