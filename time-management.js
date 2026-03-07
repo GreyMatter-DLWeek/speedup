@@ -1076,6 +1076,15 @@ function simplifySchoolSubjectLabel(value) {
   return label;
 }
 
+function normalizeSchoolSubjectForImportance(value) {
+  const label = simplifySchoolSubjectLabel(value) || normalizeConceptLabel(value);
+  if (!label) return "";
+  const lowered = String(label).toLowerCase();
+  if (lowered === "school block") return "";
+  if (isGenericPlanningLabel(label)) return "";
+  return label;
+}
+
 function isGenericPlanningLabel(value) {
   const v = String(value || "").toLowerCase().trim();
   if (!v) return true;
@@ -1101,6 +1110,110 @@ function mergeUniqueConcepts(primary, extra, limit = 8) {
     merged.push(label);
   });
   return merged.slice(0, limit);
+}
+
+function buildSubjectImportanceEntries(blocks) {
+  const buckets = new Map();
+
+  (blocks || []).forEach((block) => {
+    const subject = normalizeSchoolSubjectForImportance(block?.subject || "");
+    if (!subject) return;
+
+    const durationMinutes = clampInt(Math.max(15, hourToInt(block?.end) - hourToInt(block?.start)), 15, 480, 60);
+    const key = subject.toLowerCase();
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        subject,
+        weeklyMinutes: 0,
+        blockCount: 0
+      });
+    }
+
+    const bucket = buckets.get(key);
+    bucket.weeklyMinutes += durationMinutes;
+    bucket.blockCount += 1;
+  });
+
+  const rows = [...buckets.values()].sort((a, b) => {
+    if (b.weeklyMinutes !== a.weeklyMinutes) return b.weeklyMinutes - a.weeklyMinutes;
+    if (b.blockCount !== a.blockCount) return b.blockCount - a.blockCount;
+    return a.subject.localeCompare(b.subject);
+  });
+
+  const totalMinutes = rows.reduce((sum, row) => sum + Number(row.weeklyMinutes || 0), 0);
+  return rows.map((row) => ({
+    ...row,
+    importanceRatio: totalMinutes > 0 ? Number((row.weeklyMinutes / totalMinutes).toFixed(4)) : 0,
+    importanceScore: totalMinutes > 0 ? Math.max(1, Math.round((row.weeklyMinutes * 100) / totalMinutes)) : 0
+  }));
+}
+
+function mapSubjectImportanceRow(row) {
+  return {
+    studentId: row.student_id,
+    weekStart: row.week_start,
+    subject: row.subject,
+    weeklyMinutes: Number(row.weekly_minutes || 0),
+    blockCount: Number(row.block_count || 0),
+    importanceRatio: Number(row.importance_ratio || 0),
+    importanceScore: Number(row.importance_score || 0),
+    updatedAt: row.updated_at
+  };
+}
+
+async function saveSubjectImportanceForWeek(db, studentId, weekStart, blocks) {
+  const normalizedWeekStart = normalizeWeekStart(weekStart);
+  await run(
+    db,
+    `DELETE FROM timetable_subject_importance WHERE student_id = ? AND week_start = ?`,
+    [studentId, normalizedWeekStart]
+  );
+
+  const entries = buildSubjectImportanceEntries(blocks);
+  if (!entries.length) return [];
+
+  const now = nowIso();
+  for (const entry of entries) {
+    await run(
+      db,
+      `INSERT INTO timetable_subject_importance (
+        student_id, week_start, subject, weekly_minutes, block_count, importance_ratio, importance_score, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        studentId,
+        normalizedWeekStart,
+        entry.subject,
+        entry.weeklyMinutes,
+        entry.blockCount,
+        entry.importanceRatio,
+        entry.importanceScore,
+        now
+      ]
+    );
+  }
+
+  return entries;
+}
+
+async function saveSubjectImportanceForWeeks(db, studentId, weeklyBlocks) {
+  await run(db, `DELETE FROM timetable_subject_importance WHERE student_id = ?`, [studentId]);
+
+  const weeks = Object.keys(weeklyBlocks || {});
+  if (!weeks.length) return;
+
+  for (const weekStartRaw of weeks) {
+    const weekStart = normalizeWeekStart(weekStartRaw);
+    await saveSubjectImportanceForWeek(db, studentId, weekStart, weeklyBlocks[weekStartRaw] || []);
+  }
+}
+
+async function loadSubjectImportanceForWeek(db, studentId, weekStart) {
+  const rows = await all(
+    db,
+    `SELECT * FROM timetable_subject_importance WHERE student_id = ? AND week_start = ? ORDER BY importance_score DESC, weekly_minutes DESC, subject ASC`,
+    [studentId, normalizeWeekStart(weekStart)]
+  );
+  return rows.map(mapSubjectImportanceRow);
 }
 
 function extractSchoolSubjectSignals(profile) {
@@ -1812,6 +1925,26 @@ async function ensureSchema(db) {
       PRIMARY KEY (student_id, week_start)
     )`
   );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS timetable_subject_importance (
+      student_id TEXT NOT NULL,
+      week_start TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      weekly_minutes INTEGER NOT NULL DEFAULT 0,
+      block_count INTEGER NOT NULL DEFAULT 0,
+      importance_ratio REAL NOT NULL DEFAULT 0,
+      importance_score INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (student_id, week_start, subject)
+    )`
+  );
+
+  await run(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_timetable_subject_importance_student_week ON timetable_subject_importance(student_id, week_start)`
+  );
 }
 
 async function getProfile(db, studentId) {
@@ -1901,6 +2034,7 @@ async function fetchWeekState(db, studentId, weekStart) {
     schoolBlocks: schoolBlocksForWeek
   };
   await syncSchoolTimetableForWeek(db, studentId, weekStart, profileForWeek, schoolBlocksForWeek);
+  await saveSubjectImportanceForWeek(db, studentId, weekStart, schoolBlocksForWeek);
   const taskRows = await all(
     db,
     `SELECT * FROM timetable_tasks WHERE student_id = ? AND week_start = ? ORDER BY priority DESC, created_at ASC`,
@@ -1921,11 +2055,13 @@ async function fetchWeekState(db, studentId, weekStart) {
   const slots = slotRows.map(mapSlotRow);
   const stats = computeStats(tasks, slots, profileForWeek);
   const agenda = buildAgenda(weekStart, tasks, slots);
+  const subjectImportance = await loadSubjectImportanceForWeek(db, studentId, weekStart);
 
   return {
     studentId,
     weekStart,
     profile: profileForWeek,
+    subjectImportance,
     tasks,
     slots,
     stats,
@@ -2254,6 +2390,13 @@ function registerTimeManagementRoutes(app, deps) {
       await schemaReady;
       const studentId = getStudentId(req);
       const profile = await saveProfile(db, studentId, req.body || {});
+      const raw = req.body || {};
+      const hasSchoolBlocksInput = Object.prototype.hasOwnProperty.call(raw, "schoolBlocks")
+        || Object.prototype.hasOwnProperty.call(raw, "schoolBlocksText");
+      if (hasSchoolBlocksInput) {
+        const weekStart = normalizeWeekStart(raw.weekStart || req.query?.weekStart);
+        await saveSubjectImportanceForWeek(db, studentId, weekStart, profile.schoolBlocks || []);
+      }
       res.json({ ok: true, studentId, profile, updatedAt: nowIso() });
     } catch (error) {
       handleRouteError(res, "Failed to save time management profile", error);
@@ -2318,6 +2461,11 @@ function registerTimeManagementRoutes(app, deps) {
       });
 
       await saveSchoolWeekBlocks(db, studentId, weeklyBlocks, parsed.fileType || "ics");
+      await saveSubjectImportanceForWeeks(
+        db,
+        studentId,
+        hasWeeklyBlocks ? weeklyBlocks : { [weekStart]: selectedWeekBlocks }
+      );
       await syncSchoolTimetableForWeek(db, studentId, weekStart, profile, selectedWeekBlocks);
       const state = await fetchWeekState(db, studentId, weekStart);
       return res.json({
