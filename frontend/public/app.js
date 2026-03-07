@@ -77,7 +77,7 @@ const defaultState = {
   practiceUploads: [],
   examHistory: [],
   responsibleControls: {
-    explainability: true,
+    conceptMasteryDetection: true,
     personalization: true,
     decayModeling: true,
     errorTypeDetection: true,
@@ -658,8 +658,17 @@ function initResponsibleAiPage() {
   const page = document.getElementById("page-responsible");
   if (!page) return;
 
+  // Backward compatibility: map older "explainability" setting into concept mastery detection.
+  const existingControls = runtime.state.responsibleControls || {};
+  if (
+    typeof existingControls.conceptMasteryDetection !== "boolean"
+    && typeof existingControls.explainability === "boolean"
+  ) {
+    existingControls.conceptMasteryDetection = Boolean(existingControls.explainability);
+  }
+
   const defaultControls = structuredClone(defaultState.responsibleControls || {});
-  runtime.state.responsibleControls = mergeDeep(defaultControls, runtime.state.responsibleControls || {});
+  runtime.state.responsibleControls = mergeDeep(defaultControls, existingControls);
   renderResponsibleControls();
 
   if (!page.dataset.responsibleBound) {

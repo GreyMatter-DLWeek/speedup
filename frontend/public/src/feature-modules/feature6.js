@@ -492,7 +492,21 @@ function buildMasteryTrend(runtime, topics, overallMastery) {
   };
 }
 
-function buildStatsPayload(state, tmState, topics, overallMastery) {
+function resolveResponsibleControls(state) {
+  const controls = state?.responsibleControls || {};
+  const conceptMasteryDetection = typeof controls.conceptMasteryDetection === "boolean"
+    ? controls.conceptMasteryDetection
+    : (typeof controls.explainability === "boolean" ? controls.explainability : true);
+
+  return {
+    conceptMasteryDetection,
+    personalization: controls.personalization !== false,
+    decayModeling: controls.decayModeling !== false,
+    errorTypeDetection: controls.errorTypeDetection !== false
+  };
+}
+
+function buildStatsPayload(state, tmState, topics, overallMastery, controls) {
   const previousMastery = getPreviousMastery(state, overallMastery);
   const masteryDelta = toInt(overallMastery - previousMastery);
   const dailyMinutes = buildMinutesTimeline(state, tmState);
@@ -528,14 +542,18 @@ function buildStatsPayload(state, tmState, topics, overallMastery) {
     progress: {
       levelValue: `Lv.${level}`,
       levelChange: streakData.streakDays > 0 ? `↑ ${streakData.streakDays} day streak` : "→ No streak yet",
-      masteredValue: String(masteredCount),
-      masteredChange: `→ ${masteredCount} at 70%+ mastery`,
-      gapsValue: String(weakCount),
-      gapsChange: `→ ${criticalWeak} critical`,
-      decayValue: `${streakData.confidenceDecayPct}%`,
-      decayChange: streakData.inactivityDays > 0
-        ? `↓ ${streakData.inactivityDays} day inactivity`
-        : "↑ No inactivity gap"
+      masteredValue: controls.conceptMasteryDetection ? String(masteredCount) : "Off",
+      masteredChange: controls.conceptMasteryDetection
+        ? `→ ${masteredCount} at 70%+ mastery`
+        : "→ Enable concept mastery detection",
+      gapsValue: controls.errorTypeDetection ? String(weakCount) : "Off",
+      gapsChange: controls.errorTypeDetection
+        ? `→ ${criticalWeak} critical`
+        : "→ Enable careless vs gap detection",
+      decayValue: controls.decayModeling ? `${streakData.confidenceDecayPct}%` : "Off",
+      decayChange: controls.decayModeling
+        ? (streakData.inactivityDays > 0 ? `↓ ${streakData.inactivityDays} day inactivity` : "↑ No inactivity gap")
+        : "→ Enable mastery decay modeling"
     },
     streak: streakData,
     dailyMinutes
@@ -723,6 +741,7 @@ export function initFeature6(ctx) {
 
   function buildModel(tmState) {
     const state = runtime.state || {};
+    const responsibleControls = resolveResponsibleControls(state);
     const topics = Array.isArray(state.topics)
       ? state.topics.filter((topic) => normalizeTopicName(topic?.name))
       : [];
@@ -734,8 +753,10 @@ export function initFeature6(ctx) {
     if (seeded || updated) scheduleSave();
 
     const weeklyMinutes = buildWeeklyMinutes(tmState || {});
-    const errorBreakdown = computeErrorBreakdown(state);
-    const stats = buildStatsPayload(state, tmState || {}, topics, overallMastery);
+    const errorBreakdown = responsibleControls.personalization
+      ? computeErrorBreakdown(state)
+      : { carelessCount: 0, knowledgeCount: 0, carelessPct: 0, knowledgePct: 0 };
+    const stats = buildStatsPayload(state, tmState || {}, topics, overallMastery, responsibleControls);
     const recentActivities = buildRecentActivities(state, tmState || {});
     const topicBreakdown = buildTopicBreakdown(topics);
     const masteryTrend = buildMasteryTrend(runtime, topics, overallMastery);
@@ -748,6 +769,7 @@ export function initFeature6(ctx) {
       masteryTrend,
       dashboardStats: stats.dashboard,
       progressStats: stats.progress,
+      responsibleControls,
       recentActivities,
       dailyMinutes: stats.dailyMinutes
     };
@@ -892,6 +914,17 @@ export function initFeature6(ctx) {
     const gapLabel = document.getElementById("progress-gap-label");
     const carelessLabel = document.getElementById("progress-careless-label");
     if (!canvas) return;
+
+    const personalizationEnabled = model.responsibleControls?.personalization !== false;
+    if (!personalizationEnabled) {
+      if (centerValue) centerValue.textContent = "Off";
+      if (gapLabel) gapLabel.textContent = "Off — Knowledge Gaps";
+      if (carelessLabel) carelessLabel.textContent = "Off — Careless Mistakes";
+      destroyChart("errorBreakdown");
+      const ctx2d = canvas.getContext("2d");
+      ctx2d?.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
 
     const gapPct = model.errorBreakdown.knowledgePct;
     const carelessPct = model.errorBreakdown.carelessPct;
