@@ -542,6 +542,86 @@ function buildStatsPayload(state, tmState, topics, overallMastery) {
   };
 }
 
+function getStudentDisplayName(runtime) {
+  const raw = String(runtime?.state?.student?.name || "").trim();
+  if (!raw) return "Student";
+  return raw.split(/\s+/)[0] || "Student";
+}
+
+function getGreetingPrefix(date = new Date()) {
+  const hour = date.getHours();
+  if (hour < 12) return "morning";
+  if (hour < 18) return "afternoon";
+  return "evening";
+}
+
+function buildDashboardHeader(runtime, tmState) {
+  const now = new Date();
+  const name = getStudentDisplayName(runtime);
+  const profile = tmState?.profile || {};
+  const dates = Array.isArray(profile.examDates) ? profile.examDates : [];
+  const nearest = dates
+    .map((value) => ({
+      raw: value,
+      date: parseDate(`${value}T00:00:00`)
+    }))
+    .filter((item) => item.date && Number.isFinite(item.date.getTime()))
+    .sort((a, b) => a.date - b.date)
+    .find((item) => item.date >= new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+
+  const dayLabel = now.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+  let examText = "No exam dates set";
+
+  if (nearest) {
+    const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startExam = new Date(nearest.date.getFullYear(), nearest.date.getMonth(), nearest.date.getDate());
+    const diffDays = Math.round((startExam - startToday) / 86400000);
+    if (diffDays <= 0) examText = "Exam day";
+    else if (diffDays === 1) examText = "Exam in 1 day";
+    else examText = `Exam in ${diffDays} days`;
+  }
+
+  return {
+    title: `Good ${getGreetingPrefix(now)}, ${name} 👋`,
+    sub: `${dayLabel} · ${examText}`
+  };
+}
+
+function buildDashboardInsights(topics, tmState, weeklyMinutes) {
+  const sortedTopics = topics
+    .slice()
+    .sort((a, b) => Number(b?.weakScore || 0) - Number(a?.weakScore || 0));
+
+  const weakest = sortedTopics[0] || null;
+  const weakMastery = weakest ? getMasteryFromTopic(weakest) : 0;
+
+  const primary = weakest
+    ? {
+      type: weakMastery < 50 ? "Knowledge Gap Detected" : "Reinforcement Suggested",
+      text: `${normalizeTopicName(weakest.name)} is at ${toInt(weakMastery)}% mastery (weak score ${toInt(weakest.weakScore || 0)}). Prioritize this concept in your next focused session.`
+    }
+    : {
+      type: "Baseline Building",
+      text: "No topic weakness data yet. Complete a practice analysis or tutor session to unlock targeted gap insights."
+    };
+
+  const profile = tmState?.profile || {};
+  const productiveHours = Array.isArray(profile.productiveHours) ? profile.productiveHours : [];
+  const weeklyGoalHours = clamp(profile.weeklyGoalsHours || 14, 1, 60);
+  const plannedMinutes = weeklyMinutes.reduce((sum, item) => sum + toInt(item.minutes), 0);
+  const plannedHours = Number((plannedMinutes / 60).toFixed(1));
+  const remainingHours = Math.max(0, Number((weeklyGoalHours - plannedHours).toFixed(1)));
+
+  const secondary = {
+    type: plannedHours >= weeklyGoalHours ? "Goal Coverage On Track" : "Goal Coverage Gap",
+    text: plannedHours >= weeklyGoalHours
+      ? `Your weekly timetable covers ${plannedHours}h against a ${weeklyGoalHours}h goal. Keep sessions aligned to productive windows: ${productiveHours.join(" and ") || "not set"}.`
+      : `Your timetable currently covers ${plannedHours}h of ${weeklyGoalHours}h. Add ${remainingHours}h in productive windows (${productiveHours.join(" and ") || "set your productive hours"}) to stay on target.`
+  };
+
+  return { primary, secondary };
+}
+
 function getChartCtor() {
   return typeof window !== "undefined" ? window.Chart : null;
 }
@@ -550,6 +630,25 @@ function setStatChangeClass(el, tone) {
   if (!el) return;
   el.classList.remove("up", "down", "neutral");
   el.classList.add(tone || "neutral");
+}
+
+function renderDashboardHeader(header) {
+  const title = document.getElementById("dashboard-greeting-title");
+  const sub = document.getElementById("dashboard-greeting-sub");
+  if (title && header?.title) title.textContent = header.title;
+  if (sub && header?.sub) sub.textContent = header.sub;
+}
+
+function renderDashboardInsights(insights) {
+  const primaryType = document.getElementById("dashboard-insight-primary-type");
+  const primaryText = document.getElementById("dashboard-insight-primary-text");
+  const secondaryType = document.getElementById("dashboard-insight-secondary-type");
+  const secondaryText = document.getElementById("dashboard-insight-secondary-text");
+
+  if (primaryType && insights?.primary?.type) primaryType.textContent = insights.primary.type;
+  if (primaryText && insights?.primary?.text) primaryText.textContent = insights.primary.text;
+  if (secondaryType && insights?.secondary?.type) secondaryType.textContent = insights.secondary.type;
+  if (secondaryText && insights?.secondary?.text) secondaryText.textContent = insights.secondary.text;
 }
 
 function renderDashboardStats(stats) {
@@ -722,6 +821,7 @@ export function initFeature6(ctx) {
   }
 
   function buildModel(tmState) {
+    const safeTmState = tmState || {};
     const state = runtime.state || {};
     const topics = Array.isArray(state.topics)
       ? state.topics.filter((topic) => normalizeTopicName(topic?.name))
@@ -733,12 +833,14 @@ export function initFeature6(ctx) {
     const updated = upsertTodaySnapshot(runtime, topics, overallMastery);
     if (seeded || updated) scheduleSave();
 
-    const weeklyMinutes = buildWeeklyMinutes(tmState || {});
+    const weeklyMinutes = buildWeeklyMinutes(safeTmState);
     const errorBreakdown = computeErrorBreakdown(state);
-    const stats = buildStatsPayload(state, tmState || {}, topics, overallMastery);
-    const recentActivities = buildRecentActivities(state, tmState || {});
+    const stats = buildStatsPayload(state, safeTmState, topics, overallMastery);
+    const recentActivities = buildRecentActivities(state, safeTmState);
     const topicBreakdown = buildTopicBreakdown(topics);
     const masteryTrend = buildMasteryTrend(runtime, topics, overallMastery);
+    const dashboardHeader = buildDashboardHeader(runtime, safeTmState);
+    const dashboardInsights = buildDashboardInsights(topics, safeTmState, weeklyMinutes);
 
     return {
       weeklyMinutes,
@@ -746,6 +848,8 @@ export function initFeature6(ctx) {
       subjectMastery,
       topicBreakdown,
       masteryTrend,
+      dashboardHeader,
+      dashboardInsights,
       dashboardStats: stats.dashboard,
       progressStats: stats.progress,
       recentActivities,
@@ -934,6 +1038,8 @@ export function initFeature6(ctx) {
   }
 
   function renderAll(model) {
+    renderDashboardHeader(model.dashboardHeader);
+    renderDashboardInsights(model.dashboardInsights);
     renderDashboardStats(model.dashboardStats);
     renderSubjectMastery(model.subjectMastery);
     renderRecentActivity(model.recentActivities);

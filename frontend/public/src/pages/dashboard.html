@@ -1,8 +1,8 @@
     <div id="page-dashboard" class="page active">
       <div class="topbar">
         <div>
-          <div class="topbar-title">Good morning, Alex 👋</div>
-          <div class="topbar-sub">Monday, March 2 · Finals in 18 days</div>
+          <div class="topbar-title" id="dashboard-greeting-title">Good morning 👋</div>
+          <div class="topbar-sub" id="dashboard-greeting-sub">Loading your study summary…</div>
         </div>
         <div class="topbar-actions">
           <button class="btn btn-secondary" onclick="navigate('timetable')">📅 Today's Plan</button>
@@ -77,8 +77,8 @@
             <div class="card">
               <div class="card-title">AI Insights</div>
               <div class="insight-card">
-                <div class="insight-type">Knowledge Gap Detected</div>
-                <div class="insight-text">You've answered 7/10 Discrete Math questions incorrectly across 3 sessions — this is a genuine gap, not careless errors.</div>
+                <div class="insight-type" id="dashboard-insight-primary-type">Knowledge Gap Detected</div>
+                <div class="insight-text" id="dashboard-insight-primary-text">Analyzing your current study signals…</div>
                 <div class="insight-action" onclick="navigate('recommendations')">→ Get study plan</div>
                 <div class="feedback-row">
                   <span class="feedback-label">Accurate?</span>
@@ -87,8 +87,8 @@
                 </div>
               </div>
               <div class="insight-card" style="background:linear-gradient(135deg,rgba(251,191,36,0.08),rgba(244,114,182,0.05));border-color:rgba(251,191,36,0.15);">
-                <div class="insight-type" style="color:var(--accent4)">Optimal Study Window</div>
-                <div class="insight-text">Based on your past 30 sessions, you perform best on weekdays 9–11 AM and 8–10 PM. Today's 3 PM slot may be suboptimal.</div>
+                <div class="insight-type" id="dashboard-insight-secondary-type" style="color:var(--accent4)">Optimal Study Window</div>
+                <div class="insight-text" id="dashboard-insight-secondary-text">Checking timetable alignment with your productive hours…</div>
                 <div class="insight-action" style="color:var(--accent4)" onclick="openModal('reschedule')">→ Reschedule session</div>
                 <div class="feedback-row">
                   <span class="feedback-label">Accurate?</span>
