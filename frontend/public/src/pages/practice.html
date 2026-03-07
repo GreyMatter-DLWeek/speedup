@@ -58,6 +58,8 @@
     .upload-card-title { font-size: 14px; font-weight: 700; color: var(--text); }
     .upload-card-meta { font-size: 12px; color: var(--text3); margin-top: 2px; }
     .upload-card.active { border-color: var(--accent); background: rgba(110,231,183,0.06); }
+    .upload-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+    .upload-toolbar .hint { font-size:12px; color:var(--text3); margin-left:auto; }
     @media (max-width: 1100px) {
       .practice-grid { grid-template-columns: 1fr; }
       .practice-hero h2 { font-size: 24px; }
@@ -168,6 +170,12 @@
         <section class="practice-panel">
           <h3>Uploaded Sources</h3>
           <p class="sub">Select any uploaded file as generation context</p>
+          <div class="upload-toolbar">
+            <button id="selectAllUploadsBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Select All</button>
+            <button id="clearUploadSelectionBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Clear</button>
+            <button id="deleteSelectedUploadsBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;color:var(--danger);border-color:rgba(248,113,113,0.35);">Delete Selected</button>
+            <span id="uploadSelectionCount" class="hint">0 selected</span>
+          </div>
           <div id="uploadedPapersList"></div>
           <div id="practiceInsights" class="practice-output" style="min-height:100px;max-height:160px;">Upload and analyze a paper to generate learning signals.</div>
         </section>

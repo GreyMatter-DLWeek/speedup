@@ -7,7 +7,7 @@ import { initFeature6 } from "./src/feature-modules/feature6.js";
 import { initFeature7 } from "./src/feature-modules/feature7.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
 
-const STORAGE_KEY = "speedup_dashboard_reference_v1";
+const STORAGE_KEY_PREFIX = "speedup_dashboard_reference_v1";
 const STUDENT_ID = "";
 const SIDEBAR_ORDER_KEY = "speedup_sidebar_order_v1";
 
@@ -21,6 +21,9 @@ const API = {
   userControls: "/api/user/controls",
   userExam: "/api/user/exam",
   practiceAnalyze: "/api/practice/analyze",
+  practiceUploads: "/api/practice/uploads",
+  practiceUpload: (uploadId) => `/api/practice/uploads/${encodeURIComponent(uploadId)}`,
+  practiceDeleteUploads: "/api/practice/uploads/delete-bulk",
   practiceGenerateQuiz: "/api/practice/generate-quiz",
   practiceGenerateFlashcards: "/api/practice/generate-flashcards",
   explain: "/api/explain",
@@ -99,7 +102,7 @@ const modals = {
 };
 
 const runtime = {
-  state: loadLocalState(),
+  state: structuredClone(defaultState),
   cloudServices: { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false },
   highlightMode: false,
   currentParagraphId: 1,
@@ -1035,13 +1038,13 @@ function buildTutorContext(type) {
 
   if (resolvedType === "practice-papers") {
     const uploads = Array.isArray(runtime.state.practiceUploads) ? runtime.state.practiceUploads : [];
-    const selectedIdx = Number(document.getElementById("quizSourceSelect")?.value || 0);
-    const selected = uploads[selectedIdx] || uploads[0] || null;
+    const selectedValue = String(document.getElementById("quizSourceSelect")?.value || "");
+    const selected = uploads.find((u) => String(u?.uploadId || "") === selectedValue) || uploads[0] || null;
     const sourceName = selected?.name || "Practice Paper";
     const questionText = selected?.analysis?.summary || selected?.sourceTextSnippet || "Current question context not selected.";
     const markingScheme = (selected?.analysis?.recommendedNextSteps || []).join(" ");
     const linkedNote = highlights[0]?.summary || "";
-    const questionId = `Q${Math.max(1, selectedIdx + 1)}`;
+    const questionId = selected ? String(selected.uploadId || "Q1") : "Q1";
     return {
       contextType: "practice-papers",
       details: { sourceName, questionId },
@@ -1373,30 +1376,32 @@ async function persistStateToBackend() {
 }
 
 function stateStorageKeyFor(uid = "") {
-  const token = String(uid || "").trim();
-  return token ? `${STORAGE_KEY}:${token}` : STORAGE_KEY;
+  const safeUid = String(uid || "").trim();
+  return safeUid ? `${STORAGE_KEY_PREFIX}:${safeUid}` : STORAGE_KEY_PREFIX;
 }
 
 function saveLocalState(uid = "") {
-  const key = stateStorageKeyFor(uid);
-  localStorage.setItem(key, JSON.stringify(runtime.state));
+  localStorage.setItem(stateStorageKeyFor(uid), JSON.stringify(runtime.state));
 }
 
-function loadLocalState(uid = "") {
+function loadLocalStateForUser(uid) {
   try {
-    const scopedKey = stateStorageKeyFor(uid);
-    const scopedRaw = localStorage.getItem(scopedKey);
+    const scopedRaw = localStorage.getItem(stateStorageKeyFor(uid));
     if (scopedRaw) return mergeDeep(structuredClone(defaultState), JSON.parse(scopedRaw));
 
     if (!uid) return structuredClone(defaultState);
 
-    // Legacy fallback for installs that used a single global key.
-    const legacyRaw = localStorage.getItem(STORAGE_KEY);
+    // Legacy fallback for installs that used a shared single key.
+    const legacyRaw = localStorage.getItem(STORAGE_KEY_PREFIX);
     if (!legacyRaw) return structuredClone(defaultState);
     return mergeDeep(structuredClone(defaultState), JSON.parse(legacyRaw));
   } catch {
     return structuredClone(defaultState);
   }
+}
+
+function loadLocalState(uid = "") {
+  return loadLocalStateForUser(uid);
 }
 
 function mergeDeep(target, source) {
@@ -1444,10 +1449,13 @@ async function ensureAuthenticated() {
       window.location.replace(appPath("/login.html"));
       return false;
     }
-    runtime.state = loadLocalState(user.uid || "");
     runtime.authUser = user;
+    // Load a user-scoped local cache to avoid cross-account state leakage.
+    runtime.state = loadLocalStateForUser(user.uid);
     runtime.state.student.id = user.uid || runtime.state.student.id || "";
     if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
+    // Cleanup legacy shared key once user-scoped storage is active.
+    localStorage.removeItem(STORAGE_KEY_PREFIX);
     authClient.onAuthChanged((nextUser) => {
       if (!nextUser) window.location.replace(appPath("/login.html"));
     });
