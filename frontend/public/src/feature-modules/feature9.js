@@ -125,9 +125,7 @@ export function initFeature9(ctx) {
       sprintStartedMs = Date.now();
       renderMetaRow();
       renderQuestions();
-      setStatus(out?.persisted === false
-        ? "Sprint started (session mode). Submit to get scoring, persistence may be delayed."
-        : "Sprint started. Answer all questions then submit.");
+      setStatus("Sprint started. Answer all questions then submit.");
       const submitBtn = document.getElementById("sprintSubmitBtn");
       if (submitBtn) submitBtn.disabled = false;
       scheduleSave();
@@ -150,10 +148,7 @@ export function initFeature9(ctx) {
       const out = await apiPost(API.sprintSubmit, {
         sprintId: currentSprint.sprintId,
         answers: payloadAnswers,
-        elapsedSec,
-        topic: currentSprint.topic,
-        difficulty: currentSprint.difficulty,
-        questions: currentSprint.questions
+        elapsedSec
       });
       const result = out?.result || {};
       runtime.state.sprintHistory = Array.isArray(runtime.state.sprintHistory) ? runtime.state.sprintHistory : [];
@@ -178,9 +173,7 @@ export function initFeature9(ctx) {
       if (attemptWrap) attemptWrap.style.display = "none";
       const submitBtn = document.getElementById("sprintSubmitBtn");
       if (submitBtn) submitBtn.disabled = true;
-      setStatus(out?.persisted === false
-        ? `Sprint completed: ${Number(result.score || 0)}% (session mode)`
-        : `Sprint completed: ${Number(result.score || 0)}%`);
+      setStatus(`Sprint completed: ${Number(result.score || 0)}%`);
       scheduleSave();
       logAudit(`Sprint submitted (${result.topic || "topic"}, ${Number(result.score || 0)}%).`);
     } catch (error) {

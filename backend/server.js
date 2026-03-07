@@ -998,12 +998,15 @@ app.post("/api/game/sprint/start", requireFirebaseAuth, withRateLimit("sprint_st
     const count = Math.max(3, Math.min(10, Number(req.body?.count || 5)));
     const sourceText = buildSprintSourceText(state, topic);
 
-    const safeSourceText = sourceText && sourceText.length >= 40
-      ? sourceText
-      : `Core revision focus for ${topic}. Explain key definitions, solve one example, and identify one common mistake.`;
+    if (!sourceText || sourceText.length < 40) {
+      return res.status(400).json({
+        error: "Not enough source context for sprint generation.",
+        hint: "Upload and analyze at least one practice source, or add notes/highlights for this topic."
+      });
+    }
 
     const quiz = await generateQuizForSource({
-      sourceText: safeSourceText,
+      sourceText,
       difficulty,
       questionType: "mixed",
       numQuestions: count
@@ -1027,16 +1030,10 @@ app.post("/api/game/sprint/start", requireFirebaseAuth, withRateLimit("sprint_st
     state.auditLog = Array.isArray(state.auditLog) ? state.auditLog : [];
     state.auditLog.push({ ts: new Date().toISOString(), message: `Sprint started: ${topic} (${count} questions)` });
     state.auditLog = state.auditLog.slice(-300);
-    let persisted = true;
-    try {
-      await setUserState(uid, state);
-    } catch {
-      persisted = false;
-    }
+    await setUserState(uid, state);
 
     return res.json({
       ok: true,
-      persisted,
       sprint: {
         sprintId,
         topic,
@@ -1060,25 +1057,7 @@ app.post("/api/game/sprint/submit", requireFirebaseAuth, withRateLimit("sprint_s
 
     const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
     const current = state.sprintCurrent && typeof state.sprintCurrent === "object" ? state.sprintCurrent : null;
-    const clientQuestions = Array.isArray(req.body?.questions) ? req.body.questions : [];
-    const fallbackQuestions = clientQuestions.map((q, i) => ({
-      id: cleanText(q?.id, 30) || `q${i + 1}`,
-      question: cleanText(q?.question, 400),
-      options: Array.isArray(q?.options) ? q.options.slice(0, 4).map((v) => cleanText(v, 180)) : [],
-      answer: cleanText(q?.answer, 220),
-      explanation: cleanText(q?.explanation, 400)
-    })).filter((q) => q.question && q.answer);
-    const workingSprint = (current && String(current.sprintId) === sprintId)
-      ? current
-      : (fallbackQuestions.length
-        ? {
-          sprintId,
-          topic: cleanText(req.body?.topic, 120) || "General Revision",
-          difficulty: normalizeDifficulty(req.body?.difficulty),
-          questions: fallbackQuestions
-        }
-        : null);
-    if (!workingSprint) {
+    if (!current || String(current.sprintId) !== sprintId) {
       return res.status(400).json({ error: "Sprint session not found. Start a new sprint first." });
     }
 
@@ -1089,7 +1068,7 @@ app.post("/api/game/sprint/submit", requireFirebaseAuth, withRateLimit("sprint_s
       answerMap.set(qid, cleanText(row?.answer, 300));
     });
 
-    const checks = (workingSprint.questions || []).map((q) => {
+    const checks = (current.questions || []).map((q) => {
       const userAnswer = answerMap.get(String(q.id)) || "";
       const expected = cleanText(q.answer, 220).toLowerCase();
       const actual = cleanText(userAnswer, 220).toLowerCase();
@@ -1110,13 +1089,13 @@ app.post("/api/game/sprint/submit", requireFirebaseAuth, withRateLimit("sprint_s
     const total = checks.length || 1;
     const score = Math.round((correctCount / total) * 100);
     const breakdown = buildMistakeBreakdown(checks);
-    const coaching = await buildSprintCoaching(workingSprint.topic, checks);
+    const coaching = await buildSprintCoaching(current.topic, checks);
 
     state.sprintHistory = Array.isArray(state.sprintHistory) ? state.sprintHistory : [];
     state.sprintHistory.unshift({
       sprintId,
-      topic: workingSprint.topic,
-      difficulty: workingSprint.difficulty,
+      topic: current.topic,
+      difficulty: current.difficulty,
       total,
       correct: correctCount,
       score,
@@ -1129,20 +1108,14 @@ app.post("/api/game/sprint/submit", requireFirebaseAuth, withRateLimit("sprint_s
     state.auditLog = Array.isArray(state.auditLog) ? state.auditLog : [];
     state.auditLog.push({ ts: new Date().toISOString(), message: `Sprint submitted: ${current.topic} (${score}%)` });
     state.auditLog = state.auditLog.slice(-300);
-    let persisted = true;
-    try {
-      await setUserState(uid, state);
-    } catch {
-      persisted = false;
-    }
+    await setUserState(uid, state);
 
     return res.json({
       ok: true,
-      persisted,
       result: {
         sprintId,
-        topic: workingSprint.topic,
-        difficulty: workingSprint.difficulty,
+        topic: current.topic,
+        difficulty: current.difficulty,
         score,
         correct: correctCount,
         total,
