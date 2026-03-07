@@ -7,7 +7,7 @@ import { initFeature6 } from "./src/feature-modules/feature6.js";
 import { initFeature7 } from "./src/feature-modules/feature7.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
 
-const STORAGE_KEY = "speedup_dashboard_reference_v1";
+const STORAGE_KEY_PREFIX = "speedup_dashboard_reference_v1";
 const STUDENT_ID = "";
 const SIDEBAR_ORDER_KEY = "speedup_sidebar_order_v1";
 
@@ -100,7 +100,7 @@ const modals = {
 };
 
 const runtime = {
-  state: loadLocalState(),
+  state: structuredClone(defaultState),
   cloudServices: { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false },
   highlightMode: false,
   currentParagraphId: 1,
@@ -1222,7 +1222,7 @@ async function hydrateStateFromBackend() {
     runtime.state = mergeDeep(structuredClone(defaultState), remote.state || {});
     if (runtime.authUser?.uid) runtime.state.student.id = runtime.authUser.uid;
     if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email.split("@")[0];
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(runtime.state));
+    localStorage.setItem(getStateStorageKey(runtime.authUser?.uid), JSON.stringify(runtime.state));
     logAudit("Loaded user state from backend.");
   } catch {
     logAudit("User state unavailable. Using local state.");
@@ -1230,7 +1230,7 @@ async function hydrateStateFromBackend() {
 }
 
 function scheduleSave() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(runtime.state));
+  localStorage.setItem(getStateStorageKey(runtime.authUser?.uid), JSON.stringify(runtime.state));
   persistStateToBackend();
 }
 
@@ -1242,14 +1242,19 @@ async function persistStateToBackend() {
   }
 }
 
-function loadLocalState() {
+function loadLocalStateForUser(uid) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(getStateStorageKey(uid));
     if (!raw) return structuredClone(defaultState);
     return mergeDeep(structuredClone(defaultState), JSON.parse(raw));
   } catch {
     return structuredClone(defaultState);
   }
+}
+
+function getStateStorageKey(uid) {
+  const safeUid = String(uid || "").trim();
+  return safeUid ? `${STORAGE_KEY_PREFIX}:${safeUid}` : STORAGE_KEY_PREFIX;
 }
 
 function mergeDeep(target, source) {
@@ -1298,8 +1303,12 @@ async function ensureAuthenticated() {
       return false;
     }
     runtime.authUser = user;
+    // Load a user-scoped local cache to avoid cross-account state leakage.
+    runtime.state = loadLocalStateForUser(user.uid);
     runtime.state.student.id = user.uid || runtime.state.student.id || "";
     if (!runtime.state.student.name && user.email) runtime.state.student.name = user.email.split("@")[0];
+    // Cleanup legacy shared key once user-scoped storage is active.
+    localStorage.removeItem(STORAGE_KEY_PREFIX);
     authClient.onAuthChanged((nextUser) => {
       if (!nextUser) window.location.replace(appPath("/login.html"));
     });
