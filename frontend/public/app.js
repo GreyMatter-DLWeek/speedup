@@ -81,6 +81,7 @@ const defaultState = {
     personalization: true,
     decayModeling: true,
     errorTypeDetection: true,
+    weeklyEmailReports: true,
     externalStudyCredit: false
   },
   auditLog: []
