@@ -946,12 +946,70 @@ export function initFeature6(ctx) {
     renderWeeklyChart(model);
   }
 
+  function buildExportPayload(model) {
+    const state = runtime.state || {};
+    return {
+      exportedAt: new Date().toISOString(),
+      studentId: state.student?.id || "",
+      progress: {
+        overallLevel: model?.progressStats?.levelValue || "Lv.1",
+        levelChange: model?.progressStats?.levelChange || "",
+        conceptsMastered: model?.progressStats?.masteredValue || "0",
+        gapsIdentified: model?.progressStats?.gapsValue || "0",
+        avgMasteryDecay: model?.progressStats?.decayValue || "0%"
+      },
+      topicBreakdown: (model?.topicBreakdown || []).map((group) => ({
+        group: group.title,
+        items: (group.items || []).map((item) => ({
+          topic: item.name,
+          mastery: toInt(item.mastery)
+        }))
+      })),
+      masteryTrend: {
+        labels: model?.masteryTrend?.labels || [],
+        datasets: (model?.masteryTrend?.datasets || []).map((dataset) => ({
+          label: dataset.label,
+          data: Array.isArray(dataset.data) ? dataset.data.map((value) => (value == null ? null : toInt(value))) : []
+        }))
+      },
+      weeklyStudyMinutes: (model?.weeklyMinutes || []).map((item) => ({
+        day: item.label,
+        minutes: toInt(item.minutes)
+      })),
+      recentActivities: model?.recentActivities || []
+    };
+  }
+
+  function downloadProgressReport() {
+    const model = lastModel || buildModel({});
+    const payload = buildExportPayload(model);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `speedup-progress-report-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    logAudit("Progress report exported.");
+    scheduleSave();
+  }
+
+  function bindProgressActions() {
+    const exportBtn = document.getElementById("progressExportReportBtn");
+    if (!exportBtn || exportBtn.dataset.bound) return;
+    exportBtn.dataset.bound = "1";
+    exportBtn.addEventListener("click", downloadProgressReport);
+  }
+
   async function refreshFeature6(force = false) {
     if (refreshInFlight && !force) return refreshInFlight;
     refreshInFlight = (async () => {
       const tmState = await fetchTimeManagementState();
       const model = buildModel(tmState || {});
       lastModel = model;
+      bindProgressActions();
       renderAll(model);
       return model;
     })()
