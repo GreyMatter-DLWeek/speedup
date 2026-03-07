@@ -548,12 +548,14 @@ function buildStatsPayload(state, tmState, topics, overallMastery, controls) {
       streakChange: streakData.streakDays > 0
         ? `↑ ${streakData.streakDays >= 7 ? "Strong consistency" : "Building momentum"}`
         : "→ Start your first streak",
-      masteryValue: `${toInt(overallMastery)}%`,
-      masteryChange: masteryDelta > 0
-        ? `↑ +${masteryDelta}% vs previous`
-        : masteryDelta < 0
-          ? `↓ ${Math.abs(masteryDelta)}% vs previous`
-          : "→ Stable vs previous",
+      masteryValue: controls.conceptMasteryDetection ? `${toInt(overallMastery)}%` : "Off",
+      masteryChange: controls.conceptMasteryDetection
+        ? (masteryDelta > 0
+          ? `↑ +${masteryDelta}% vs previous`
+          : masteryDelta < 0
+            ? `↓ ${Math.abs(masteryDelta)}% vs previous`
+            : "→ Stable vs previous")
+        : "→ Enable concept mastery detection",
       topicsValue: String(topics.length),
       topicsChange: `→ ${weakCount} pending`,
       timeTodayValue: formatMinutes(todayMinutes.completed || todayMinutes.planned),
