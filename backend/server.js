@@ -843,7 +843,11 @@ if (registerTimeManagementRoutes) {
     callOpenAIChat,
     safeParseJson,
     isOpenAIConfigured,
-    normalizeStudentId
+    normalizeStudentId,
+    requireFirebaseAuth,
+    upload,
+    pdfParse,
+    mammoth
   });
 } else {
   console.warn("Time management routes disabled: optional dependency `sqlite3` is missing.");
