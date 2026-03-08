@@ -5,6 +5,7 @@ import { initFeature4 } from "./src/feature-modules/feature4.js";
 import { initFeature5 } from "./src/feature-modules/feature5.js";
 import { initFeature6 } from "./src/feature-modules/feature6.js";
 import { initFeature7 } from "./src/feature-modules/feature7.js";
+import { initFeature7Legacy } from "./src/feature-modules/feature7-legacy.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
 import { initFeature9 } from "./src/feature-modules/feature9.js";
 
@@ -21,6 +22,9 @@ const API = {
   userState: "/api/user/state",
   userExam: "/api/user/exam",
   practiceAnalyze: "/api/practice/analyze",
+  practiceUploads: "/api/practice/uploads",
+  practiceUpload: (uploadId) => `/api/practice/uploads/${encodeURIComponent(uploadId)}`,
+  practiceDeleteUploads: "/api/practice/uploads/delete-bulk",
   practiceGenerateQuiz: "/api/practice/generate-quiz",
   practiceGenerateFlashcards: "/api/practice/generate-flashcards",
   explain: "/api/explain",
@@ -148,6 +152,7 @@ const feature4 = initFeature4(ctx);
 const feature5 = initFeature5(ctx);
 const feature6 = initFeature6(ctx);
 const feature7 = initFeature7(ctx);
+const feature7Legacy = initFeature7Legacy(ctx);
 const feature8 = initFeature8(ctx);
 const feature9 = initFeature9(ctx);
 const appPath = (p) => (window.toAppPath ? window.toAppPath(p) : p);
@@ -178,6 +183,7 @@ async function init() {
   feature6.initWeeklyChart();
   feature6.initHeatmap();
   feature7.initPracticeFeature();
+  feature7Legacy.initPracticeFeature();
   feature5.initStudyNotesFeature();
 
   renderTutorPanel();
@@ -692,6 +698,10 @@ function navigate(page) {
   }
 }
 
+function openPracticeLegacyFromStudyHub() {
+  navigate("practice-legacy");
+}
+
 function inferCurrentPage() {
   const active = document.querySelector(".page.active")?.id || "";
   return active.replace(/^page-/, "") || "dashboard";
@@ -701,6 +711,7 @@ function mapPageToTutorContext(page) {
   if (page === "study-hub") return "study-notes";
   if (page === "study-notes") return "study-notes";
   if (page === "practice") return "practice-papers";
+  if (page === "practice-legacy") return "practice-papers";
   return "active-reading";
 }
 
@@ -1483,5 +1494,6 @@ export function bootstrapApp() {
   window.openSettingsModal = openSettingsModal;
   window.saveSettingsProfile = saveSettingsProfile;
   window.resetSidebarOrder = resetSidebarOrder;
+  window.openPracticeLegacyFromStudyHub = openPracticeLegacyFromStudyHub;
   init();
 }

@@ -866,12 +866,16 @@ app.post("/api/practice/analyze", withRateLimit("practice", 15, 60 * 1000), uplo
 
     const analysis = parsed || fallback;
     await applyPracticeSignals(uid, analysis).catch(() => null);
+    const sourceTextSnippet = snippet(extractedText, 6000);
+    const uploadId = createPracticeUploadId();
     await persistPracticeUpload(uid, {
+      uploadId,
       name: fileMeta?.name || "Pasted Text Input",
       type: fileMeta?.type || "text/plain",
       size: Number(fileMeta?.size || pastedText.length || 0),
       source,
       textLength: extractedText.length,
+      sourceTextSnippet,
       analysis,
       date: new Date().toISOString().slice(0, 10),
       url: fileMeta?.url || "",
@@ -883,12 +887,197 @@ app.post("/api/practice/analyze", withRateLimit("practice", 15, 60 * 1000), uplo
       ok: true,
       provider,
       source,
+      uploadId,
       file: fileMeta,
       textLength: extractedText.length,
+      sourceTextSnippet,
       analysis
     });
   } catch (error) {
     handleError(res, "Failed to analyze practice paper", error);
+  }
+});
+
+app.get("/api/practice/uploads", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const { uploads, changed } = normalizePracticeUploads(state.practiceUploads || []);
+    if (changed) {
+      state.practiceUploads = uploads;
+      await setUserState(uid, state);
+    }
+    return res.json({ ok: true, uploads });
+  } catch (error) {
+    handleError(res, "Failed to load practice uploads", error);
+  }
+});
+
+app.delete("/api/practice/uploads/:uploadId", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const targetId = cleanText(req.params.uploadId, 120);
+    if (!targetId) return res.status(400).json({ error: "uploadId is required." });
+
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const { uploads, changed } = normalizePracticeUploads(state.practiceUploads || []);
+    const found = uploads.find((u) => String(u.uploadId) === targetId);
+    if (!found) return res.status(404).json({ error: "Upload source not found." });
+
+    state.practiceUploads = uploads.filter((u) => String(u.uploadId) !== targetId);
+    state.auditLog = state.auditLog || [];
+    state.auditLog.push({ ts: new Date().toISOString(), message: `Practice source deleted: ${found.name || targetId}` });
+    state.auditLog = state.auditLog.slice(-300);
+    await setUserState(uid, state);
+
+    await maybeDeleteStoredFile(found).catch(() => null);
+    return res.json({ ok: true, deleted: 1, uploads: state.practiceUploads, normalized: changed });
+  } catch (error) {
+    handleError(res, "Failed to delete practice upload", error);
+  }
+});
+
+app.post("/api/practice/uploads/delete-bulk", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const ids = cleanList(req.body?.uploadIds, 100, 120);
+    if (!ids.length) return res.status(400).json({ error: "uploadIds is required." });
+
+    const idSet = new Set(ids);
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
+    const matched = uploads.filter((u) => idSet.has(String(u.uploadId)));
+    if (!matched.length) return res.status(404).json({ error: "No matching upload sources found." });
+
+    state.practiceUploads = uploads.filter((u) => !idSet.has(String(u.uploadId)));
+    state.auditLog = state.auditLog || [];
+    state.auditLog.push({ ts: new Date().toISOString(), message: `Practice sources deleted: ${matched.length}` });
+    state.auditLog = state.auditLog.slice(-300);
+    await setUserState(uid, state);
+
+    await Promise.allSettled(matched.map((item) => maybeDeleteStoredFile(item)));
+    return res.json({ ok: true, deleted: matched.length, uploads: state.practiceUploads });
+  } catch (error) {
+    handleError(res, "Failed to bulk delete practice uploads", error);
+  }
+});
+
+app.post("/api/practice/generate-quiz", requireFirebaseAuth, withRateLimit("practice_quiz", 20, 60 * 1000), async (req, res) => {
+  try {
+    const sourceText = cleanText(req.body?.sourceText, 20000);
+    const difficulty = normalizeDifficulty(req.body?.difficulty);
+    const questionType = normalizeQuestionType(req.body?.questionType);
+    const numQuestions = Math.max(1, Math.min(20, Number(req.body?.numQuestions || 5)));
+
+    if (!sourceText || sourceText.length < 40) {
+      return res.status(400).json({ error: "sourceText is required and must contain enough context." });
+    }
+
+    const fallbackQuiz = buildFallbackQuizFromSource(sourceText, {
+      numQuestions,
+      difficulty,
+      questionType
+    });
+
+    let provider = "fallback";
+    let modelQuiz = null;
+    try {
+      const prompt = [
+        "You are an assessment generator for student revision.",
+        "Return strict JSON with key quiz only.",
+        "quiz must be an object with keys: title, difficulty, questionType, questions.",
+        "questions must be an array with EXACTLY the requested number of items.",
+        "each question item keys: question, options, answer, explanation.",
+        "If questionType is mcq, options must contain exactly 4 choices.",
+        "Use only the provided source text."
+      ].join(" ");
+      const out = await callOpenAIChat(
+        [
+          { role: "system", content: prompt },
+          {
+            role: "user",
+            content: JSON.stringify({
+              difficulty,
+              questionType,
+              numQuestions,
+              sourceText: snippet(sourceText, 14000)
+            })
+          }
+        ],
+        0.2
+      );
+      const parsed = safeParseJson(out);
+      modelQuiz = normalizeQuizPayload(parsed?.quiz, { numQuestions, difficulty, questionType });
+      provider = "openai-api";
+    } catch {
+      modelQuiz = null;
+      provider = "fallback";
+    }
+
+    const quiz = modelQuiz?.questions?.length ? modelQuiz : fallbackQuiz;
+    return res.json({
+      ok: true,
+      provider,
+      quiz
+    });
+  } catch (error) {
+    handleError(res, "Failed to generate quiz", error);
+  }
+});
+
+app.post("/api/practice/generate-flashcards", requireFirebaseAuth, withRateLimit("practice_flashcards", 20, 60 * 1000), async (req, res) => {
+  try {
+    const sourceText = cleanText(req.body?.sourceText, 20000);
+    const count = Math.max(1, Math.min(30, Number(req.body?.count || 8)));
+
+    if (!sourceText || sourceText.length < 40) {
+      return res.status(400).json({ error: "sourceText is required and must contain enough context." });
+    }
+
+    const fallback = {
+      title: "Generated Flashcards",
+      cards: buildFallbackFlashcards(sourceText, count)
+    };
+
+    let provider = "fallback";
+    let flashcards = null;
+    try {
+      const prompt = [
+        "You are a flashcard generator for exam revision.",
+        "Return strict JSON with key flashcards only.",
+        "flashcards must be an object with keys: title, cards.",
+        "cards must be an array with EXACTLY the requested count.",
+        "each card keys: question, answer.",
+        "Use only the provided source text."
+      ].join(" ");
+      const out = await callOpenAIChat(
+        [
+          { role: "system", content: prompt },
+          {
+            role: "user",
+            content: JSON.stringify({
+              count,
+              sourceText: snippet(sourceText, 14000)
+            })
+          }
+        ],
+        0.2
+      );
+      const parsed = safeParseJson(out);
+      flashcards = normalizeFlashcardsPayload(parsed?.flashcards, count);
+      provider = "openai-api";
+    } catch {
+      flashcards = null;
+      provider = "fallback";
+    }
+
+    return res.json({
+      ok: true,
+      provider,
+      flashcards: flashcards?.cards?.length ? flashcards : fallback
+    });
+  } catch (error) {
+    handleError(res, "Failed to generate flashcards", error);
   }
 });
 
@@ -1667,6 +1856,141 @@ function snippet(text, max = 260) {
   return value.slice(0, Math.max(1, max - 3)) + "...";
 }
 
+function normalizeDifficulty(value) {
+  const raw = String(value || "").toLowerCase().trim();
+  if (["easy", "medium", "hard"].includes(raw)) return raw;
+  return "medium";
+}
+
+function normalizeQuestionType(value) {
+  const raw = String(value || "").toLowerCase().trim();
+  if (["mcq", "short-answer", "true-false", "mixed"].includes(raw)) return raw;
+  return "mcq";
+}
+
+function splitSourceIntoKeyLines(sourceText, max = 30) {
+  return String(sourceText || "")
+    .replace(/\r/g, "\n")
+    .split(/[\n.?!]+/)
+    .map((s) => s.replace(/\s+/g, " ").trim())
+    .filter((s) => s.length >= 20)
+    .slice(0, max);
+}
+
+function buildFallbackQuizFromSource(sourceText, { numQuestions, difficulty, questionType }) {
+  const lines = splitSourceIntoKeyLines(sourceText, 40);
+  const questions = [];
+  for (let i = 0; i < numQuestions; i += 1) {
+    const seed = lines[i % Math.max(1, lines.length)] || "Review the core idea from your uploaded material.";
+    const q = {
+      question: `Based on your notes, explain this idea in your own words: ${seed}`,
+      options: [],
+      answer: "A clear explanation should define the concept and include one applied example.",
+      explanation: "Use a definition + one example + one pitfall to show mastery."
+    };
+    if (questionType === "mcq" || questionType === "mixed") {
+      q.question = `Which option best reflects this statement: ${seed}`;
+      q.options = [
+        "A direct interpretation of the statement.",
+        "An unrelated concept from another topic.",
+        "A partially correct but incomplete interpretation.",
+        "A contradictory interpretation."
+      ];
+      q.answer = "A direct interpretation of the statement.";
+      q.explanation = "Option A matches the source statement most accurately.";
+    } else if (questionType === "true-false") {
+      q.question = `True or False: ${seed}`;
+      q.answer = "True";
+      q.explanation = "The statement is drawn from the provided source text.";
+    }
+    questions.push(q);
+  }
+  return {
+    title: "Generated Quiz",
+    difficulty,
+    questionType,
+    questions
+  };
+}
+
+function normalizeQuizPayload(quiz, { numQuestions, difficulty, questionType }) {
+  if (!quiz || typeof quiz !== "object") return null;
+  const normalizedQuestions = Array.isArray(quiz.questions)
+    ? quiz.questions
+      .map((q) => {
+        const question = cleanText(q?.question, 400);
+        const answer = cleanText(q?.answer, 300);
+        const explanation = cleanText(q?.explanation, 400);
+        let options = [];
+        if (Array.isArray(q?.options)) {
+          options = q.options.map((o) => cleanText(o, 180)).filter(Boolean).slice(0, 4);
+        }
+        if (!question || !answer) return null;
+        if ((questionType === "mcq" || questionType === "mixed") && options.length < 4) {
+          options = [
+            "Most accurate interpretation.",
+            "Common misconception.",
+            "Partially correct statement.",
+            "Unrelated statement."
+          ];
+        }
+        return { question, options, answer, explanation };
+      })
+      .filter(Boolean)
+    : [];
+
+  let questions = normalizedQuestions.slice(0, numQuestions);
+  if (questions.length < numQuestions) {
+    const fallback = buildFallbackQuizFromSource(quiz?.title || "", { numQuestions, difficulty, questionType }).questions;
+    questions = questions.concat(fallback.slice(0, numQuestions - questions.length));
+  }
+
+  return {
+    title: cleanText(quiz?.title, 140) || "Generated Quiz",
+    difficulty: normalizeDifficulty(quiz?.difficulty || difficulty),
+    questionType: normalizeQuestionType(quiz?.questionType || questionType),
+    questions: questions.slice(0, numQuestions)
+  };
+}
+
+function buildFallbackFlashcards(sourceText, count) {
+  const lines = splitSourceIntoKeyLines(sourceText, Math.max(12, count * 2));
+  const cards = [];
+  for (let i = 0; i < count; i += 1) {
+    const line = lines[i % Math.max(1, lines.length)] || "Review a core concept from your source text.";
+    cards.push({
+      question: `What is the key idea in: "${line}"?`,
+      answer: "Summarize the concept, then give one concrete example from your notes."
+    });
+  }
+  return cards;
+}
+
+function normalizeFlashcardsPayload(flashcards, count) {
+  if (!flashcards || typeof flashcards !== "object") return null;
+  const cards = Array.isArray(flashcards.cards)
+    ? flashcards.cards
+      .map((c) => {
+        const question = cleanText(c?.question, 280);
+        const answer = cleanText(c?.answer, 420);
+        if (!question || !answer) return null;
+        return { question, answer };
+      })
+      .filter(Boolean)
+    : [];
+
+  let result = cards.slice(0, count);
+  if (result.length < count) {
+    const filler = buildFallbackFlashcards("", count - result.length);
+    result = result.concat(filler.slice(0, count - result.length));
+  }
+
+  return {
+    title: cleanText(flashcards.title, 140) || "Generated Flashcards",
+    cards: result.slice(0, count)
+  };
+}
+
 async function loadStateWithFallback(studentId) {
   if (!isFirebaseConfigured()) return {};
   try {
@@ -2262,8 +2586,13 @@ async function persistPracticeUpload(uid, item) {
   if (!uid || !isFirebaseConfigured()) return false;
   const current = await getUserState(uid);
   const state = mergeDeep(createMinimalState(uid), current);
-  state.practiceUploads = state.practiceUploads || [];
-  state.practiceUploads.unshift(item);
+  const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
+  state.practiceUploads = uploads;
+  state.practiceUploads.unshift({
+    ...item,
+    uploadId: cleanText(item?.uploadId, 120) || createPracticeUploadId(),
+    createdAt: new Date().toISOString()
+  });
   state.practiceUploads = state.practiceUploads.slice(0, 30);
   state.auditLog = state.auditLog || [];
   state.auditLog.push({
@@ -2272,6 +2601,37 @@ async function persistPracticeUpload(uid, item) {
   });
   state.auditLog = state.auditLog.slice(-300);
   await setUserState(uid, state);
+  return true;
+}
+
+function createPracticeUploadId() {
+  return `up_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizePracticeUploads(items) {
+  const rows = Array.isArray(items) ? items : [];
+  let changed = false;
+  const used = new Set();
+  const uploads = rows.map((item, index) => {
+    const rawId = cleanText(item?.uploadId, 120);
+    let uploadId = rawId || `legacy_${Date.now().toString(36)}_${index.toString(36)}`;
+    if (used.has(uploadId)) uploadId = `${uploadId}_${index}`;
+    used.add(uploadId);
+    if (!rawId || rawId !== uploadId) changed = true;
+    return {
+      ...item,
+      uploadId,
+      createdAt: cleanText(item?.createdAt, 40) || ""
+    };
+  });
+  return { uploads, changed };
+}
+
+async function maybeDeleteStoredFile(item) {
+  if (!cloudinary || !isCloudinaryConfigured()) return false;
+  const pathValue = cleanText(item?.storagePath, 240);
+  if (!pathValue) return false;
+  await cloudinary.uploader.destroy(pathValue, { resource_type: "raw", invalidate: true });
   return true;
 }
 
