@@ -315,10 +315,12 @@ function parseIcsPropertyLine(line) {
   return { key, value, params };
 }
 
-function getIcsDateTimeContext(event, key, calendarTimeZone) {
+function getIcsDateTimeContext(event, key, calendarTimeZone, preferredTimeZone = "") {
   const params = event?.[`${key}__PARAMS`];
   const tzid = normalizeIanaTimezone(params?.TZID || "");
-  const fallback = normalizeIanaTimezone(calendarTimeZone) || getDefaultTimeZone();
+  const fallback = normalizeIanaTimezone(calendarTimeZone)
+    || normalizeIanaTimezone(preferredTimeZone)
+    || getDefaultTimeZone();
   return {
     timeZone: tzid || fallback
   };
@@ -461,9 +463,10 @@ function collapseSchoolBlocksByTimeslot(blocks) {
   return dedupeSchoolBlocks(collapsed);
 }
 
-function parseIcsOccurrences(buffer) {
+function parseIcsOccurrences(buffer, options = {}) {
   const text = String(buffer?.toString("utf8") || "");
   if (!text.trim()) return [];
+  const preferredTimeZone = normalizeIanaTimezone(options?.preferredTimeZone || "");
 
   const unfolded = text.replace(/\r?\n[ \t]/g, "");
   const lines = unfolded.split(/\r?\n/);
@@ -507,9 +510,15 @@ function parseIcsOccurrences(buffer) {
 
   const occurrences = [];
   events.forEach((event) => {
-    const startInfo = parseIcsDateTime(event.DTSTART || "", getIcsDateTimeContext(event, "DTSTART", calendarTimeZone));
+    const startInfo = parseIcsDateTime(
+      event.DTSTART || "",
+      getIcsDateTimeContext(event, "DTSTART", calendarTimeZone, preferredTimeZone)
+    );
     if (!startInfo?.time) return;
-    const endInfo = parseIcsDateTime(event.DTEND || "", getIcsDateTimeContext(event, "DTEND", calendarTimeZone));
+    const endInfo = parseIcsDateTime(
+      event.DTEND || "",
+      getIcsDateTimeContext(event, "DTEND", calendarTimeZone, preferredTimeZone)
+    );
     const start = startInfo.time;
     let end = endInfo?.time || addMinutesToClock(start, 60);
     if (hourToInt(end) <= hourToInt(start)) {
@@ -539,8 +548,8 @@ function parseIcsOccurrences(buffer) {
   return occurrences;
 }
 
-function parseIcsTimetableBuffer(buffer) {
-  const occurrences = parseIcsOccurrences(buffer);
+function parseIcsTimetableBuffer(buffer, options = {}) {
+  const occurrences = parseIcsOccurrences(buffer, options);
   return collapseSchoolBlocksByTimeslot(occurrences.map((item) => ({
     day: item.day,
     start: item.start,
@@ -549,8 +558,8 @@ function parseIcsTimetableBuffer(buffer) {
   })));
 }
 
-function parseIcsWeeklyBlocks(buffer) {
-  const occurrences = parseIcsOccurrences(buffer);
+function parseIcsWeeklyBlocks(buffer, options = {}) {
+  const occurrences = parseIcsOccurrences(buffer, options);
   const weekly = {};
 
   occurrences.forEach((item) => {
@@ -784,7 +793,8 @@ async function extractSchoolBlocksFromUpload(file, deps) {
     mammoth,
     callOpenAIChat,
     safeParseJson,
-    isOpenAIConfigured
+    isOpenAIConfigured,
+    preferredTimeZone
   } = deps || {};
 
   if (!buffer || !Buffer.isBuffer(buffer)) {
@@ -795,8 +805,8 @@ async function extractSchoolBlocksFromUpload(file, deps) {
 
   if (ext === ".ics" || mime.includes("text/calendar") || mime.includes("application/ics")) {
     try {
-      const blocks = parseIcsTimetableBuffer(buffer);
-      const weeklyBlocks = parseIcsWeeklyBlocks(buffer);
+      const blocks = parseIcsTimetableBuffer(buffer, { preferredTimeZone });
+      const weeklyBlocks = parseIcsWeeklyBlocks(buffer, { preferredTimeZone });
       return { fileType: "ics", provider: "ics-parser", blocks, weeklyBlocks };
     } catch (error) {
       primaryParseError = String(error?.message || "ICS parsing failed.");
@@ -846,13 +856,14 @@ async function extractSchoolBlocksFromCalendarUrl(calendarUrlRaw, deps) {
   const {
     callOpenAIChat,
     safeParseJson,
-    isOpenAIConfigured
+    isOpenAIConfigured,
+    preferredTimeZone
   } = deps || {};
 
   let primaryParseError = "";
   try {
-    const blocks = parseIcsTimetableBuffer(buffer);
-    const weeklyBlocks = parseIcsWeeklyBlocks(buffer);
+    const blocks = parseIcsTimetableBuffer(buffer, { preferredTimeZone });
+    const weeklyBlocks = parseIcsWeeklyBlocks(buffer, { preferredTimeZone });
     return { fileType: "ics-url", provider: "ics-url-parser", blocks, weeklyBlocks, calendarUrl };
   } catch (error) {
     primaryParseError = String(error?.message || "Calendar URL parsing failed.");
@@ -1076,6 +1087,15 @@ function simplifySchoolSubjectLabel(value) {
   return label;
 }
 
+function normalizeSchoolSubjectForImportance(value) {
+  const label = simplifySchoolSubjectLabel(value) || normalizeConceptLabel(value);
+  if (!label) return "";
+  const lowered = String(label).toLowerCase();
+  if (lowered === "school block") return "";
+  if (isGenericPlanningLabel(label)) return "";
+  return label;
+}
+
 function isGenericPlanningLabel(value) {
   const v = String(value || "").toLowerCase().trim();
   if (!v) return true;
@@ -1101,6 +1121,110 @@ function mergeUniqueConcepts(primary, extra, limit = 8) {
     merged.push(label);
   });
   return merged.slice(0, limit);
+}
+
+function buildSubjectImportanceEntries(blocks) {
+  const buckets = new Map();
+
+  (blocks || []).forEach((block) => {
+    const subject = normalizeSchoolSubjectForImportance(block?.subject || "");
+    if (!subject) return;
+
+    const durationMinutes = clampInt(Math.max(15, hourToInt(block?.end) - hourToInt(block?.start)), 15, 480, 60);
+    const key = subject.toLowerCase();
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        subject,
+        weeklyMinutes: 0,
+        blockCount: 0
+      });
+    }
+
+    const bucket = buckets.get(key);
+    bucket.weeklyMinutes += durationMinutes;
+    bucket.blockCount += 1;
+  });
+
+  const rows = [...buckets.values()].sort((a, b) => {
+    if (b.weeklyMinutes !== a.weeklyMinutes) return b.weeklyMinutes - a.weeklyMinutes;
+    if (b.blockCount !== a.blockCount) return b.blockCount - a.blockCount;
+    return a.subject.localeCompare(b.subject);
+  });
+
+  const totalMinutes = rows.reduce((sum, row) => sum + Number(row.weeklyMinutes || 0), 0);
+  return rows.map((row) => ({
+    ...row,
+    importanceRatio: totalMinutes > 0 ? Number((row.weeklyMinutes / totalMinutes).toFixed(4)) : 0,
+    importanceScore: totalMinutes > 0 ? Math.max(1, Math.round((row.weeklyMinutes * 100) / totalMinutes)) : 0
+  }));
+}
+
+function mapSubjectImportanceRow(row) {
+  return {
+    studentId: row.student_id,
+    weekStart: row.week_start,
+    subject: row.subject,
+    weeklyMinutes: Number(row.weekly_minutes || 0),
+    blockCount: Number(row.block_count || 0),
+    importanceRatio: Number(row.importance_ratio || 0),
+    importanceScore: Number(row.importance_score || 0),
+    updatedAt: row.updated_at
+  };
+}
+
+async function saveSubjectImportanceForWeek(db, studentId, weekStart, blocks) {
+  const normalizedWeekStart = normalizeWeekStart(weekStart);
+  await run(
+    db,
+    `DELETE FROM timetable_subject_importance WHERE student_id = ? AND week_start = ?`,
+    [studentId, normalizedWeekStart]
+  );
+
+  const entries = buildSubjectImportanceEntries(blocks);
+  if (!entries.length) return [];
+
+  const now = nowIso();
+  for (const entry of entries) {
+    await run(
+      db,
+      `INSERT INTO timetable_subject_importance (
+        student_id, week_start, subject, weekly_minutes, block_count, importance_ratio, importance_score, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        studentId,
+        normalizedWeekStart,
+        entry.subject,
+        entry.weeklyMinutes,
+        entry.blockCount,
+        entry.importanceRatio,
+        entry.importanceScore,
+        now
+      ]
+    );
+  }
+
+  return entries;
+}
+
+async function saveSubjectImportanceForWeeks(db, studentId, weeklyBlocks) {
+  await run(db, `DELETE FROM timetable_subject_importance WHERE student_id = ?`, [studentId]);
+
+  const weeks = Object.keys(weeklyBlocks || {});
+  if (!weeks.length) return;
+
+  for (const weekStartRaw of weeks) {
+    const weekStart = normalizeWeekStart(weekStartRaw);
+    await saveSubjectImportanceForWeek(db, studentId, weekStart, weeklyBlocks[weekStartRaw] || []);
+  }
+}
+
+async function loadSubjectImportanceForWeek(db, studentId, weekStart) {
+  const rows = await all(
+    db,
+    `SELECT * FROM timetable_subject_importance WHERE student_id = ? AND week_start = ? ORDER BY importance_score DESC, weekly_minutes DESC, subject ASC`,
+    [studentId, normalizeWeekStart(weekStart)]
+  );
+  return rows.map(mapSubjectImportanceRow);
 }
 
 function extractSchoolSubjectSignals(profile) {
@@ -1812,6 +1936,26 @@ async function ensureSchema(db) {
       PRIMARY KEY (student_id, week_start)
     )`
   );
+
+  await run(
+    db,
+    `CREATE TABLE IF NOT EXISTS timetable_subject_importance (
+      student_id TEXT NOT NULL,
+      week_start TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      weekly_minutes INTEGER NOT NULL DEFAULT 0,
+      block_count INTEGER NOT NULL DEFAULT 0,
+      importance_ratio REAL NOT NULL DEFAULT 0,
+      importance_score INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (student_id, week_start, subject)
+    )`
+  );
+
+  await run(
+    db,
+    `CREATE INDEX IF NOT EXISTS idx_timetable_subject_importance_student_week ON timetable_subject_importance(student_id, week_start)`
+  );
 }
 
 async function getProfile(db, studentId) {
@@ -1901,6 +2045,7 @@ async function fetchWeekState(db, studentId, weekStart) {
     schoolBlocks: schoolBlocksForWeek
   };
   await syncSchoolTimetableForWeek(db, studentId, weekStart, profileForWeek, schoolBlocksForWeek);
+  await saveSubjectImportanceForWeek(db, studentId, weekStart, schoolBlocksForWeek);
   const taskRows = await all(
     db,
     `SELECT * FROM timetable_tasks WHERE student_id = ? AND week_start = ? ORDER BY priority DESC, created_at ASC`,
@@ -1921,11 +2066,13 @@ async function fetchWeekState(db, studentId, weekStart) {
   const slots = slotRows.map(mapSlotRow);
   const stats = computeStats(tasks, slots, profileForWeek);
   const agenda = buildAgenda(weekStart, tasks, slots);
+  const subjectImportance = await loadSubjectImportanceForWeek(db, studentId, weekStart);
 
   return {
     studentId,
     weekStart,
     profile: profileForWeek,
+    subjectImportance,
     tasks,
     slots,
     stats,
@@ -2232,10 +2379,19 @@ function registerTimeManagementRoutes(app, deps) {
     safeParseJson,
     isOpenAIConfigured,
     normalizeStudentId,
+    requireFirebaseAuth,
+    resolveAuthorizedStudentId,
     upload,
     pdfParse,
     mammoth
   } = deps;
+  const authGuard = typeof requireFirebaseAuth === "function" ? requireFirebaseAuth : (_req, _res, next) => next();
+  const getStudentId = (req) => {
+    if (typeof resolveAuthorizedStudentId === "function") {
+      return resolveAuthorizedStudentId(req, req.params.studentId);
+    }
+    return normalizeStudentId(req.params.studentId);
+  };
   const schoolUploadMiddleware = upload?.single
     ? upload.single("timetable")
     : (_req, res) => res.status(503).json({ error: "File upload unavailable on server." });
@@ -2243,18 +2399,25 @@ function registerTimeManagementRoutes(app, deps) {
   const saveProfileHandler = async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const profile = await saveProfile(db, studentId, req.body || {});
+      const raw = req.body || {};
+      const hasSchoolBlocksInput = Object.prototype.hasOwnProperty.call(raw, "schoolBlocks")
+        || Object.prototype.hasOwnProperty.call(raw, "schoolBlocksText");
+      if (hasSchoolBlocksInput) {
+        const weekStart = normalizeWeekStart(raw.weekStart || req.query?.weekStart);
+        await saveSubjectImportanceForWeek(db, studentId, weekStart, profile.schoolBlocks || []);
+      }
       res.json({ ok: true, studentId, profile, updatedAt: nowIso() });
     } catch (error) {
       handleRouteError(res, "Failed to save time management profile", error);
     }
   };
 
-  app.get("/api/time-management/:studentId", async (req, res) => {
+  app.get("/api/time-management/:studentId", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.query.weekStart);
       const state = await fetchWeekState(db, studentId, weekStart);
       res.json(state);
@@ -2263,14 +2426,15 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.put("/api/time-management/:studentId/profile", saveProfileHandler);
-  app.post("/api/time-management/:studentId/profile", saveProfileHandler);
+  app.put("/api/time-management/:studentId/profile", authGuard, saveProfileHandler);
+  app.post("/api/time-management/:studentId/profile", authGuard, saveProfileHandler);
 
-  app.post("/api/time-management/:studentId/upload-school-timetable", schoolUploadMiddleware, async (req, res) => {
+  app.post("/api/time-management/:studentId/upload-school-timetable", authGuard, schoolUploadMiddleware, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.body?.weekStart || req.query?.weekStart);
+      const preferredTimeZone = normalizeIanaTimezone(req.body?.browserTimeZone || req.query?.browserTimeZone || "");
       const file = req.file;
       const calendarUrl = String(req.body?.calendarUrl || "").trim();
       if (!file && !calendarUrl) {
@@ -2283,12 +2447,14 @@ function registerTimeManagementRoutes(app, deps) {
           mammoth,
           callOpenAIChat,
           safeParseJson,
-          isOpenAIConfigured
+          isOpenAIConfigured,
+          preferredTimeZone
         })
         : await extractSchoolBlocksFromCalendarUrl(calendarUrl, {
           callOpenAIChat,
           safeParseJson,
-          isOpenAIConfigured
+          isOpenAIConfigured,
+          preferredTimeZone
         });
       if (!parsed.blocks.length) {
         return res.status(400).json({ error: "No timetable blocks detected from the uploaded file/calendar URL." });
@@ -2309,6 +2475,11 @@ function registerTimeManagementRoutes(app, deps) {
       });
 
       await saveSchoolWeekBlocks(db, studentId, weeklyBlocks, parsed.fileType || "ics");
+      await saveSubjectImportanceForWeeks(
+        db,
+        studentId,
+        hasWeeklyBlocks ? weeklyBlocks : { [weekStart]: selectedWeekBlocks }
+      );
       await syncSchoolTimetableForWeek(db, studentId, weekStart, profile, selectedWeekBlocks);
       const state = await fetchWeekState(db, studentId, weekStart);
       return res.json({
@@ -2326,10 +2497,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.post("/api/time-management/:studentId/generate-plan", async (req, res) => {
+  app.post("/api/time-management/:studentId/generate-plan", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = parseWeekFromRequest(req);
       const profile = await getProfile(db, studentId);
       const payload = req.body || {};
@@ -2375,10 +2546,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.post("/api/time-management/:studentId/tasks", async (req, res) => {
+  app.post("/api/time-management/:studentId/tasks", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = parseWeekFromRequest(req);
       const payload = toTaskPayload(req.body || {});
       const rawDay = String(req.body?.day || "").trim();
@@ -2449,10 +2620,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.put("/api/time-management/:studentId/tasks/:taskId", async (req, res) => {
+  app.put("/api/time-management/:studentId/tasks/:taskId", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const taskId = String(req.params.taskId || "").trim();
       if (!taskId) {
         return res.status(400).json({ error: "taskId is required" });
@@ -2596,10 +2767,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.delete("/api/time-management/:studentId/tasks/:taskId", async (req, res) => {
+  app.delete("/api/time-management/:studentId/tasks/:taskId", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const taskId = String(req.params.taskId || "").trim();
 
       await run(db, `DELETE FROM timetable_slots WHERE student_id = ? AND task_id = ?`, [studentId, taskId]);
@@ -2614,10 +2785,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.put("/api/time-management/:studentId/slots/:day/:hour", async (req, res) => {
+  app.put("/api/time-management/:studentId/slots/:day/:hour", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = parseWeekFromRequest(req);
       const day = normalizeDay(req.params.day);
       const hour = normalizeHour(req.params.hour);
@@ -2660,10 +2831,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.delete("/api/time-management/:studentId/slots/:day/:hour", async (req, res) => {
+  app.delete("/api/time-management/:studentId/slots/:day/:hour", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.query.weekStart);
       const day = normalizeDay(req.params.day);
       const hour = normalizeHour(req.params.hour);
@@ -2680,10 +2851,10 @@ function registerTimeManagementRoutes(app, deps) {
     }
   });
 
-  app.delete("/api/time-management/:studentId/week/:weekStart", async (req, res) => {
+  app.delete("/api/time-management/:studentId/week/:weekStart", authGuard, async (req, res) => {
     try {
       await schemaReady;
-      const studentId = normalizeStudentId(req.params.studentId);
+      const studentId = getStudentId(req);
       const weekStart = normalizeWeekStart(req.params.weekStart);
 
       await run(db, "BEGIN TRANSACTION");

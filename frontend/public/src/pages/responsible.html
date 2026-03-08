@@ -30,17 +30,24 @@
             <div class="card-title">Your AI Profile Settings</div>
             <div class="override-row">
               <div>
-                <div class="override-label">Show reasoning for all recommendations</div>
-                <div class="override-meta">Always explain why each suggestion is made</div>
-              </div>
-              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="explainability" aria-label="Toggle explainability"></div>
-            </div>
-            <div class="override-row">
-              <div>
                 <div class="override-label">Personalized learning style detection</div>
                 <div class="override-meta">AI learns your optimal study patterns</div>
               </div>
               <div class="toggle on" role="switch" tabindex="0" data-responsible-control="personalization" aria-label="Toggle personalization"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Concept mastery detection</div>
+                <div class="override-meta">Track and classify which concepts you have truly mastered</div>
+              </div>
+              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="conceptMasteryDetection" aria-label="Toggle concept mastery detection"></div>
+            </div>
+            <div class="override-row">
+              <div>
+                <div class="override-label">Careless vs gap error detection</div>
+                <div class="override-meta">Distinguish error types from attempt history</div>
+              </div>
+              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="errorTypeDetection" aria-label="Toggle error type detection"></div>
             </div>
             <div class="override-row">
               <div>
@@ -51,10 +58,10 @@
             </div>
             <div class="override-row">
               <div>
-                <div class="override-label">Careless vs gap error detection</div>
-                <div class="override-meta">Distinguish error types from attempt history</div>
+                <div class="override-label">Send Weekly Progress reports to my email</div>
+                <div class="override-meta">Receive a weekly progress summary by email</div>
               </div>
-              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="errorTypeDetection" aria-label="Toggle error type detection"></div>
+              <div class="toggle on" role="switch" tabindex="0" data-responsible-control="weeklyEmailReports" aria-label="Toggle weekly email reports"></div>
             </div>
             <div class="override-row">
               <div>
@@ -112,9 +119,8 @@
         <div class="card">
           <div class="card-title">Data Usage & Control</div>
           <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap;">
-            <button id="downloadDataBtn" class="btn btn-secondary">📥 Download My Data</button>
             <button id="resetAiProfileBtn" class="btn btn-secondary">🔄 Reset AI Profile</button>
-            <button id="deleteAllDataBtn" class="btn btn-secondary" style="color:var(--danger);border-color:rgba(248,113,113,0.3);">🗑 Delete All Data</button>
+            <button id="deleteAccountBtn" class="btn btn-secondary" style="color:var(--danger);border-color:rgba(248,113,113,0.3);">🗑 Delete My Account</button>
           </div>
         </div>
 

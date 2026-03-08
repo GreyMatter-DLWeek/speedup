@@ -92,10 +92,11 @@ const defaultState = {
   dashboardFeedback: {},
   examHistory: [],
   responsibleControls: {
-    explainability: true,
+    conceptMasteryDetection: true,
     personalization: true,
     decayModeling: true,
     errorTypeDetection: true,
+    weeklyEmailReports: true,
     externalStudyCredit: false
   },
   auditLog: []
@@ -120,6 +121,7 @@ const modals = {
 const runtime = {
   state: structuredClone(defaultState),
   cloudServices: { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false },
+  cloudChecks: { firestoreRead: null, firestoreWrite: null },
   highlightMode: false,
   currentParagraphId: 1,
   currentAttempt: 0,
@@ -679,8 +681,17 @@ function initResponsibleAiPage() {
   const page = document.getElementById("page-responsible");
   if (!page) return;
 
+  // Backward compatibility: map older "explainability" setting into concept mastery detection.
+  const existingControls = runtime.state.responsibleControls || {};
+  if (
+    typeof existingControls.conceptMasteryDetection !== "boolean"
+    && typeof existingControls.explainability === "boolean"
+  ) {
+    existingControls.conceptMasteryDetection = Boolean(existingControls.explainability);
+  }
+
   const defaultControls = structuredClone(defaultState.responsibleControls || {});
-  runtime.state.responsibleControls = mergeDeep(defaultControls, runtime.state.responsibleControls || {});
+  runtime.state.responsibleControls = mergeDeep(defaultControls, existingControls);
   renderResponsibleControls();
 
   if (!page.dataset.responsibleBound) {
@@ -707,22 +718,16 @@ function initResponsibleAiPage() {
     });
   }
 
-  const downloadBtn = document.getElementById("downloadDataBtn");
-  if (downloadBtn && !downloadBtn.dataset.bound) {
-    downloadBtn.dataset.bound = "1";
-    downloadBtn.addEventListener("click", downloadResponsibleData);
-  }
-
   const resetBtn = document.getElementById("resetAiProfileBtn");
   if (resetBtn && !resetBtn.dataset.bound) {
     resetBtn.dataset.bound = "1";
     resetBtn.addEventListener("click", resetAiProfile);
   }
 
-  const deleteBtn = document.getElementById("deleteAllDataBtn");
+  const deleteBtn = document.getElementById("deleteAccountBtn");
   if (deleteBtn && !deleteBtn.dataset.bound) {
     deleteBtn.dataset.bound = "1";
-    deleteBtn.addEventListener("click", deleteAllUserData);
+    deleteBtn.addEventListener("click", deleteAccount);
   }
 }
 
@@ -747,33 +752,6 @@ function setResponsibleControl(key, enabled) {
   apiPost(API.userControls, { controls: { [key]: Boolean(enabled) } }).catch(() => {});
 }
 
-async function downloadResponsibleData() {
-  let payload = runtime.state;
-  try {
-    const remote = await apiGet(API.userState);
-    payload = remote?.state || payload;
-  } catch {
-    // Keep local payload fallback.
-  }
-
-  const exported = {
-    exportedAt: new Date().toISOString(),
-    studentId: runtime.authUser?.uid || runtime.state.student?.id || "",
-    state: payload
-  };
-  const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `speedup-data-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  logAudit("User exported data copy.");
-  scheduleSave();
-}
-
 function resetAiProfile() {
   const ok = window.confirm("Reset AI profile now? This will clear learned mastery and recommendation signals.");
   if (!ok) return;
@@ -792,8 +770,8 @@ function resetAiProfile() {
   scheduleSave();
 }
 
-function deleteAllUserData() {
-  const ok = window.confirm("Delete all saved learning data? This action cannot be undone.");
+async function deleteAccount() {
+  const ok = window.confirm("Confirm delete your account. This will delete all your data.");
   if (!ok) return;
 
   runtime.state = structuredClone(defaultState);
@@ -801,10 +779,16 @@ function deleteAllUserData() {
   if (!runtime.state.student.name && runtime.authUser?.email) {
     runtime.state.student.name = runtime.authUser.email.split("@")[0];
   }
-  logAudit("All user data deleted by user.");
+  logAudit("User requested account deletion and data wipe.");
   renderResponsibleControls();
   feature8.hydrateFeedbackSelections();
   scheduleSave();
+
+  try {
+    await window.firebaseAuthClient?.signOutUser?.();
+  } finally {
+    window.location.replace(appPath("/login.html"));
+  }
 }
 
 function renderCloudStatus() {
@@ -1166,7 +1150,7 @@ function renderTutorMessages() {
       ? `<div class="tutor-actions">${actions.map((a, i) => `<button class="tutor-action-btn" onclick="runTutorAction(${rows.indexOf(m)}, ${i})">${escapeHtml(a.label || "Action")}</button>`).join("")}</div>`
       : "";
 
-    return `<div class="tutor-msg"><div class="tutor-msg-head">Tutor · ${escapeHtml(m.provider || "local")}</div><div class="tutor-msg-body">${escapeHtml(m.answer || "")}</div>${citationsHtml}${actionsHtml}</div>`;
+    return `<div class="tutor-msg"><div class="tutor-msg-head">Tutor · ${escapeHtml(m.provider || "local")}</div><div class="tutor-msg-body">${escapeHtml(m.answer || "")}</div><div class="tutor-msg-disclaimer">AI-generated response. Verify against your notes and marking rubric.</div>${citationsHtml}${actionsHtml}</div>`;
   }).join("");
 
   wrap.scrollTop = wrap.scrollHeight;
@@ -1257,6 +1241,19 @@ async function sendTutorMessage() {
   if (input) input.value = "";
   renderTutorPanel();
 
+  if (isGreetingMessage(text)) {
+    pushTutorMsg("assistant", {
+      answer: "Hi. Ask one topic or question and I will explain with short steps plus one example.",
+      provider: "system",
+      citations: [],
+      actions: [],
+      question: text,
+      attempt: 0
+    });
+    renderTutorPanel();
+    return;
+  }
+
   try {
     const out = built.contextType === "study-notes" && String(built.context?.packId || "")
       ? await apiPost(API.studyNotesPackQuery(built.context.packId), {
@@ -1280,7 +1277,9 @@ async function sendTutorMessage() {
       answer: out.answer,
       provider: out.provider,
       citations: Array.isArray(out.citations) ? out.citations : [],
-      actions: Array.isArray(out.actions) ? out.actions : []
+      actions: Array.isArray(out.actions) ? out.actions : [],
+      question: text,
+      attempt: 0
     });
 
     if (built.contextType === "practice-papers") {
@@ -1307,7 +1306,9 @@ async function sendTutorMessage() {
       answer: `Tutor unavailable: ${error.message || "unknown error"}`,
       provider: "fallback",
       citations: [],
-      actions: []
+      actions: [],
+      question: text,
+      attempt: 0
     });
   }
 
@@ -1390,6 +1391,11 @@ function runTutorAction(msgIndex, actionIndex) {
     return;
   }
 
+  if (action.type === "simplify") {
+    requestTutorSimplification(row);
+    return;
+  }
+
   if (action.type === "flashcards") {
     runtime.flashcards.unshift({
       q: "Tutor Insight",
@@ -1402,19 +1408,72 @@ function runTutorAction(msgIndex, actionIndex) {
   }
 }
 
+async function requestTutorSimplification(row) {
+  const question = cleanText(row?.question || "", 900);
+  if (!question) return;
+
+  const nextAttempt = Math.max(1, Number(row?.attempt || 0) + 1);
+  const built = buildTutorContext(row?.contextType || runtime.tutorContextType);
+  const clarityHint = nextAttempt === 1
+    ? "simplify level 1: shorter wording and one concrete example"
+    : nextAttempt === 2
+      ? "simplify level 2: include analogy and 3 short steps"
+      : "simplify level 3: beginner-level explanation with no jargon";
+
+  try {
+    const out = await apiPost(API.tutorQuery, {
+      contextType: built.contextType,
+      question,
+      context: built.context,
+      studentId: runtime.state.student.id,
+      clarityHint
+    });
+
+    pushTutorMsg("assistant", {
+      answer: out.answer,
+      provider: out.provider,
+      citations: Array.isArray(out.citations) ? out.citations : [],
+      actions: Array.isArray(out.actions) ? out.actions : [],
+      question,
+      attempt: nextAttempt
+    });
+  } catch (error) {
+    pushTutorMsg("assistant", {
+      answer: `Tutor unavailable: ${error.message || "unknown error"}`,
+      provider: "fallback",
+      citations: [],
+      actions: [],
+      question,
+      attempt: nextAttempt
+    });
+  }
+
+  renderTutorPanel();
+}
+
+function isGreetingMessage(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized);
+}
+
 async function loadCloudHealth() {
   try {
     const health = await apiGet(API.health);
     runtime.cloudServices = health.services || runtime.cloudServices;
+    runtime.cloudChecks = health.checks || runtime.cloudChecks;
   } catch {
     runtime.cloudServices = { openaiConfigured: false, ragConfigured: false, firebaseConfigured: false, fileStorageConfigured: false };
+    runtime.cloudChecks = { firestoreRead: null, firestoreWrite: null };
   }
 }
 
 async function hydrateStateFromBackend() {
   try {
     const remote = await apiGet(API.userState);
-    runtime.state = mergeDeep(structuredClone(defaultState), remote.state || {});
+    const localSnapshot = runtime.state && typeof runtime.state === "object"
+      ? structuredClone(runtime.state)
+      : structuredClone(defaultState);
+    runtime.state = mergeDeep(mergeDeep(structuredClone(defaultState), localSnapshot), remote.state || {});
     if (runtime.authUser?.uid) runtime.state.student.id = runtime.authUser.uid;
     if (!runtime.state.student.name && runtime.authUser?.email) runtime.state.student.name = runtime.authUser.email.split("@")[0];
     saveLocalState(runtime.authUser?.uid || runtime.state.student?.id || "");
@@ -1429,11 +1488,23 @@ function scheduleSave() {
   persistStateToBackend();
 }
 
+function buildBackendStateSnapshot(state) {
+  const snapshot = structuredClone(state && typeof state === "object" ? state : defaultState);
+  delete snapshot.timeManagement;
+  return snapshot;
+}
+
+function canPersistStateToBackend() {
+  return runtime.cloudChecks?.firestoreWrite !== false;
+}
+
 async function persistStateToBackend() {
+  if (!canPersistStateToBackend()) return;
   try {
-    await apiPut(API.userState, { state: runtime.state });
+    await apiPut(API.userState, { state: buildBackendStateSnapshot(runtime.state) });
+    runtime.cloudChecks.firestoreWrite = true;
   } catch {
-    // Keep local only.
+    runtime.cloudChecks.firestoreWrite = false;
   }
 }
 
@@ -1609,6 +1680,10 @@ async function requestJson(method, url, body = undefined, isForm = false) {
   if (!res.ok && res.status === 401 && /invalid firebase token/i.test(String(payload?.error || ""))) {
     ({ res, payload } = await attempt(true));
   }
+  if (!res.ok && method === "GET" && res.status >= 500 && res.status < 600) {
+    await sleep(250);
+    ({ res, payload } = await attempt(false));
+  }
   if (!res.ok) throw new Error(extractErrorMessage(payload, `${method} ${url} failed`));
   return payload;
 }
@@ -1629,7 +1704,19 @@ async function parseMaybeJson(res) {
 
 function extractErrorMessage(payload, fallback) {
   if (!payload || typeof payload !== "object") return fallback;
-  return payload.error || payload.details || payload.message || fallback;
+  const base = payload.error || payload.details || payload.message || fallback;
+  const code = String(payload.code || "").trim();
+  const hint = String(payload.hint || "").trim();
+  const requestId = String(payload.requestId || "").trim();
+  const extras = [code && `code=${code}`, requestId && `requestId=${requestId}`].filter(Boolean).join(", ");
+  if (hint && extras) return `${base} (${extras}). ${hint}`;
+  if (hint) return `${base}. ${hint}`;
+  if (extras) return `${base} (${extras})`;
+  return base;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function bootstrapApp() {
