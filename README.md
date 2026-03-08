@@ -159,9 +159,8 @@ npm install
 ### 2) Configure environment
 Create `.env` from `.env.example` and set:
 - `OPENAI_API_KEY`
-- `FIREBASE_PROJECT_ID`
-- `FIREBASE_CLIENT_EMAIL`
-- `FIREBASE_PRIVATE_KEY` (single-line string with `\n` escaped newlines)
+- `OPENAI_ALLOWED_MODELS` (optional, for Study Hub model selector)
+- `FIREBASE_SERVICE_ACCOUNT_JSON` (recommended), or split Firebase admin vars
 - `CLOUDINARY_CLOUD_NAME`
 - `CLOUDINARY_API_KEY`
 - `CLOUDINARY_API_SECRET`
@@ -237,8 +236,9 @@ For evaluator setup and verification, use:
 - `POST /api/practice/generate-quiz`
 - `POST /api/practice/generate-flashcards`
 - `POST /api/recommendations`
-- `POST /api/rag/query`
-- `POST /api/rag/index-note`
+- `POST /api/practice/analyze` (multipart: `paper`, or `pastedText`)
+- `GET /api/study-hub/models` (auth)
+- `POST /api/study-hub/llm` (auth)
 
 ## Current Limitations
 - Output quality depends on uploaded source quality.

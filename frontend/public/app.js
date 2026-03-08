@@ -5,8 +5,9 @@ import { initFeature4 } from "./src/feature-modules/feature4.js";
 import { initFeature5 } from "./src/feature-modules/feature5.js";
 import { initFeature6 } from "./src/feature-modules/feature6.js";
 import { initFeature7 } from "./src/feature-modules/feature7.js";
+import { initFeature7Legacy } from "./src/feature-modules/feature7-legacy.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
-import { initFeature9StudyPack } from "./src/feature-modules/feature9-study-pack.js";
+import { initFeature9 } from "./src/feature-modules/feature9.js";
 
 const STORAGE_KEY_PREFIX = "speedup_dashboard_reference_v1";
 const STUDENT_ID = "";
@@ -36,6 +37,10 @@ const API = {
   highlightAnalyze: "/api/highlight/analyze",
   ragQuery: "/api/rag/query",
   ragIndexNote: "/api/rag/index-note",
+  studyNotesPacks: "/api/study-notes/packs",
+  studyNotesUpload: "/api/study-notes/upload",
+  studyNotesSynthesize: (packId) => `/api/study-notes/pack/${encodeURIComponent(packId)}/synthesize`,
+  studyNotesPackQuery: (packId) => `/api/study-notes/pack/${encodeURIComponent(packId)}/query`,
   recommendations: "/api/recommendations",
   timeManagementState: (studentId, weekStart) => {
     const base = `/api/time-management/${encodeURIComponent(studentId)}`;
@@ -73,11 +78,14 @@ const defaultState = {
   tutorDrafts: {
     "active-reading": "",
     "study-notes": "",
-    "practice-papers": ""
+    "practice-papers": "",
+    "study-hub": ""
   },
   tutorRevisitQueue: [],
   practiceErrorLog: [],
   notes: {},
+  studyPacks: [],
+  activeStudyPackId: "",
   highlights: [],
   practiceUploads: [],
   focusSessions: [],
@@ -154,8 +162,9 @@ const feature4 = initFeature4(ctx);
 const feature5 = initFeature5(ctx);
 const feature6 = initFeature6(ctx);
 const feature7 = initFeature7(ctx);
+const feature7Legacy = initFeature7Legacy(ctx);
 const feature8 = initFeature8(ctx);
-const feature9 = initFeature9StudyPack(ctx);
+const feature9 = initFeature9(ctx);
 const appPath = (p) => (window.toAppPath ? window.toAppPath(p) : p);
 const apiUrl = (p) => (window.toApiUrl ? window.toApiUrl(p) : p);
 
@@ -185,7 +194,8 @@ async function init() {
   await feature6.refreshFeature6();
   feature8.hydrateFeedbackSelections();
   feature7.initPracticeFeature();
-  feature9.initStudyPack();
+  feature7Legacy.initPracticeFeature();
+  feature5.initStudyNotesFeature();
 
   renderTutorPanel();
   feature4.initTimeManagement();
@@ -821,15 +831,18 @@ function navigate(page) {
   if (page === "timetable") {
     feature4.refreshTimeManagement();
   }
-  if (page === "dashboard" || page === "progress") {
-    feature6.refreshFeature6().then(() => {
-      feature8.hydrateFeedbackSelections();
-    });
-  }
 
   if (page === "study-notes") {
-    feature9.refreshStudyPack();
+    feature5.loadStudyPacks();
   }
+
+  if (page === "study-hub") {
+    feature9.mountStudyHubPage();
+  }
+}
+
+function openPracticeLegacyFromStudyHub() {
+  navigate("practice-legacy");
 }
 
 function inferCurrentPage() {
@@ -838,8 +851,10 @@ function inferCurrentPage() {
 }
 
 function mapPageToTutorContext(page) {
+  if (page === "study-hub") return "study-notes";
   if (page === "study-notes") return "study-notes";
   if (page === "practice") return "practice-papers";
+  if (page === "practice-legacy") return "practice-papers";
   return "active-reading";
 }
 
@@ -1041,11 +1056,19 @@ function buildTutorContext(type) {
   const highlights = Array.isArray(runtime.state.highlights) ? runtime.state.highlights.slice(0, 4) : [];
 
   if (resolvedType === "study-notes") {
-    const packContext = feature9.getTutorContextPayload();
+    const activePack = feature5.activeStudyPack();
+    const packName = activePack?.title || (runtime.state.student?.focus ? `${runtime.state.student.focus} Study Pack` : "Study Notes Pack");
+    const section = document.querySelector("#page-study-notes .section-title")?.textContent?.trim() || "Captured Highlights";
     return {
       contextType: "study-notes",
-      details: { packName: packContext.packName, section: packContext.sectionLabel },
-      context: packContext.context
+      details: { packName, section },
+      context: {
+        packId: activePack?.id || "",
+        packName,
+        section,
+        selection: highlights[0]?.summary || highlights[0]?.text || "",
+        highlights: highlights.map((h) => ({ text: h.text, summary: h.summary, section }))
+      }
     };
   }
 
@@ -1235,12 +1258,23 @@ async function sendTutorMessage() {
   renderTutorPanel();
 
   try {
-    const out = await apiPost(API.tutorQuery, {
-      contextType: built.contextType,
-      question: text,
-      context: built.context,
-      studentId: runtime.state.student.id
-    });
+    const out = built.contextType === "study-notes" && String(built.context?.packId || "")
+      ? await apiPost(API.studyNotesPackQuery(built.context.packId), {
+        question: text,
+        chatHistory: (runtime.state.tutorHistory || [])
+          .slice(-10)
+          .map((msg) => ({
+            role: msg.role === "assistant" ? "assistant" : "user",
+            text: msg.answer || msg.text || ""
+          }))
+          .filter((msg) => msg.text)
+      })
+      : await apiPost(API.tutorQuery, {
+        contextType: built.contextType,
+        question: text,
+        context: built.context,
+        studentId: runtime.state.student.id
+      });
 
     pushTutorMsg("assistant", {
       answer: out.answer,
@@ -1631,6 +1665,9 @@ export function bootstrapApp() {
   window.initHeatmap = feature6.initHeatmap;
   window.runRagQuery = feature5.runRagQuery;
   window.indexLatestHighlight = feature5.indexLatestHighlight;
+  window.openStudyTopicPractice = feature5.openStudyTopicPractice;
+  window.askTutorAboutTopic = feature5.askTutorAboutTopic;
+  window.focusStudyTopic = feature5.focusStudyTopic;
   window.openTutorPanel = openTutorPanel;
   window.closeTutorPanel = closeTutorPanel;
   window.dockTutorPanel = dockTutorPanel;
@@ -1643,5 +1680,6 @@ export function bootstrapApp() {
   window.openSettingsModal = openSettingsModal;
   window.saveSettingsProfile = saveSettingsProfile;
   window.resetSidebarOrder = resetSidebarOrder;
+  window.openPracticeLegacyFromStudyHub = openPracticeLegacyFromStudyHub;
   init();
 }
