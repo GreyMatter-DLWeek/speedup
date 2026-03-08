@@ -21,7 +21,7 @@ const JSZip = tryRequire("jszip");
 const cloudinaryModule = tryRequire("cloudinary");
 const cloudinary = cloudinaryModule?.v2 || null;
 const { isFirebaseConfigured, getFirestore } = require("./firebase/firebaseAdmin");
-const { requireFirebaseAuth } = require("./firebase/firebaseAuth");
+const { requireFirebaseAuth, tryGetFirebaseUser } = require("./firebase/firebaseAuth");
 const { getUserState, setUserState, appendAuditEvent } = require("./firebase/firebaseStore");
 const timeManagementModule = tryRequire("../time-management");
 const registerTimeManagementRoutes = timeManagementModule?.registerTimeManagementRoutes || null;
@@ -397,9 +397,9 @@ app.post("/api/user/controls", requireFirebaseAuth, async (req, res) => {
   }
 });
 
-app.get("/api/state/:studentId", requireFirebaseAuth, async (req, res) => {
+app.get("/api/state/:studentId", async (req, res) => {
   try {
-    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
+    const studentId = normalizeStudentId(req.params.studentId);
     const state = await loadStateWithFallback(studentId);
     res.json(state || {});
   } catch (error) {
@@ -407,9 +407,9 @@ app.get("/api/state/:studentId", requireFirebaseAuth, async (req, res) => {
   }
 });
 
-app.put("/api/state/:studentId", requireFirebaseAuth, async (req, res) => {
+app.put("/api/state/:studentId", async (req, res) => {
   try {
-    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
+    const studentId = normalizeStudentId(req.params.studentId);
     const state = req.body;
     if (!state || typeof state !== "object") {
       return res.status(400).json({ error: "Invalid state payload." });
@@ -422,7 +422,7 @@ app.put("/api/state/:studentId", requireFirebaseAuth, async (req, res) => {
   }
 });
 
-app.post("/api/explain", requireFirebaseAuth, withRateLimit("explain", 40, 60 * 1000), async (req, res) => {
+app.post("/api/explain", withRateLimit("explain", 40, 60 * 1000), async (req, res) => {
   try {
     const paragraph = cleanText(req.body?.paragraph, 4000);
     const attempt = Number(req.body?.attempt || 0);
@@ -473,14 +473,15 @@ app.post("/api/explain", requireFirebaseAuth, withRateLimit("explain", 40, 60 * 
   }
 });
 
-app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 60, 60 * 1000), async (req, res) => {
+app.post("/api/tutor/query", withRateLimit("tutor_query", 60, 60 * 1000), async (req, res) => {
   try {
     const contextType = cleanText(req.body?.contextType || "active-reading", 40).toLowerCase();
     const question = cleanText(req.body?.question, 2000);
     const context = req.body?.context && typeof req.body.context === "object" ? req.body.context : {};
     if (!question) return res.status(400).json({ error: "question is required." });
 
-    const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
+    const authUser = await tryGetFirebaseUser(req);
+    const ownerId = normalizeStudentId(authUser?.uid || cleanText(req.body?.studentId || "", 80));
     const evidence = buildTutorEvidence(contextType, context);
 
     let ragHits = [];
@@ -506,9 +507,6 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
       "Return strict JSON with keys: answer, citations, actions.",
       "citations must be an array of {docName,page,quote,jumpRef,sourceType}.",
       "actions must be an array of up to 4 items with keys {type,label,target,jumpRef,text}.",
-      "For Study Pack queries, ground the answer in section snippets and mention section refs when available.",
-      "Do not fabricate citations, page numbers, or quotes. Use only supplied evidence.",
-      "When appropriate, include actions for jump-section, add-to-notes, flashcards, or revise-link.",
       "If evidence is weak, clearly state uncertainty and ask user to expand scope."
     ].join(" ");
 
@@ -517,11 +515,7 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
       question,
       scope: evidence.scope,
       localCitations: baselineCitations,
-      retrievedNotes: ragHits.map((h) => ({ title: h.title, source: h.source, snippet: h.snippet })),
-      actionPolicy: {
-        primaryTypes: ["jump-section", "add-to-notes", "flashcards", "revise-link"],
-        maxActions: 4
-      }
+      retrievedNotes: ragHits.map((h) => ({ title: h.title, source: h.source, snippet: h.snippet }))
     };
 
     let parsed = null;
@@ -556,186 +550,6 @@ app.post("/api/tutor/query", requireFirebaseAuth, withRateLimit("tutor_query", 6
     });
   } catch (error) {
     handleError(res, "Failed to generate tutor response", error);
-  }
-});
-
-app.post("/api/study-pack/upload-pdf", withRateLimit("study_pack_upload", 20, 60 * 1000), upload.single("pdf"), async (req, res) => {
-  try {
-    const file = req.file;
-    if (!file) return res.status(400).json({ error: "Upload a PDF file first." });
-
-    const ext = path.extname(String(file.originalname || "")).toLowerCase();
-    const mime = String(file.mimetype || "").toLowerCase();
-    if (ext !== ".pdf" && !mime.includes("pdf")) {
-      return res.status(400).json({ error: "Only PDF uploads are supported for Study Pack." });
-    }
-
-    const extractedText = await extractTextFromFile(file);
-    const textLength = String(extractedText || "").trim().length;
-    if (textLength < 80) {
-      return res.status(400).json({ error: "Could not extract enough readable text from the PDF." });
-    }
-
-    const sections = buildStudyPackSectionsFromText(extractedText, file.originalname || "PDF");
-    return res.json({
-      ok: true,
-      file: {
-        name: cleanText(file.originalname || "PDF", 180),
-        type: cleanText(file.mimetype || "application/pdf", 80),
-        size: Number(file.size || 0)
-      },
-      textLength,
-      sections
-    });
-  } catch (error) {
-    handleError(res, "Failed to upload Study Pack PDF", error);
-  }
-});
-
-app.post("/api/study-pack/checkpoint-quiz", withRateLimit("study_pack_quiz", 40, 60 * 1000), async (req, res) => {
-  try {
-    const packTitle = cleanText(req.body?.packTitle || "Study Pack", 140) || "Study Pack";
-    const sectionRef = cleanText(req.body?.sectionRef || "", 30);
-    const sectionTitle = cleanText(req.body?.sectionTitle || "", 180) || `Section ${sectionRef || ""}`.trim();
-    const text = cleanText(req.body?.text, 18000);
-    if (!text) return res.status(400).json({ error: "Section text is required." });
-
-    const fallback = buildDeterministicCheckpointQuiz(text, sectionRef, sectionTitle);
-    let provider = "fallback";
-    let quiz = fallback;
-
-    try {
-      const raw = await callOpenAIChat(
-        [
-          {
-            role: "system",
-            content: [
-              "You generate section checkpoint quizzes.",
-              "Return strict JSON with shape {\"quiz\":{\"title\":string,\"questions\":[{\"question\":string,\"options\":string[4],\"answer\":string}]}}.",
-              "Create 3-4 questions. Questions should be concise and exam-oriented.",
-              "Answer must exactly match one option."
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              packTitle,
-              sectionRef,
-              sectionTitle,
-              text: snippet(text, 9000)
-            })
-          }
-        ],
-        0.2
-      );
-      const parsed = safeParseJson(raw);
-      const normalized = normalizeCheckpointQuiz(parsed?.quiz || parsed, fallback.title);
-      if (normalized.questions.length) {
-        quiz = normalized;
-        provider = "openai-api";
-      }
-    } catch {
-      quiz = fallback;
-      provider = "fallback";
-    }
-
-    return res.json({ ok: true, provider, quiz });
-  } catch (error) {
-    handleError(res, "Failed to generate Study Pack checkpoint quiz", error);
-  }
-});
-
-app.post("/api/study-pack/cheatsheet", withRateLimit("study_pack_cheatsheet", 20, 60 * 1000), async (req, res) => {
-  try {
-    const packTitle = cleanText(req.body?.packTitle || "Study Pack", 140) || "Study Pack";
-    const text = cleanText(req.body?.text, 50000);
-    if (!text) return res.status(400).json({ error: "Pack text is required." });
-
-    const fallback = buildDeterministicCheatsheet(packTitle, text);
-    let cheatsheet = fallback;
-    let provider = "fallback";
-
-    try {
-      const raw = await callOpenAIChat(
-        [
-          {
-            role: "system",
-            content: [
-              "You produce concise revision cheatsheets.",
-              "Return strict JSON with key {\"cheatsheet\": string}.",
-              "Structure output with headings, bullet points, common mistakes, and a short revision drill.",
-              "Keep it compact and practical for exam revision."
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: JSON.stringify({ packTitle, text: snippet(text, 12000) })
-          }
-        ],
-        0.2
-      );
-      const parsed = safeParseJson(raw);
-      const candidate = cleanText(parsed?.cheatsheet, 18000);
-      if (candidate) {
-        cheatsheet = candidate;
-        provider = "openai-api";
-      }
-    } catch {
-      cheatsheet = fallback;
-      provider = "fallback";
-    }
-
-    return res.json({ ok: true, provider, cheatsheet });
-  } catch (error) {
-    handleError(res, "Failed to generate Study Pack cheatsheet", error);
-  }
-});
-
-app.post("/api/study-pack/teach-mode", withRateLimit("study_pack_teach", 30, 60 * 1000), async (req, res) => {
-  try {
-    const packTitle = cleanText(req.body?.packTitle || "Study Pack", 140) || "Study Pack";
-    const sectionRef = cleanText(req.body?.sectionRef || "", 30);
-    const sectionTitle = cleanText(req.body?.sectionTitle || "", 180) || `Section ${sectionRef || ""}`.trim();
-    const text = cleanText(req.body?.text, 18000);
-    if (!text) return res.status(400).json({ error: "Section text is required." });
-
-    const fallback = buildDeterministicLecture(sectionRef, sectionTitle, text);
-    let lecture = fallback;
-    let provider = "fallback";
-
-    try {
-      const raw = await callOpenAIChat(
-        [
-          {
-            role: "system",
-            content: [
-              "You are a lecture-style tutor.",
-              "Return strict JSON with key {\"lecture\": string}.",
-              "Explain with a lecture flow: hook, intuition, steps, mini-checkpoint, recap.",
-              "Use approachable teaching language and keep it grounded in provided section text only."
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: JSON.stringify({ packTitle, sectionRef, sectionTitle, text: snippet(text, 9000) })
-          }
-        ],
-        0.25
-      );
-      const parsed = safeParseJson(raw);
-      const candidate = cleanText(parsed?.lecture, 18000);
-      if (candidate) {
-        lecture = candidate;
-        provider = "openai-api";
-      }
-    } catch {
-      lecture = fallback;
-      provider = "fallback";
-    }
-
-    return res.json({ ok: true, provider, lecture });
-  } catch (error) {
-    handleError(res, "Failed to generate Study Pack teach mode", error);
   }
 });
 
@@ -774,14 +588,16 @@ app.post("/api/highlight/analyze", withRateLimit("highlight", 50, 60 * 1000), as
   }
 });
 
-app.post("/api/rag/query", requireFirebaseAuth, withRateLimit("rag_query", 80, 60 * 1000), async (req, res) => {
+app.post("/api/rag/query", withRateLimit("rag_query", 80, 60 * 1000), async (req, res) => {
   try {
     const query = cleanText(req.body?.query, 300);
     const topK = Number(req.body?.topK || 5);
+    const studentId = cleanText(req.body?.studentId || "", 80);
     if (!query || typeof query !== "string") {
       return res.status(400).json({ error: "query is required." });
     }
-    const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
+    const authUser = await tryGetFirebaseUser(req);
+    const ownerId = normalizeStudentId(authUser?.uid || studentId || "");
     const hits = await searchDocuments(query, topK, ownerId);
     res.json({ query, hits });
   } catch (error) {
@@ -789,15 +605,17 @@ app.post("/api/rag/query", requireFirebaseAuth, withRateLimit("rag_query", 80, 6
   }
 });
 
-app.post("/api/rag/index-note", requireFirebaseAuth, withRateLimit("rag_index", 40, 60 * 1000), async (req, res) => {
+app.post("/api/rag/index-note", withRateLimit("rag_index", 40, 60 * 1000), async (req, res) => {
   try {
+    const studentId = cleanText(req.body?.studentId || "", 80);
     const title = cleanText(req.body?.title || "", 200);
     const text = cleanText(req.body?.text, 20000);
     const source = cleanText(req.body?.source || "notes", 80) || "notes";
     if (!text || typeof text !== "string") {
       return res.status(400).json({ error: "text is required." });
     }
-    const ownerId = normalizeStudentId(req.firebaseUser?.uid || "");
+    const authUser = await tryGetFirebaseUser(req);
+    const ownerId = normalizeStudentId(authUser?.uid || studentId);
     const docId = await indexRagNote({
       studentId: ownerId,
       title: String(title || ""),
@@ -810,7 +628,7 @@ app.post("/api/rag/index-note", requireFirebaseAuth, withRateLimit("rag_index", 
   }
 });
 
-app.post("/api/recommendations", requireFirebaseAuth, withRateLimit("recommend", 20, 60 * 1000), async (req, res) => {
+app.post("/api/recommendations", withRateLimit("recommend", 20, 60 * 1000), async (req, res) => {
   try {
     const learningState = req.body?.state;
     if (!learningState || typeof learningState !== "object") {
@@ -895,18 +713,15 @@ if (registerTimeManagementRoutes) {
     callOpenAIChat,
     safeParseJson,
     isOpenAIConfigured,
-    normalizeStudentId,
-    upload,
-    pdfParse,
-    mammoth
+    normalizeStudentId
   });
 } else {
   console.warn("Time management routes disabled: optional dependency `sqlite3` is missing.");
 }
 
-app.post("/api/live/event/:studentId", requireFirebaseAuth, async (req, res) => {
+app.post("/api/live/event/:studentId", async (req, res) => {
   try {
-    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
+    const studentId = normalizeStudentId(req.params.studentId);
     const message = String(req.body?.message || "").trim();
     if (!message) return res.status(400).json({ error: "message is required." });
     const current = await loadStateWithFallback(studentId);
@@ -921,9 +736,9 @@ app.post("/api/live/event/:studentId", requireFirebaseAuth, async (req, res) => 
   }
 });
 
-app.post("/api/live/exam/:studentId", requireFirebaseAuth, async (req, res) => {
+app.post("/api/live/exam/:studentId", async (req, res) => {
   try {
-    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
+    const studentId = normalizeStudentId(req.params.studentId);
     const name = String(req.body?.name || "").trim();
     const score = Number(req.body?.score);
     const hours = Number(req.body?.hours);
@@ -957,9 +772,9 @@ app.post("/api/live/exam/:studentId", requireFirebaseAuth, async (req, res) => {
   }
 });
 
-app.post("/api/live/controls/:studentId", requireFirebaseAuth, async (req, res) => {
+app.post("/api/live/controls/:studentId", async (req, res) => {
   try {
-    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
+    const studentId = normalizeStudentId(req.params.studentId);
     const controls = req.body?.controls;
     if (!controls || typeof controls !== "object") {
       return res.status(400).json({ error: "controls object is required." });
@@ -977,7 +792,7 @@ app.post("/api/live/controls/:studentId", requireFirebaseAuth, async (req, res) 
   }
 });
 
-app.post("/api/practice/analyze", requireFirebaseAuth, withRateLimit("practice", 15, 60 * 1000), upload.single("paper"), async (req, res) => {
+app.post("/api/practice/analyze", withRateLimit("practice", 15, 60 * 1000), upload.single("paper"), async (req, res) => {
   try {
     const pastedText = String(req.body?.pastedText || "").trim();
     const topic = String(req.body?.topic || "General").trim() || "General";
@@ -991,7 +806,8 @@ app.post("/api/practice/analyze", requireFirebaseAuth, withRateLimit("practice",
     let source = "pasted-text";
     let fileMeta = null;
 
-    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
+    const authUser = await tryGetFirebaseUser(req);
+    const uid = authUser?.uid || normalizeStudentId(req.body?.studentId || "anonymous");
 
     if (file) {
       extractedText = await extractTextFromFile(file);
@@ -1523,190 +1339,7 @@ app.post("/api/study-notes/pack/:packId/query", requireFirebaseAuth, async (req,
 
 app.get("/api/live/bootstrap/:studentId", async (req, res) => {
   try {
-    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
-    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
-    const { uploads, changed } = normalizePracticeUploads(state.practiceUploads || []);
-    if (changed) {
-      state.practiceUploads = uploads;
-      await setUserState(uid, state);
-    }
-    return res.json({ ok: true, uploads });
-  } catch (error) {
-    handleError(res, "Failed to load practice uploads", error);
-  }
-});
-
-app.delete("/api/practice/uploads/:uploadId", requireFirebaseAuth, async (req, res) => {
-  try {
-    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
-    const targetId = cleanText(req.params.uploadId, 120);
-    if (!targetId) return res.status(400).json({ error: "uploadId is required." });
-
-    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
-    const { uploads, changed } = normalizePracticeUploads(state.practiceUploads || []);
-    const found = uploads.find((u) => String(u.uploadId) === targetId);
-    if (!found) return res.status(404).json({ error: "Upload source not found." });
-
-    state.practiceUploads = uploads.filter((u) => String(u.uploadId) !== targetId);
-    state.auditLog = state.auditLog || [];
-    state.auditLog.push({ ts: new Date().toISOString(), message: `Practice source deleted: ${found.name || targetId}` });
-    state.auditLog = state.auditLog.slice(-300);
-    await setUserState(uid, state);
-
-    await maybeDeleteStoredFile(found).catch(() => null);
-    return res.json({ ok: true, deleted: 1, uploads: state.practiceUploads, normalized: changed });
-  } catch (error) {
-    handleError(res, "Failed to delete practice upload", error);
-  }
-});
-
-app.post("/api/practice/uploads/delete-bulk", requireFirebaseAuth, async (req, res) => {
-  try {
-    const uid = normalizeStudentId(req.firebaseUser?.uid || "");
-    const ids = cleanList(req.body?.uploadIds, 100, 120);
-    if (!ids.length) return res.status(400).json({ error: "uploadIds is required." });
-
-    const idSet = new Set(ids);
-    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
-    const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
-    const matched = uploads.filter((u) => idSet.has(String(u.uploadId)));
-    if (!matched.length) return res.status(404).json({ error: "No matching upload sources found." });
-
-    state.practiceUploads = uploads.filter((u) => !idSet.has(String(u.uploadId)));
-    state.auditLog = state.auditLog || [];
-    state.auditLog.push({ ts: new Date().toISOString(), message: `Practice sources deleted: ${matched.length}` });
-    state.auditLog = state.auditLog.slice(-300);
-    await setUserState(uid, state);
-
-    await Promise.allSettled(matched.map((item) => maybeDeleteStoredFile(item)));
-    return res.json({ ok: true, deleted: matched.length, uploads: state.practiceUploads });
-  } catch (error) {
-    handleError(res, "Failed to bulk delete practice uploads", error);
-  }
-});
-
-app.post("/api/practice/generate-quiz", requireFirebaseAuth, withRateLimit("practice_quiz", 20, 60 * 1000), async (req, res) => {
-  try {
-    const sourceText = cleanText(req.body?.sourceText, 20000);
-    const difficulty = normalizeDifficulty(req.body?.difficulty);
-    const questionType = normalizeQuestionType(req.body?.questionType);
-    const numQuestions = Math.max(1, Math.min(20, Number(req.body?.numQuestions || 5)));
-
-    if (!sourceText || sourceText.length < 40) {
-      return res.status(400).json({ error: "sourceText is required and must contain enough context." });
-    }
-
-    const fallbackQuiz = buildFallbackQuizFromSource(sourceText, {
-      numQuestions,
-      difficulty,
-      questionType
-    });
-
-    let provider = "fallback";
-    let modelQuiz = null;
-    try {
-      const prompt = [
-        "You are an assessment generator for student revision.",
-        "Return strict JSON with key quiz only.",
-        "quiz must be an object with keys: title, difficulty, questionType, questions.",
-        "questions must be an array with EXACTLY the requested number of items.",
-        "each question item keys: question, options, answer, explanation.",
-        "If questionType is mcq, options must contain exactly 4 choices.",
-        "Use only the provided source text."
-      ].join(" ");
-      const out = await callOpenAIChat(
-        [
-          { role: "system", content: prompt },
-          {
-            role: "user",
-            content: JSON.stringify({
-              difficulty,
-              questionType,
-              numQuestions,
-              sourceText: snippet(sourceText, 14000)
-            })
-          }
-        ],
-        0.2
-      );
-      const parsed = safeParseJson(out);
-      modelQuiz = normalizeQuizPayload(parsed?.quiz, { numQuestions, difficulty, questionType });
-      provider = "openai-api";
-    } catch {
-      modelQuiz = null;
-      provider = "fallback";
-    }
-
-    const quiz = modelQuiz?.questions?.length ? modelQuiz : fallbackQuiz;
-    return res.json({
-      ok: true,
-      provider,
-      quiz
-    });
-  } catch (error) {
-    handleError(res, "Failed to generate quiz", error);
-  }
-});
-
-app.post("/api/practice/generate-flashcards", requireFirebaseAuth, withRateLimit("practice_flashcards", 20, 60 * 1000), async (req, res) => {
-  try {
-    const sourceText = cleanText(req.body?.sourceText, 20000);
-    const count = Math.max(1, Math.min(30, Number(req.body?.count || 8)));
-
-    if (!sourceText || sourceText.length < 40) {
-      return res.status(400).json({ error: "sourceText is required and must contain enough context." });
-    }
-
-    const fallback = {
-      title: "Generated Flashcards",
-      cards: buildFallbackFlashcards(sourceText, count)
-    };
-
-    let provider = "fallback";
-    let flashcards = null;
-    try {
-      const prompt = [
-        "You are a flashcard generator for exam revision.",
-        "Return strict JSON with key flashcards only.",
-        "flashcards must be an object with keys: title, cards.",
-        "cards must be an array with EXACTLY the requested count.",
-        "each card keys: question, answer.",
-        "Use only the provided source text."
-      ].join(" ");
-      const out = await callOpenAIChat(
-        [
-          { role: "system", content: prompt },
-          {
-            role: "user",
-            content: JSON.stringify({
-              count,
-              sourceText: snippet(sourceText, 14000)
-            })
-          }
-        ],
-        0.2
-      );
-      const parsed = safeParseJson(out);
-      flashcards = normalizeFlashcardsPayload(parsed?.flashcards, count);
-      provider = "openai-api";
-    } catch {
-      flashcards = null;
-      provider = "fallback";
-    }
-
-    return res.json({
-      ok: true,
-      provider,
-      flashcards: flashcards?.cards?.length ? flashcards : fallback
-    });
-  } catch (error) {
-    handleError(res, "Failed to generate flashcards", error);
-  }
-});
-
-app.get("/api/live/bootstrap/:studentId", requireFirebaseAuth, async (req, res) => {
-  try {
-    const studentId = resolveAuthorizedStudentId(req, req.params.studentId);
+    const studentId = normalizeStudentId(req.params.studentId);
     const state = await loadStateWithFallback(studentId);
     const hydrated = mergeDeep(createMinimalState(studentId), state);
     const notesPack = await buildNotesPack(hydrated);
@@ -2389,8 +2022,6 @@ function createMinimalState(studentId) {
     studyPacks: [],
     activeStudyPackId: "",
     practiceUploads: [],
-    focusSessions: [],
-    dashboardFeedback: {},
     examHistory: [],
     responsibleControls: {},
     auditLog: []
@@ -2916,293 +2547,6 @@ function decodeXml(text) {
     .replace(/&#39;/g, "'");
 }
 
-function buildSectionRef(index) {
-  const chapter = Math.floor(Number(index || 0) / 3) + 1;
-  const part = (Number(index || 0) % 3) + 1;
-  return `${chapter}.${part}`;
-}
-
-function looksLikeHeading(value) {
-  const line = cleanText(value, 180);
-  if (!line || line.length > 120) return false;
-  if (/^(chapter|section|topic|unit|module)\b/i.test(line)) return true;
-  if (/^\d+(?:\.\d+){0,2}\s+/.test(line)) return true;
-  const alpha = line.replace(/[^a-z]/gi, "");
-  if (alpha.length >= 6 && alpha === alpha.toUpperCase() && line.split(/\s+/).length <= 10) return true;
-  return false;
-}
-
-function summarizeForSection(text, max = 260) {
-  const source = cleanText(text, 12000);
-  if (!source) return "";
-  const sentence = source.split(/(?<=[.!?])\s+/)[0] || source;
-  return snippet(sentence, max);
-}
-
-function extractKeyTerms(text, limit = 6) {
-  const stopwords = new Set([
-    "the", "and", "for", "that", "with", "this", "from", "into", "you", "your", "are", "was", "were", "have", "has", "had",
-    "when", "then", "than", "what", "why", "how", "can", "will", "may", "might", "about", "between", "within", "using", "used",
-    "also", "each", "which", "their", "there", "these", "those", "because", "should", "could", "would", "must", "into", "onto",
-    "section", "chapter", "topic", "example", "question", "answer", "method", "approach", "notes", "study", "pack"
-  ]);
-
-  const words = String(cleanText(text, 18000) || "")
-    .toLowerCase()
-    .match(/[a-z][a-z0-9-]{2,}/g) || [];
-
-  const freq = new Map();
-  words.forEach((word) => {
-    if (stopwords.has(word)) return;
-    freq.set(word, (freq.get(word) || 0) + 1);
-  });
-
-  return [...freq.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([word]) => word)
-    .slice(0, Math.max(1, Math.min(10, Number(limit) || 6)));
-}
-
-function buildStudyPackSectionsFromText(text, sourceName = "PDF") {
-  const normalized = cleanText(text, 180000).replace(/\r/g, "");
-  if (!normalized) return [];
-
-  const blocks = normalized
-    .split(/\n{2,}/)
-    .map((b) => cleanText(b, 12000))
-    .filter(Boolean);
-
-  const sections = [];
-  let pendingTitle = "";
-  let bucket = [];
-
-  const flush = () => {
-    const body = cleanText(bucket.join("\n\n"), 22000);
-    if (!body) {
-      bucket = [];
-      return;
-    }
-
-    const index = sections.length;
-    const ref = buildSectionRef(index);
-    const title = cleanText(pendingTitle || `Section ${ref}`, 180) || `Section ${ref}`;
-    const keyTerms = extractKeyTerms(body, 2);
-    sections.push({
-      id: `s-${index + 1}`,
-      ref,
-      title,
-      text: body,
-      summary: summarizeForSection(body, 320),
-      checkpoints: cleanList([
-        `Define the key idea in ${title}.`,
-        `Explain how to apply ${keyTerms[0] || "the concept"} in a worked example.`,
-        `What is a common mistake to avoid in ${title}?`
-      ], 3, 180),
-      sourceName: cleanText(sourceName, 180) || "PDF"
-    });
-
-    bucket = [];
-    pendingTitle = "";
-  };
-
-  (blocks.length ? blocks : [normalized]).forEach((block) => {
-    if (looksLikeHeading(block)) {
-      if (bucket.length) flush();
-      pendingTitle = cleanText(block, 180);
-      return;
-    }
-
-    bucket.push(block);
-    const currentLength = bucket.join("\n\n").length;
-    if (currentLength >= 2600) flush();
-  });
-  if (bucket.length) flush();
-
-  if (!sections.length) {
-    const chunkSize = 2200;
-    let offset = 0;
-    while (offset < normalized.length && sections.length < 24) {
-      const part = cleanText(normalized.slice(offset, offset + chunkSize), chunkSize);
-      if (!part) break;
-      const index = sections.length;
-      const ref = buildSectionRef(index);
-      sections.push({
-        id: `s-${index + 1}`,
-        ref,
-        title: `Section ${ref}`,
-        text: part,
-        summary: summarizeForSection(part, 320),
-        checkpoints: cleanList([
-          `What is the main idea in Section ${ref}?`,
-          `How would you apply Section ${ref} in one exam question?`
-        ], 2, 180),
-        sourceName: cleanText(sourceName, 180) || "PDF"
-      });
-      offset += chunkSize;
-    }
-  }
-
-  return sections.slice(0, 30);
-}
-
-function buildDeterministicCheckpointQuiz(text, sectionRef, sectionTitle) {
-  const sectionLabel = [sectionRef ? `Section ${sectionRef}` : "", cleanText(sectionTitle, 140)]
-    .filter(Boolean)
-    .join(" · ") || "Selected Section";
-  const terms = extractKeyTerms(text, 4);
-  const core = terms[0] || "the core concept";
-  const secondary = terms[1] || "its application";
-
-  const q1Answer = `It emphasizes ${core} and how to apply it step-by-step.`;
-  const q2Answer = `Identify given information, choose a method tied to ${core}, then verify assumptions.`;
-  const q3Answer = `A common mistake is skipping reasoning and memorizing steps without checking ${secondary}.`;
-
-  return {
-    title: `${sectionLabel} — Checkpoint Quiz`,
-    questions: [
-      {
-        question: `Which statement best captures the focus of ${sectionLabel}?`,
-        options: [
-          q1Answer,
-          "It is mainly about unrelated facts with no method.",
-          "It says speed matters more than understanding.",
-          "It avoids discussing mistakes or constraints."
-        ],
-        answer: q1Answer
-      },
-      {
-        question: `What is the best first-step strategy for questions from ${sectionLabel}?`,
-        options: [
-          "Start writing formulas immediately and hope they match.",
-          q2Answer,
-          "Skip context and jump to final answer format.",
-          "Memorize one pattern and force it on every question."
-        ],
-        answer: q2Answer
-      },
-      {
-        question: `Which weakness should you avoid when revising ${sectionLabel}?`,
-        options: [
-          "Reading quickly without practicing.",
-          "Using examples to check understanding.",
-          q3Answer,
-          "Linking mistakes to revision notes."
-        ],
-        answer: q3Answer
-      }
-    ]
-  };
-}
-
-function normalizeCheckpointQuiz(rawQuiz, fallbackTitle = "Checkpoint Quiz") {
-  const title = cleanText(rawQuiz?.title || fallbackTitle, 180) || "Checkpoint Quiz";
-  const rows = Array.isArray(rawQuiz?.questions)
-    ? rawQuiz.questions
-    : Array.isArray(rawQuiz)
-      ? rawQuiz
-      : [];
-
-  const distractors = [
-    "Review assumptions before finalizing the answer.",
-    "Compare your method with a worked example.",
-    "Check each step against the section definition.",
-    "Validate constraints and edge cases."
-  ];
-
-  const questions = rows
-    .map((row, idx) => {
-      const question = cleanText(row?.question, 260);
-      if (!question) return null;
-
-      let options = cleanList(row?.options, 8, 200);
-      let answer = cleanText(row?.answer, 200);
-
-      if (answer && !options.some((opt) => opt.toLowerCase() === answer.toLowerCase())) {
-        options.unshift(answer);
-      }
-      if (!answer && options.length) answer = options[0];
-
-      for (const extra of distractors) {
-        if (options.length >= 4) break;
-        if (!options.some((opt) => opt.toLowerCase() === extra.toLowerCase())) options.push(extra);
-      }
-
-      options = options.slice(0, 4);
-      if (!options.length) return null;
-
-      if (!answer || !options.some((opt) => opt.toLowerCase() === answer.toLowerCase())) {
-        answer = options[0];
-      }
-
-      return {
-        question,
-        options,
-        answer,
-        id: `q-${idx + 1}`
-      };
-    })
-    .filter(Boolean)
-    .slice(0, 4);
-
-  return { title, questions };
-}
-
-function buildDeterministicCheatsheet(packTitle, text) {
-  const safePackTitle = cleanText(packTitle, 140) || "Study Pack";
-  const source = cleanText(text, 50000);
-  const lines = source
-    .split(/\n+/)
-    .map((l) => cleanText(l, 240))
-    .filter(Boolean);
-
-  const coreBullets = lines
-    .filter((line) => line.length >= 35)
-    .slice(0, 6)
-    .map((line) => `- ${snippet(line, 150)}`);
-
-  const terms = extractKeyTerms(source, 5);
-
-  return [
-    `${safePackTitle} — Cheatsheet`,
-    "",
-    "1) Core Ideas",
-    ...(coreBullets.length ? coreBullets : ["- Review the section summaries and rewrite each in one line."]),
-    "",
-    "2) Key Terms to Remember",
-    ...(terms.length ? terms.map((term) => `- ${term}`) : ["- Identify 3 repeated technical terms from your sections."]),
-    "",
-    "3) Common Mistakes",
-    "- Jumping into formulas without identifying assumptions.",
-    "- Memorizing procedures without understanding why they work.",
-    "- Ignoring repeated weak signals from recent practice papers.",
-    "",
-    "4) 15-Minute Revision Drill",
-    "- 5 min: explain one section out loud (no notes).",
-    "- 5 min: solve one checkpoint question under time pressure.",
-    "- 5 min: check mistakes and add one fix to your notes."
-  ].join("\n");
-}
-
-function buildDeterministicLecture(sectionRef, sectionTitle, text) {
-  const label = [sectionRef ? `Section ${sectionRef}` : "", cleanText(sectionTitle, 160)]
-    .filter(Boolean)
-    .join(" · ") || "this section";
-  const summary = summarizeForSection(text, 260) || "Focus on understanding the core idea before applying steps.";
-  const terms = extractKeyTerms(text, 3);
-  const termLine = terms.length ? terms.join(", ") : "the core idea and reasoning steps";
-
-  return [
-    `Let’s learn ${label} like a short lecture.`,
-    `Start with intuition: ${summary}`,
-    "Lecture flow:",
-    `1) Identify what the question is really asking and list known information.`,
-    `2) Choose a method linked to ${terms[0] || "the main concept"} and justify why it fits.`,
-    "3) Execute the method step-by-step, then check assumptions and edge cases.",
-    `Mini-checkpoint: Can you explain ${terms[0] || "the concept"} in one sentence and solve one fresh example?`,
-    `Recap: prioritise ${termLine}. If this is still weak, regenerate the checkpoint quiz for this section and retry.`
-  ].join("\n\n");
-}
-
 async function maybeStoreUploadedFile(uid, file) {
   if (!cloudinary) return null;
   if (String(process.env.ENABLE_FILE_STORAGE || "true").toLowerCase() === "false") return null;
@@ -3486,71 +2830,19 @@ function buildTutorEvidence(contextType, context) {
 
   if (type === "study-notes") {
     const packName = cleanText(safeContext.packName || "Study Pack", 140) || "Study Pack";
-    const activeSection = safeContext.activeSection && typeof safeContext.activeSection === "object"
-      ? safeContext.activeSection
-      : null;
-    const activeSectionRef = cleanText(activeSection?.ref || "", 40);
-    const activeSectionTitle = cleanText(activeSection?.title || "", 180);
-    const section = cleanText(
-      safeContext.section || [activeSectionRef ? `Section ${activeSectionRef}` : "", activeSectionTitle].filter(Boolean).join(" · "),
-      160
-    );
+    const section = cleanText(safeContext.section || "", 140);
     const selection = cleanText(safeContext.selection || "", 700);
-    const activeJumpRef = cleanText(activeSection?.jumpRef || "", 120) || "study-notes";
-    const activeText = cleanText(activeSection?.text || "", 4000);
-    const linkedSections = Array.isArray(safeContext.sections) ? safeContext.sections.slice(0, 4) : [];
-    const weaknessSignals = Array.isArray(safeContext.weaknessSignals) ? safeContext.weaknessSignals.slice(0, 4) : [];
     const highlights = Array.isArray(safeContext.highlights) ? safeContext.highlights.slice(0, 5) : [];
     const citations = [];
-
     if (selection) {
       citations.push({
         docName: packName,
         page: section || "Section",
         quote: selection,
-        jumpRef: activeJumpRef,
+        jumpRef: "study-notes",
         sourceType: "selection"
       });
     }
-
-    if (activeText) {
-      citations.push({
-        docName: packName,
-        page: section || (activeSectionRef ? `Section ${activeSectionRef}` : "Section"),
-        quote: snippet(activeText, 240),
-        jumpRef: activeJumpRef,
-        sourceType: "section"
-      });
-    }
-
-    linkedSections.forEach((row, idx) => {
-      if (!row || typeof row !== "object") return;
-      const rowRef = cleanText(row.ref || "", 40);
-      const rowTitle = cleanText(row.title || "", 180);
-      const rowSummary = cleanText(row.summary || row.text || "", 260);
-      if (!rowSummary) return;
-      citations.push({
-        docName: packName,
-        page: rowRef ? `Section ${rowRef}` : (rowTitle || `S${idx + 1}`),
-        quote: rowSummary,
-        jumpRef: cleanText(row.jumpRef || activeJumpRef, 120),
-        sourceType: "pack-section"
-      });
-    });
-
-    weaknessSignals.forEach((row) => {
-      if (!row || typeof row !== "object") return;
-      const message = cleanText(row.message || row.topic || "", 240);
-      if (!message) return;
-      citations.push({
-        docName: "Practice Signals",
-        page: cleanText(row.sectionRef || "Trend", 60) || "Trend",
-        quote: message,
-        jumpRef: cleanText(row.jumpRef || activeJumpRef, 120),
-        sourceType: "weakness-signal"
-      });
-    });
-
     highlights.forEach((h, idx) => {
       const quote = cleanText(h?.text || h?.summary || "", 220);
       if (!quote) return;
@@ -3558,18 +2850,16 @@ function buildTutorEvidence(contextType, context) {
         docName: packName,
         page: cleanText(h?.section || section || `S${idx + 1}`, 40),
         quote,
-        jumpRef: cleanText(h?.jumpRef || activeJumpRef, 120),
+        jumpRef: "study-notes",
         sourceType: "pack"
       });
     });
-
     return {
       scope: {
         label: `Context: Study Pack (${packName}${section ? ` · ${section}` : ""})`,
         contextType: "study-notes",
         packName,
-        section,
-        sectionRef: activeSectionRef
+        section
       },
       citations
     };
@@ -3695,22 +2985,9 @@ function buildTutorFallback(contextType, question, scope, citations) {
   }
 
   const safeCitations = dedupeTutorCitations(citations).slice(0, 4);
-  const isStudyPack = hint === "study-notes";
   const fallbackActions = [
-    isStudyPack
-      ? {
-        type: "jump-section",
-        label: "Jump to section",
-        jumpRef: cleanText(safeCitations[0]?.jumpRef || "study-notes", 80) || "study-notes"
-      }
-      : safeCitations[0]?.jumpRef
-        ? {
-          type: "jump",
-          label: "Jump to source",
-          jumpRef: safeCitations[0].jumpRef
-        }
-        : null,
-    { type: isStudyPack ? "add-to-notes" : "add-note", label: "Add to my notes", text: answer },
+    safeCitations[0]?.jumpRef ? { type: "jump", label: "Jump to source", jumpRef: safeCitations[0].jumpRef } : null,
+    { type: "add-note", label: "Add to my notes", text: answer },
     hint === "practice-papers"
       ? { type: "revise-link", label: "Revise in Study Notes", target: "study-notes" }
       : { type: "flashcards", label: "Turn into flashcards", text: answer }
@@ -3724,104 +3001,33 @@ function buildTutorFallback(contextType, question, scope, citations) {
   };
 }
 
-function mapTutorActionType(rawType, contextType) {
-  const value = String(rawType || "").trim().toLowerCase();
-  if (!value) return "";
-  if (["jump", "jump-section", "jump_to_section", "goto", "go-to", "go_to", "jump-to-source", "jump_to_source"].includes(value)) {
-    return String(contextType || "").toLowerCase() === "study-notes" ? "jump-section" : "jump";
-  }
-  if (["add-note", "add_to_note", "add_to_notes", "add-to-notes", "add-note-to-notes", "save-note"].includes(value)) {
-    return "add-to-notes";
-  }
-  if (["flashcard", "flashcards", "to-flashcards", "turn-into-flashcards", "turn_to_flashcards"].includes(value)) {
-    return "flashcards";
-  }
-  if (["revise", "revise-link", "revise_link", "review-link"].includes(value)) {
-    return "revise-link";
-  }
-  return value;
-}
-
 function normalizeTutorActions(actions, contextType, citations, answer, fallbackActions = []) {
-  const hint = String(contextType || "active-reading").toLowerCase();
-  const isStudyPack = hint === "study-notes";
-  const studyPackJumpRef = cleanText(citations[0]?.jumpRef || "study-notes", 80) || "study-notes";
   const normalized = Array.isArray(actions)
     ? actions
       .map((a) => {
         if (!a || typeof a !== "object") return null;
-        const normalizedType = mapTutorActionType(cleanText(a.type || "", 40), contextType);
         return {
-          type: normalizedType,
+          type: cleanText(a.type || "", 40),
           label: cleanText(a.label || "", 80),
           target: cleanText(a.target || "", 80),
           jumpRef: cleanText(a.jumpRef || "", 80),
           text: cleanText(a.text || "", 280)
         };
       })
-      .filter((a) => a && a.label && a.type)
-      .map((a) => {
-        if ((a.type === "jump" || a.type === "jump-section") && !a.jumpRef && citations[0]?.jumpRef) {
-          a.jumpRef = cleanText(citations[0].jumpRef, 80);
-        }
-        return a;
-      })
+      .filter((a) => a && a.label)
       .slice(0, 4)
     : [];
 
+  if (normalized.length) return normalized;
+
+  const hint = String(contextType || "active-reading").toLowerCase();
   const defaults = [
-    isStudyPack
-      ? {
-        type: "jump-section",
-        label: "Jump to section",
-        jumpRef: studyPackJumpRef
-      }
-      : citations[0]?.jumpRef
-        ? {
-          type: "jump",
-          label: "Jump to source",
-          jumpRef: citations[0].jumpRef
-        }
-        : null,
-    { type: isStudyPack ? "add-to-notes" : "add-note", label: "Add to my notes", text: cleanText(answer, 240) },
+    citations[0]?.jumpRef ? { type: "jump", label: "Jump to source", jumpRef: citations[0].jumpRef } : null,
+    { type: "add-note", label: "Add to my notes", text: cleanText(answer, 240) },
     hint === "practice-papers"
       ? { type: "revise-link", label: "Revise in Study Notes", target: "study-notes" }
       : { type: "flashcards", label: "Turn into flashcards", text: cleanText(answer, 200) }
   ].filter(Boolean);
 
-  const baseActions = (normalized.length ? normalized : (fallbackActions.length ? fallbackActions : defaults)).slice(0, 4);
-  if (!isStudyPack) return baseActions;
-
-  const requiredStudyPackActions = [
-    {
-      type: "jump-section",
-      label: "Jump to section",
-      jumpRef: studyPackJumpRef
-    },
-    {
-      type: "add-to-notes",
-      label: "Add to my notes",
-      text: cleanText(answer, 240)
-    }
-  ].filter(Boolean);
-
-  const merged = [];
-  const seen = new Set();
-  [...requiredStudyPackActions, ...baseActions].forEach((action) => {
-    if (!action?.type || !action?.label) return;
-    const key = String(action.type).toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    merged.push(action);
-  });
-
-  if (!seen.has("flashcards") && merged.length < 4) {
-    merged.push({
-      type: "flashcards",
-      label: "Turn into flashcards",
-      text: cleanText(answer, 200)
-    });
-  }
-
-  return merged.slice(0, 4);
+  return (fallbackActions.length ? fallbackActions : defaults).slice(0, 4);
 }
