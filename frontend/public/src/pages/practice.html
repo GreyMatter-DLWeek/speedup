@@ -19,6 +19,12 @@
       grid-template-columns: 1.25fr 1fr;
       gap: 18px;
     }
+    .practice-column {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-width: 0;
+    }
     .practice-panel {
       background: var(--surface);
       border: 1px solid var(--border2);
@@ -60,9 +66,36 @@
     .upload-card.active { border-color: var(--accent); background: rgba(110,231,183,0.06); }
     .upload-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
     .upload-toolbar .hint { font-size:12px; color:var(--text3); margin-left:auto; }
+    .practice-textarea { min-height: 140px; resize: vertical; }
+    .status-text { margin-top: 10px; font-size: 13px; color: var(--text3); }
+    .toolbar-btn-sm { padding: 6px 10px; font-size: 12px; }
+    .danger-ghost { color: var(--danger); border-color: rgba(248,113,113,0.35); }
     @media (max-width: 1100px) {
       .practice-grid { grid-template-columns: 1fr; }
       .practice-hero h2 { font-size: 24px; }
+    }
+    @media (max-width: 700px) {
+      .practice-hero {
+        padding: 16px;
+        border-radius: 14px;
+      }
+      .practice-hero h2 { font-size: 22px; }
+      .practice-hero p { font-size: 14px; }
+      .practice-panel {
+        padding: 14px;
+        border-radius: 12px;
+      }
+      .practice-actions .btn {
+        flex: 1 1 100%;
+        justify-content: center;
+      }
+      .upload-toolbar .btn {
+        flex: 1 1 calc(50% - 6px);
+      }
+      .upload-toolbar .hint {
+        margin-left: 0;
+        width: 100%;
+      }
     }
   </style>
 
@@ -82,7 +115,7 @@
     </div>
 
     <div class="practice-grid">
-      <div style="display:flex;flex-direction:column;gap:18px;">
+      <div class="practice-column">
         <section class="practice-panel">
           <h3>1) Upload & Analyze</h3>
           <p class="sub">Supported: PDF, DOCX, PPTX, TXT, or pasted text</p>
@@ -94,7 +127,7 @@
 
           <div class="form-group">
             <label class="form-label">Or Paste Text</label>
-            <textarea id="practicePastedText" class="input" style="min-height:140px;resize:vertical;" placeholder="Paste question text, notes, or model answers..."></textarea>
+            <textarea id="practicePastedText" class="input practice-textarea" placeholder="Paste question text, notes, or model answers..."></textarea>
           </div>
 
           <div class="form-group">
@@ -105,7 +138,7 @@
           <div class="practice-actions">
             <button id="practiceAnalyzeBtn" class="btn btn-primary">Analyze Practice Source</button>
           </div>
-          <div id="practiceStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
+          <div id="practiceStatus" class="status-text"></div>
 
           <div id="practiceAnalysis" class="practice-output">No analysis yet.</div>
         </section>
@@ -141,12 +174,12 @@
           <div class="practice-actions">
             <button id="generateQuizBtn" class="btn btn-secondary">Generate Quiz</button>
           </div>
-          <div id="quizStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
+          <div id="quizStatus" class="status-text"></div>
           <div id="quizOutput" class="practice-output">No quiz generated yet.</div>
         </section>
       </div>
 
-      <div style="display:flex;flex-direction:column;gap:18px;">
+      <div class="practice-column">
         <section class="practice-panel">
           <h3>3) Generate Flashcards</h3>
           <div class="form-group context-select">
@@ -162,7 +195,7 @@
           <div class="practice-actions">
             <button id="generateFlashcardsBtn" class="btn btn-secondary">Generate Flashcards</button>
           </div>
-          <div id="flashcardStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
+          <div id="flashcardStatus" class="status-text"></div>
           <div id="flashcardOutput" class="practice-output">No flashcards generated yet.</div>
         </section>
 
@@ -170,9 +203,9 @@
           <h3>Uploaded Sources</h3>
           <p class="sub">Select any uploaded file as generation context</p>
           <div class="upload-toolbar">
-            <button id="selectAllUploadsBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Select All</button>
-            <button id="clearUploadSelectionBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Clear</button>
-            <button id="deleteSelectedUploadsBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;color:var(--danger);border-color:rgba(248,113,113,0.35);">Delete Selected</button>
+            <button id="selectAllUploadsBtn" class="btn btn-ghost toolbar-btn-sm">Select All</button>
+            <button id="clearUploadSelectionBtn" class="btn btn-ghost toolbar-btn-sm">Clear</button>
+            <button id="deleteSelectedUploadsBtn" class="btn btn-ghost toolbar-btn-sm danger-ghost">Delete Selected</button>
             <span id="uploadSelectionCount" class="hint">0 selected</span>
           </div>
           <div id="uploadedPapersList"></div>

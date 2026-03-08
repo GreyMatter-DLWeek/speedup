@@ -20,9 +20,9 @@ const pdfParse = tryRequire("pdf-parse");
 const JSZip = tryRequire("jszip");
 const cloudinaryModule = tryRequire("cloudinary");
 const cloudinary = cloudinaryModule?.v2 || null;
-const { isFirebaseConfigured, getFirestore } = require("./firebase/firebaseAdmin");
+const { isFirebaseConfigured, getFirestore, deleteFirebaseAuthUser } = require("./firebase/firebaseAdmin");
 const { requireFirebaseAuth, tryGetFirebaseUser } = require("./firebase/firebaseAuth");
-const { getUserState, setUserState, appendAuditEvent } = require("./firebase/firebaseStore");
+const { getUserState, setUserState, appendAuditEvent, deleteUserState } = require("./firebase/firebaseStore");
 const timeManagementModule = tryRequire("../time-management");
 const registerTimeManagementRoutes = timeManagementModule?.registerTimeManagementRoutes || null;
 
@@ -33,6 +33,15 @@ const FRONTEND_PUBLIC_DIR = path.resolve(__dirname, "../frontend/public");
 const PROJECT_ROOT_DIR = path.resolve(__dirname, "..");
 const STUDY_HUB_PDF_MAX_CHARS = 60_000;
 const SERVER_BOOT_ID = `boot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+const HEALTH_DIAGNOSTIC_TTL_MS = 60 * 1000;
+const FIREBASE_DIAGNOSTIC_TIMEOUT_MS = 1200;
+const firebaseDiagnosticsCache = {
+  read: false,
+  write: false,
+  error: "pending",
+  checkedAt: 0,
+  inFlight: false
+};
 
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "http://localhost:3000")
   .split(",")
@@ -420,7 +429,87 @@ app.post("/api/user/controls", requireFirebaseAuth, async (req, res) => {
   }
 });
 
-app.get("/api/state/:studentId", async (req, res) => {
+app.delete("/api/user/account", requireFirebaseAuth, async (req, res) => {
+  try {
+    const rawUid = cleanText(req.firebaseUser?.uid || "", 200);
+    if (!rawUid) return res.status(400).json({ error: "Invalid user id." });
+    const ownerId = normalizeStudentId(rawUid);
+
+    let state = createMinimalState(rawUid);
+    let firestoreStateDeleted = false;
+    let ragDeleted = false;
+    let stateReadError = "";
+    let stateDeleteError = "";
+    let ragDeleteError = "";
+    try {
+      state = mergeDeep(createMinimalState(rawUid), await getUserState(rawUid));
+    } catch (error) {
+      state = createMinimalState(rawUid);
+      stateReadError = cleanText(error?.message || "Failed to read user state.", 240);
+    }
+
+    const { uploads } = normalizePracticeUploads(state.practiceUploads || []);
+    const fileCleanup = await Promise.allSettled(uploads.map((item) => maybeDeleteStoredFile(item)));
+    const filesDeleted = fileCleanup.filter((x) => x.status === "fulfilled" && x.value).length;
+    const fileDeleteFailed = fileCleanup.filter((x) => x.status === "rejected").length;
+
+    try {
+      if (ownerId) {
+        await cleanupUserRagNotes(ownerId);
+      }
+      ragDeleted = true;
+    } catch (error) {
+      ragDeleteError = cleanText(error?.message || "Failed to delete RAG notes.", 240);
+    }
+
+    try {
+      await deleteUserState(rawUid);
+      firestoreStateDeleted = true;
+    } catch (error) {
+      stateDeleteError = cleanText(error?.message || "Failed to delete user state.", 240);
+    }
+
+    let authDeleted = false;
+    let authDeleteError = "";
+    try {
+      await deleteFirebaseAuthUser(rawUid);
+      authDeleted = true;
+    } catch (error) {
+      authDeleteError = cleanText(error?.message || "Failed to delete auth user.", 300);
+    }
+
+    const warnings = [stateReadError, stateDeleteError, ragDeleteError, authDeleteError].filter(Boolean);
+    const hardFailure = !authDeleted && !firestoreStateDeleted && fileDeleteFailed > 0;
+    if (hardFailure) {
+      return res.status(500).json({
+        error: "Failed to delete account. Please try again.",
+        code: "ACCOUNT_DELETE_FAILED",
+        hint: "Check backend logs using the returned requestId.",
+        requestId: req.requestId
+      });
+    }
+
+    return res.json({
+      ok: true,
+      deleted: {
+        firestoreState: firestoreStateDeleted,
+        ragNotes: ragDeleted,
+        authUser: authDeleted,
+        filesDeleted,
+        fileDeleteFailed
+      },
+      warning: warnings.length
+        ? "Account deletion completed with warnings. Some cleanup may need manual follow-up."
+        : "",
+      warnings,
+      requestId: req.requestId
+    });
+  } catch (error) {
+    return handleError(res, "Failed to delete account", error);
+  }
+});
+
+app.get("/api/state/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
     const studentId = normalizeStudentId(req.params.studentId);
     const state = await loadStateWithFallback(studentId);
@@ -430,7 +519,7 @@ app.get("/api/state/:studentId", async (req, res) => {
   }
 });
 
-app.put("/api/state/:studentId", async (req, res) => {
+app.put("/api/state/:studentId", requireFirebaseAuth, async (req, res) => {
   try {
     const studentId = normalizeStudentId(req.params.studentId);
     const state = req.body;
@@ -445,7 +534,7 @@ app.put("/api/state/:studentId", async (req, res) => {
   }
 });
 
-app.post("/api/explain", withRateLimit("explain", 40, 60 * 1000), async (req, res) => {
+app.post("/api/explain", requireFirebaseAuth, withRateLimit("explain", 40, 60 * 1000), async (req, res) => {
   try {
     const paragraph = cleanText(req.body?.paragraph, 4000);
     const attempt = Number(req.body?.attempt || 0);
@@ -754,7 +843,11 @@ if (registerTimeManagementRoutes) {
     callOpenAIChat,
     safeParseJson,
     isOpenAIConfigured,
-    normalizeStudentId
+    normalizeStudentId,
+    requireFirebaseAuth,
+    upload,
+    pdfParse,
+    mammoth
   });
 } else {
   console.warn("Time management routes disabled: optional dependency `sqlite3` is missing.");
@@ -1543,6 +1636,14 @@ function mapErrorDetails(error) {
       code: "FIREBASE_NOT_CONFIGURED",
       message: "Firebase Admin is not configured on backend.",
       hint: "Set FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY."
+    };
+  }
+  if (raw.includes("decoder routines") || raw.includes("getting metadata from plugin failed")) {
+    return {
+      status: 503,
+      code: "FIREBASE_CREDENTIAL_INVALID",
+      message: "Firebase credentials are invalid or malformed.",
+      hint: "Re-check FIREBASE_PRIVATE_KEY formatting (single line with \\n) and client email/project id."
     };
   }
   return {
@@ -2797,6 +2898,28 @@ async function maybeDeleteStoredFile(item) {
   if (!pathValue) return false;
   await cloudinary.uploader.destroy(pathValue, { resource_type: "raw", invalidate: true });
   return true;
+}
+
+async function cleanupUserRagNotes(studentId) {
+  if (!isFirebaseConfigured()) return 0;
+  const safeId = normalizeStudentId(studentId);
+  if (!safeId) return 0;
+  const col = getFirestore().collection(config.rag.collection);
+  let deleted = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const snap = await col.where("studentId", "==", safeId).limit(100).get();
+    if (snap.empty) {
+      hasMore = false;
+      break;
+    }
+    const batch = getFirestore().batch();
+    snap.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+    deleted += snap.size;
+    if (snap.size < 100) hasMore = false;
+  }
+  return deleted;
 }
 
 async function applyPracticeSignals(uid, analysis) {
