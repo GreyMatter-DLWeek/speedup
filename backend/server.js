@@ -1,4 +1,7 @@
 const path = require("path");
+const fs = require("fs");
+const os = require("os");
+const { spawn } = require("child_process");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
 function tryRequire(name) {
@@ -27,6 +30,9 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const requestCounters = new Map();
 const FRONTEND_PUBLIC_DIR = path.resolve(__dirname, "../frontend/public");
+const PROJECT_ROOT_DIR = path.resolve(__dirname, "..");
+const STUDY_HUB_PDF_MAX_CHARS = 60_000;
+const SERVER_BOOT_ID = `boot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "http://localhost:3000")
   .split(",")
@@ -58,10 +64,25 @@ const upload = multer
   })
   : { single: () => (_req, res) => res.status(503).json({ error: "File upload feature unavailable. Missing dependencies." }) };
 
+const uploadStudyNotes = multer
+  ? multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024, files: 12 }
+  })
+  : { array: () => (_req, res) => res.status(503).json({ error: "File upload feature unavailable. Missing dependencies." }) };
+
+const defaultOpenAIModel = String(process.env.OPENAI_MODEL || "gpt-4.1-mini").trim() || "gpt-4.1-mini";
+const envAllowedOpenAIModels = String(process.env.OPENAI_ALLOWED_MODELS || "")
+  .split(",")
+  .map((v) => String(v || "").trim())
+  .filter(Boolean);
+const openAIAllowedModels = Array.from(new Set([defaultOpenAIModel, ...envAllowedOpenAIModels]));
+
 const config = {
   openai: {
     apiKey: process.env.OPENAI_API_KEY || "",
-    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+    model: defaultOpenAIModel,
+    allowedModels: openAIAllowedModels.length ? openAIAllowedModels : [defaultOpenAIModel],
     baseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1"
   },
   rag: {
@@ -71,6 +92,9 @@ const config = {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME || "",
     apiKey: process.env.CLOUDINARY_API_KEY || "",
     apiSecret: process.env.CLOUDINARY_API_SECRET || ""
+  },
+  pdfbox: {
+    jarPath: resolvePdfboxJarPath()
   }
 };
 
@@ -85,6 +109,7 @@ if (cloudinary && config.cloudinary.cloudName && config.cloudinary.apiKey && con
 app.get("/api/health", async (req, res) => {
   res.json({
     ok: true,
+    serverBootId: SERVER_BOOT_ID,
     services: {
       openaiConfigured: Boolean(config.openai.apiKey && config.openai.model),
       ragConfigured: Boolean(isFirebaseConfigured()),
@@ -94,6 +119,122 @@ app.get("/api/health", async (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+app.get("/api/study-hub/models", async (_req, res) => {
+  return res.json({
+    ok: true,
+    defaultModel: config.openai.model,
+    allowedModels: config.openai.allowedModels
+  });
+});
+
+app.post("/api/study-hub/llm", withRateLimit("study_hub_llm", 50, 60 * 1000), async (req, res) => {
+  try {
+    const requestedModel = cleanText(req.body?.model, 120);
+    const resolvedModel = resolveOpenAIModel(requestedModel);
+    if (requestedModel && !resolvedModel) {
+      return res.status(400).json({
+        error: "Requested model is not allowed.",
+        allowedModels: config.openai.allowedModels
+      });
+    }
+
+    const system = cleanText(req.body?.system, 6000);
+    const userText = cleanText(req.body?.userText, 28000);
+    const inputMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const messages = inputMessages
+      .map((m) => ({
+        role: m?.role === "assistant" ? "assistant" : "user",
+        content: cleanText(m?.content, 28000)
+      }))
+      .filter((m) => m.content)
+      .slice(-20);
+
+    if (!messages.length && !userText) {
+      return res.status(400).json({ error: "messages or userText is required." });
+    }
+
+    const modelMessages = [];
+    if (system) modelMessages.push({ role: "system", content: system });
+    if (messages.length) {
+      modelMessages.push(...messages);
+    } else {
+      modelMessages.push({ role: "user", content: userText });
+    }
+
+    const maxTokens = clampNumber(req.body?.maxTokens, 64, 4000, 1800);
+    const temperature = clampNumber(req.body?.temperature, 0, 2, 0.2);
+    const text = await callOpenAIText(modelMessages, temperature, {
+      model: resolvedModel || config.openai.model,
+      maxTokens
+    });
+
+    return res.json({
+      ok: true,
+      model: resolvedModel || config.openai.model,
+      text: cleanText(text, 50000),
+      provider: "openai-api"
+    });
+  } catch (error) {
+    return res.status(500).json({
+      error: "Failed to generate Study Hub response.",
+      details: cleanText(error?.message, 240)
+    });
+  }
+});
+
+app.post(
+  "/api/study-hub/extract-pdfs",
+  withRateLimit("study_hub_extract_pdfs", 20, 60 * 1000),
+  uploadStudyNotes.array("pdfs", 12),
+  async (req, res) => {
+    try {
+      const files = Array.isArray(req.files) ? req.files : [];
+      if (!files.length) {
+        return res.status(400).json({ error: "Please upload at least one PDF file." });
+      }
+
+      const extracted = [];
+      const failed = [];
+      for (const file of files) {
+        const safeName = cleanText(file?.originalname, 200) || "uploaded.pdf";
+        if (!isPdfFile(file)) {
+          failed.push({ name: safeName, ok: false, error: "Only PDF files are accepted." });
+          continue;
+        }
+
+        try {
+          const pack = await extractStudyHubPdfPack(file);
+          extracted.push(pack);
+        } catch (error) {
+          failed.push({
+            name: safeName,
+            ok: false,
+            error: cleanText(error?.message, 260) || "Failed to extract text from PDF."
+          });
+        }
+      }
+
+      if (!extracted.length) {
+        return res.status(400).json({
+          error: "Could not extract text from uploaded PDF(s).",
+          failed
+        });
+      }
+
+      return res.json({
+        ok: true,
+        files: extracted,
+        failed
+      });
+    } catch (error) {
+      return res.status(500).json({
+        error: "Failed to extract PDFs for Study Hub.",
+        details: cleanText(error?.message, 240)
+      });
+    }
+  }
+);
 
 function withRateLimit(bucket, limit, windowMs) {
   return (req, res, next) => {
@@ -751,6 +892,262 @@ app.post("/api/practice/analyze", withRateLimit("practice", 15, 60 * 1000), uplo
   }
 });
 
+app.get("/api/study-notes/packs", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = req.firebaseUser.uid;
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const packs = Array.isArray(state.studyPacks) ? state.studyPacks : [];
+    packs.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+    return res.json({
+      ok: true,
+      activePackId: cleanText(state.activeStudyPackId, 120),
+      packs: packs.map((p) => summarizeStudyPack(p))
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to load study packs. Please try again." });
+  }
+});
+
+app.post("/api/study-notes/upload", requireFirebaseAuth, uploadStudyNotes.array("pdfs", 12), async (req, res) => {
+  try {
+    const uid = req.firebaseUser.uid;
+    const files = Array.isArray(req.files) ? req.files : [];
+    const packTitle = cleanText(req.body?.packTitle, 140);
+    const requestedPackId = cleanText(req.body?.packId, 120);
+
+    if (!files.length) {
+      return res.status(400).json({ error: "Please upload at least one PDF file." });
+    }
+
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const studyPacks = Array.isArray(state.studyPacks) ? state.studyPacks : [];
+    const nowIso = new Date().toISOString();
+    let pack = studyPacks.find((p) => p?.id === requestedPackId) || null;
+
+    if (!pack) {
+      pack = {
+        id: `pack_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+        title: packTitle || `Study Pack ${new Date().toLocaleDateString("en-GB")}`,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        files: [],
+        combinedText: "",
+        synthesis: null,
+        status: "processing"
+      };
+      studyPacks.unshift(pack);
+    } else {
+      pack.updatedAt = nowIso;
+      if (packTitle) pack.title = packTitle;
+      pack.status = "processing";
+      pack.files = Array.isArray(pack.files) ? pack.files : [];
+      pack.combinedText = String(pack.combinedText || "");
+    }
+
+    const perFile = [];
+    for (const file of files) {
+      const baseMeta = {
+        name: cleanText(file?.originalname, 200) || "uploaded.pdf",
+        type: cleanText(file?.mimetype, 120),
+        size: Number(file?.size || 0)
+      };
+
+      if (!isPdfFile(file)) {
+        const failed = { ...baseMeta, ok: false, error: "Only PDF files are accepted." };
+        perFile.push(failed);
+        pack.files.unshift({ ...failed, createdAt: nowIso });
+        continue;
+      }
+
+      if (!pdfParse) {
+        const failed = { ...baseMeta, ok: false, error: "PDF parser dependency missing. Run npm install." };
+        perFile.push(failed);
+        pack.files.unshift({ ...failed, createdAt: nowIso });
+        continue;
+      }
+
+      let text = "";
+      try {
+        const parsed = await pdfParse(file.buffer);
+        text = cleanText(parsed?.text, 500000);
+      } catch {
+        text = "";
+      }
+
+      if (!text || text.trim().length < 40) {
+        const failed = { ...baseMeta, ok: false, error: "Could not extract enough readable text from PDF." };
+        perFile.push(failed);
+        pack.files.unshift({ ...failed, createdAt: nowIso });
+        continue;
+      }
+
+      const docId = await indexRagNote({
+        studentId: uid,
+        title: baseMeta.name,
+        text,
+        source: "study-pack-pdf",
+        packId: pack.id
+      });
+
+      const success = {
+        ...baseMeta,
+        ok: true,
+        textLength: text.length,
+        docId
+      };
+      perFile.push(success);
+      pack.files.unshift({ ...success, createdAt: nowIso });
+      pack.combinedText = `${pack.combinedText}\n\n# ${baseMeta.name}\n${text}`.slice(-600000);
+    }
+
+    const successCount = perFile.filter((f) => f.ok).length;
+    if (successCount > 0 && pack.combinedText.trim()) {
+      pack.synthesis = await synthesizeStudyPackNotes(pack.title, pack.combinedText);
+      pack.status = "ready";
+      pack.updatedAt = new Date().toISOString();
+      state.activeStudyPackId = pack.id;
+    } else {
+      pack.status = "failed";
+      pack.updatedAt = new Date().toISOString();
+    }
+
+    pack.files = pack.files.slice(0, 120);
+    state.studyPacks = studyPacks.slice(0, 40);
+    await setUserState(uid, state);
+
+    return res.json({
+      ok: true,
+      pack: summarizeStudyPack(pack),
+      files: perFile,
+      summary: {
+        total: perFile.length,
+        success: successCount,
+        failed: perFile.length - successCount
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to process study notes upload. Please try again." });
+  }
+});
+
+app.post("/api/study-notes/pack/:packId/synthesize", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = req.firebaseUser.uid;
+    const packId = cleanText(req.params.packId, 120);
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const pack = findStudyPack(state, packId);
+    if (!pack) return res.status(404).json({ error: "Study pack not found." });
+    if (!String(pack.combinedText || "").trim()) {
+      return res.status(400).json({ error: "No extracted study content found in this pack." });
+    }
+
+    pack.synthesis = await synthesizeStudyPackNotes(pack.title, pack.combinedText);
+    pack.status = "ready";
+    pack.updatedAt = new Date().toISOString();
+    state.activeStudyPackId = pack.id;
+    await setUserState(uid, state);
+
+    return res.json({ ok: true, pack: summarizeStudyPack(pack) });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to synthesize study pack." });
+  }
+});
+
+app.post("/api/study-notes/pack/:packId/query", requireFirebaseAuth, async (req, res) => {
+  try {
+    const uid = req.firebaseUser.uid;
+    const packId = cleanText(req.params.packId, 120);
+    const question = cleanText(req.body?.question, 1800);
+    const chatHistory = Array.isArray(req.body?.chatHistory) ? req.body.chatHistory : [];
+    if (!question) return res.status(400).json({ error: "question is required." });
+
+    const state = mergeDeep(createMinimalState(uid), await getUserState(uid));
+    const pack = findStudyPack(state, packId);
+    if (!pack) return res.status(404).json({ error: "Study pack not found." });
+
+    const combinedText = cleanText(pack.combinedText || "", 180000);
+    const hits = await searchDocuments(question, 8, uid, { packId });
+    const fallbackContextChunks = buildPackContextChunks(question, combinedText, 6, 1400);
+    const evidenceChunks = dedupePackEvidence([
+      ...hits.map((h) => ({
+        title: cleanText(h.title, 180) || "Study Pack",
+        snippet: cleanText(h.snippet, 900),
+        source: cleanText(h.source, 80) || "study-pack"
+      })),
+      ...fallbackContextChunks.map((chunk, idx) => ({
+        title: pack.title || `Study Pack Chunk ${idx + 1}`,
+        snippet: chunk,
+        source: "study-pack-combined-text"
+      }))
+    ]).slice(0, 8);
+
+    const citations = evidenceChunks.map((item) => ({
+      docName: cleanText(item.title, 180) || "Study Pack",
+      page: "Pack",
+      quote: cleanText(item.snippet, 280),
+      jumpRef: "study-notes",
+      sourceType: "study-pack"
+    }));
+
+    const fallbackAnswer = citations.length
+      ? `I found relevant content in "${pack.title}". Here is the closest answer from your uploaded PDFs: ${citations[0].quote}`
+      : `I could not find enough matching content in "${pack.title}" yet. Try asking with keywords that appear in your uploaded PDFs, or upload more notes for this topic.`;
+
+    let answer = fallbackAnswer;
+    let provider = "fallback";
+    if (isOpenAIConfigured() && evidenceChunks.length) {
+      try {
+        const modelMessages = [
+          {
+            role: "system",
+            content: [
+              "You are SpeedUp Study Pack Tutor.",
+              "Answer like a helpful ChatGPT-style tutor, but stay grounded in the uploaded PDFs for this study pack.",
+              "Use the provided study-pack content as your knowledge base for this answer.",
+              "When the answer is only partially supported, say that briefly, then still provide the best grounded answer you can.",
+              "Do not refuse just because retrieval is weak if relevant study-pack text is provided.",
+              "Do not use outside knowledge unless the user explicitly asks for a general explanation.",
+              "Return strict JSON with keys: answer, confidence."
+            ].join(" ")
+          },
+          ...chatHistory.slice(-8).map((msg) => ({
+            role: msg?.role === "assistant" ? "assistant" : "user",
+            content: cleanText(msg?.text, 1200)
+          })).filter((msg) => msg.content),
+          {
+            role: "user",
+            content: JSON.stringify({
+              packTitle: pack.title,
+              question,
+              studyPackEvidence: evidenceChunks,
+              instruction: "Answer the question using the uploaded PDFs as the source of truth."
+            })
+          }
+        ];
+
+        const raw = await callOpenAIChat(modelMessages, 0.2);
+        const parsed = safeParseJson(raw);
+        if (parsed?.answer) {
+          answer = cleanText(parsed.answer, 2800) || answer;
+          provider = "openai-api";
+        }
+      } catch {
+        provider = "fallback";
+      }
+    }
+
+    return res.json({
+      ok: true,
+      provider,
+      pack: summarizeStudyPack(pack),
+      answer,
+      citations: citations.slice(0, 6)
+    });
+  } catch (error) {
+    return res.status(500).json({ error: "Failed to answer study pack question." });
+  }
+});
+
 app.get("/api/live/bootstrap/:studentId", async (req, res) => {
   try {
     const studentId = normalizeStudentId(req.params.studentId);
@@ -819,6 +1216,16 @@ function trimSlash(url) {
   return String(url || "").replace(/\/+$/, "");
 }
 
+function slugify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 80);
+}
+
 function cleanText(value, max = 8000) {
   return String(value || "")
     .replace(/\0/g, "")
@@ -849,17 +1256,34 @@ function safeParseJson(raw) {
   }
 }
 
-async function callOpenAIChat(messages, temperature = 0.2) {
+function clampNumber(value, min, max, fallback) {
+  const num = Number(value);
+  if (Number.isNaN(num)) return fallback;
+  return Math.max(min, Math.min(max, num));
+}
+
+function resolveOpenAIModel(model) {
+  const requested = String(model || "").trim();
+  if (!requested) return config.openai.model;
+  if (Array.isArray(config.openai.allowedModels) && config.openai.allowedModels.includes(requested)) {
+    return requested;
+  }
+  return "";
+}
+
+async function callOpenAIChat(messages, temperature = 0.2, options = {}) {
   if (!isOpenAIConfigured()) {
     throw new Error("OpenAI API is not configured.");
   }
 
+  const model = resolveOpenAIModel(options.model);
+  if (!model) throw new Error("Requested model is not allowed.");
   const endpoint = `${trimSlash(config.openai.baseUrl)}/chat/completions`;
   const requestBody = {
-    model: config.openai.model,
+    model,
     messages,
     temperature,
-    max_tokens: 800,
+    max_tokens: clampNumber(options.maxTokens, 64, 4000, 800),
     response_format: { type: "json_object" }
   };
 
@@ -890,11 +1314,11 @@ async function callOpenAIChat(messages, temperature = 0.2) {
     const errMsg = payload?.error?.message || "OpenAI request failed.";
     // Fallback for responses-only models.
     if (errMsg.includes("supported in v1/responses")) {
-      return callOpenAIResponses(messages, temperature);
+      return callOpenAIResponses(messages, temperature, options);
     }
     // Fallback for legacy non-chat completion models.
     if (errMsg.includes("not a chat model")) {
-      return callOpenAICompletions(messages, temperature);
+      return callOpenAICompletions(messages, temperature, options);
     }
     throw new Error(errMsg);
   }
@@ -906,14 +1330,16 @@ async function callOpenAIChat(messages, temperature = 0.2) {
   return content;
 }
 
-async function callOpenAICompletions(messages, temperature = 0.2) {
+async function callOpenAICompletions(messages, temperature = 0.2, options = {}) {
+  const model = resolveOpenAIModel(options.model);
+  if (!model) throw new Error("Requested model is not allowed.");
   const endpoint = `${trimSlash(config.openai.baseUrl)}/completions`;
   const prompt = messages.map((m) => `${m.role.toUpperCase()}:\n${m.content}`).join("\n\n");
   const requestBody = {
-    model: config.openai.model,
+    model,
     prompt,
     temperature,
-    max_tokens: 800
+    max_tokens: clampNumber(options.maxTokens, 64, 4000, 800)
   };
 
   let response = await fetch(endpoint, {
@@ -942,7 +1368,7 @@ async function callOpenAICompletions(messages, temperature = 0.2) {
   if (!response.ok) {
     const errMsg = payload?.error?.message || "OpenAI completions request failed.";
     if (errMsg.includes("supported in v1/responses")) {
-      return callOpenAIResponses(messages, temperature);
+      return callOpenAIResponses(messages, temperature, options);
     }
     throw new Error(errMsg);
   }
@@ -954,7 +1380,9 @@ async function callOpenAICompletions(messages, temperature = 0.2) {
   return text;
 }
 
-async function callOpenAIResponses(messages, temperature = 0.2) {
+async function callOpenAIResponses(messages, temperature = 0.2, options = {}) {
+  const model = resolveOpenAIModel(options.model);
+  if (!model) throw new Error("Requested model is not allowed.");
   const endpoint = `${trimSlash(config.openai.baseUrl)}/responses`;
   const input = messages.map((m) => ({
     role: m.role,
@@ -962,7 +1390,7 @@ async function callOpenAIResponses(messages, temperature = 0.2) {
   }));
 
   const requestBody = {
-    model: config.openai.model,
+    model,
     input,
     temperature,
     text: { format: { type: "json_object" } }
@@ -1025,10 +1453,176 @@ async function callOpenAIResponses(messages, temperature = 0.2) {
   return joined;
 }
 
-async function searchDocuments(query, topK = 5, ownerId = "") {
+async function callOpenAIText(messages, temperature = 0.2, options = {}) {
+  if (!isOpenAIConfigured()) {
+    throw new Error("OpenAI API is not configured.");
+  }
+  const model = resolveOpenAIModel(options.model);
+  if (!model) throw new Error("Requested model is not allowed.");
+
+  const endpoint = `${trimSlash(config.openai.baseUrl)}/chat/completions`;
+  const requestBody = {
+    model,
+    messages,
+    temperature,
+    max_tokens: clampNumber(options.maxTokens, 64, 4000, 1200)
+  };
+
+  let response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.openai.apiKey}`
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  let payload = await response.json();
+  if (!response.ok && isTemperatureUnsupported(payload?.error?.message)) {
+    delete requestBody.temperature;
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+    payload = await response.json();
+  }
+
+  if (!response.ok) {
+    const errMsg = payload?.error?.message || "OpenAI request failed.";
+    if (errMsg.includes("supported in v1/responses")) {
+      return callOpenAIResponsesText(messages, temperature, options);
+    }
+    if (errMsg.includes("not a chat model")) {
+      return callOpenAICompletionsText(messages, temperature, options);
+    }
+    throw new Error(errMsg);
+  }
+
+  const content = payload?.choices?.[0]?.message?.content;
+  if (!content) {
+    throw new Error("OpenAI returned empty response.");
+  }
+  return typeof content === "string" ? content : JSON.stringify(content);
+}
+
+async function callOpenAICompletionsText(messages, temperature = 0.2, options = {}) {
+  const model = resolveOpenAIModel(options.model);
+  if (!model) throw new Error("Requested model is not allowed.");
+  const endpoint = `${trimSlash(config.openai.baseUrl)}/completions`;
+  const prompt = messages.map((m) => `${m.role.toUpperCase()}:\n${m.content}`).join("\n\n");
+  const requestBody = {
+    model,
+    prompt,
+    temperature,
+    max_tokens: clampNumber(options.maxTokens, 64, 4000, 1200)
+  };
+
+  let response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.openai.apiKey}`
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  let payload = await response.json();
+  if (!response.ok && isTemperatureUnsupported(payload?.error?.message)) {
+    delete requestBody.temperature;
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+    payload = await response.json();
+  }
+
+  if (!response.ok) {
+    const errMsg = payload?.error?.message || "OpenAI completions request failed.";
+    if (errMsg.includes("supported in v1/responses")) {
+      return callOpenAIResponsesText(messages, temperature, options);
+    }
+    throw new Error(errMsg);
+  }
+
+  const text = payload?.choices?.[0]?.text;
+  if (!text) {
+    throw new Error("OpenAI completions returned empty response.");
+  }
+  return text;
+}
+
+async function callOpenAIResponsesText(messages, temperature = 0.2, options = {}) {
+  const model = resolveOpenAIModel(options.model);
+  if (!model) throw new Error("Requested model is not allowed.");
+  const endpoint = `${trimSlash(config.openai.baseUrl)}/responses`;
+  const input = messages.map((m) => ({
+    role: m.role,
+    content: [{ type: "input_text", text: String(m.content || "") }]
+  }));
+
+  const requestBody = {
+    model,
+    input,
+    temperature,
+    max_output_tokens: clampNumber(options.maxTokens, 64, 4000, 1200)
+  };
+
+  let response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.openai.apiKey}`
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  let payload = await response.json();
+  if (!response.ok && isTemperatureUnsupported(payload?.error?.message)) {
+    delete requestBody.temperature;
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.openai.apiKey}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+    payload = await response.json();
+  }
+
+  if (!response.ok) {
+    throw new Error(payload?.error?.message || "OpenAI responses request failed.");
+  }
+
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text;
+  }
+
+  const joined = (payload?.output || [])
+    .flatMap((item) => item?.content || [])
+    .map((part) => part?.text || "")
+    .join("")
+    .trim();
+
+  if (!joined) {
+    throw new Error("OpenAI responses returned empty output.");
+  }
+  return joined;
+}
+
+async function searchDocuments(query, topK = 5, ownerId = "", options = {}) {
   if (!isFirebaseConfigured()) return [];
   const raw = String(query || "").toLowerCase().trim();
   if (!raw) return [];
+  const filterPackId = cleanText(options?.packId, 120);
 
   const tokens = raw.split(/\s+/).filter((t) => t.length > 1).slice(0, 12);
   const snap = await getFirestore()
@@ -1041,6 +1635,7 @@ async function searchDocuments(query, topK = 5, ownerId = "") {
   snap.forEach((doc) => {
     const data = doc.data() || {};
     if (ownerId && normalizeStudentId(data.studentId || "") !== ownerId) return;
+    if (filterPackId && cleanText(data.packId, 120) !== filterPackId) return;
     const text = String(data.text || "").toLowerCase();
     const title = String(data.title || "");
     if (!text) return;
@@ -1100,6 +1695,8 @@ function createMinimalState(studentId) {
     topics: [],
     highlights: [],
     notes: {},
+    studyPacks: [],
+    activeStudyPackId: "",
     practiceUploads: [],
     examHistory: [],
     responsibleControls: {},
@@ -1368,10 +1965,196 @@ function mergeDeep(target, source) {
   return target;
 }
 
-async function extractTextFromFile(file) {
-  if (!pdfParse || !mammoth || !JSZip) {
-    throw new Error("Document parsing dependencies are missing. Please run npm install.");
+function resolvePdfboxJarPath() {
+  const envPath = cleanText(process.env.PDFBOX_JAR_PATH, 600);
+  const candidates = [
+    envPath,
+    path.resolve(PROJECT_ROOT_DIR, "pdfbox-app-3.0.6.jar"),
+    path.resolve(process.env.USERPROFILE || "", "Downloads", "pdfbox-app-3.0.6.jar")
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // continue trying
+    }
   }
+
+  return candidates[0] || "";
+}
+
+function parsePdfboxPages(rawText) {
+  const normalized = String(rawText || "").replace(/\r\n/g, "\n");
+  const pages = normalized
+    .split(/\f+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (pages.length) return pages;
+  const fallback = normalized.trim();
+  return fallback ? [fallback] : [];
+}
+
+function cleanStudyHubHeading(raw) {
+  return String(raw || "")
+    .replace(/^\d+(?:\.\d+){0,4}\s*/g, "")
+    .replace(/^[\u2022\-*]\s*/g, "")
+    .replace(/[|:;,.]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isLikelyStudyHubHeading(raw) {
+  const text = cleanStudyHubHeading(raw);
+  if (!text || text.length < 5 || text.length > 120) return false;
+  if (!/[A-Za-z]/.test(text)) return false;
+  if (/^(topics?\s+for\s+week|in this chapter|the next chapter|see how|copyright|logo here|additional materials)/i.test(text)) return false;
+  if (/\b(covered in chapter|all rights reserved|this chapter|next chapter)\b/i.test(text)) return false;
+  if (/[{}[\];'"`<>]/.test(text)) return false;
+  if (/(insert\s+into|select\s+.+\s+from|values\s*\(|=>|::|==|!=)/i.test(text)) return false;
+  if (/^(get|post|put|delete|http)\b/i.test(text)) return false;
+  return true;
+}
+
+function isLikelyStudyHubOverviewPage(pageText) {
+  const top = String(pageText || "").slice(0, 4200);
+  const lower = top.toLowerCase();
+  if (/(overview|table of contents|contents|learning objectives?|chapter summary|unit summary|course outline)/i.test(lower)) return true;
+  if (/(topics?\s+for\s+week|topic overview|what you will learn|client-side form processing|form processing with)/i.test(lower)) return true;
+
+  const lines = top.split("\n").map((line) => line.trim()).filter(Boolean);
+  const bulletLines = lines.filter((line) => /^[\u2022\u25CF\u25E6\u2023\u2043\u2219\u00B7\-*�]\s+/.test(line)).length;
+  if (bulletLines >= 6 && /(validation|security|processing|form|overview|stack|cloud|injection|sanitization)/i.test(lower)) return true;
+
+  return false;
+}
+
+function detectStudyHubHeadings(pageText, pageNo) {
+  const out = [];
+  const lines = String(pageText || "")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 300);
+
+  for (const line of lines) {
+    const numbered = line.match(/^(\d+(?:\.\d+){0,4})\s+(.{3,100})$/);
+    const allCaps = line === line.toUpperCase() && /[A-Z]/.test(line);
+    const headingish = /(overview|table of contents|contents|learning objectives?|summary|introduction|conclusion|chapter|unit|topic)/i.test(line);
+    const candidate = numbered ? numbered[2] : (allCaps || headingish ? line : "");
+    if (!candidate) continue;
+    const title = cleanStudyHubHeading(candidate);
+    if (!isLikelyStudyHubHeading(title)) continue;
+    out.push({ page: pageNo, title });
+  }
+  return out;
+}
+
+async function runPdfboxExtractText(buffer, originalName) {
+  const jarPath = cleanText(config?.pdfbox?.jarPath, 800);
+  if (!jarPath || !fs.existsSync(jarPath)) {
+    throw new Error("PDFBox jar not found. Set PDFBOX_JAR_PATH or place pdfbox-app-3.0.6.jar in project root.");
+  }
+
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "studyhub-pdfbox-"));
+  const inputName = `${Date.now()}-${slugify(path.basename(originalName || "uploaded")) || "uploaded"}.pdf`;
+  const inputPath = path.join(tempDir, inputName);
+  const outputPath = path.join(tempDir, `${slugify(path.basename(originalName || "uploaded")) || "uploaded"}.txt`);
+
+  try {
+    await fs.promises.writeFile(inputPath, buffer);
+    const args = [
+      "-jar",
+      jarPath,
+      "export:text",
+      "-i",
+      inputPath,
+      "-o",
+      outputPath,
+      "-encoding",
+      "UTF-8",
+      "-sort"
+    ];
+
+    const { stderr, exitCode } = await new Promise((resolve, reject) => {
+      const child = spawn("java", args, { windowsHide: true });
+      const errChunks = [];
+
+      child.stderr.on("data", (chunk) => errChunks.push(chunk));
+      child.on("error", reject);
+      child.on("close", (code) => {
+        resolve({
+          stderr: Buffer.concat(errChunks).toString("utf8"),
+          exitCode: Number(code || 0)
+        });
+      });
+    });
+
+    if (exitCode !== 0) {
+      throw new Error(cleanText(stderr, 400) || "PDFBox extraction failed.");
+    }
+    const text = String(await fs.promises.readFile(outputPath, "utf8")).replace(/\0/g, "").trim();
+    if (!text) {
+      throw new Error("PDFBox returned no readable text.");
+    }
+    return text;
+  } finally {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+async function extractPdfTextWithPdfbox(buffer, originalName) {
+  return runPdfboxExtractText(buffer, originalName);
+}
+
+async function extractStudyHubPdfPack(file) {
+  const rawText = await extractPdfTextWithPdfbox(file.buffer, file.originalname);
+  const pages = parsePdfboxPages(rawText);
+  const safeName = cleanText(file?.originalname, 200) || "uploaded.pdf";
+  const overviewPages = [];
+  const headingPool = [];
+  let fullText = "";
+
+  const pageList = pages.length ? pages : [String(rawText || "").trim()];
+  for (let i = 0; i < pageList.length; i += 1) {
+    const pageNo = i + 1;
+    const pageText = String(pageList[i] || "").trim();
+    if (!pageText) continue;
+    const lower = pageText.toLowerCase();
+
+    if (isLikelyStudyHubOverviewPage(pageText)) {
+      overviewPages.push({ page: pageNo, snippet: cleanText(pageText, 2500) });
+    }
+
+    headingPool.push(...detectStudyHubHeadings(pageText, pageNo));
+    fullText += `\n--- Page ${pageNo} ---\n${pageText}`;
+    if (fullText.length > STUDY_HUB_PDF_MAX_CHARS) {
+      fullText = fullText.slice(0, STUDY_HUB_PDF_MAX_CHARS) + "\n\n[... content truncated for length ...]";
+      break;
+    }
+  }
+
+  const dedupHeadings = [];
+  const seen = new Set();
+  for (const item of headingPool) {
+    const key = String(item?.title || "").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    dedupHeadings.push({ page: Number(item.page || 0), title: cleanText(item.title, 120) });
+    if (dedupHeadings.length >= 80) break;
+  }
+
+  return {
+    name: safeName,
+    text: fullText.trim(),
+    pageCount: pageList.length || 1,
+    overviewPages: overviewPages.slice(0, 20),
+    headings: dedupHeadings,
+    provider: "pdfbox"
+  };
+}
+
+async function extractTextFromFile(file) {
   const original = String(file.originalname || "");
   const ext = path.extname(original).toLowerCase();
   const mime = String(file.mimetype || "").toLowerCase();
@@ -1386,16 +2169,25 @@ async function extractTextFromFile(file) {
   }
 
   if (ext === ".pdf" || mime.includes("pdf")) {
-    const out = await pdfParse(buffer);
-    return out.text || "";
+    try {
+      return await extractPdfTextWithPdfbox(buffer, original);
+    } catch (error) {
+      if (!pdfParse) {
+        throw new Error(`PDFBox extraction failed and pdf-parse fallback is unavailable: ${cleanText(error?.message, 220)}`);
+      }
+      const out = await pdfParse(buffer);
+      return out.text || "";
+    }
   }
 
   if (ext === ".docx" || mime.includes("wordprocessingml")) {
+    if (!mammoth) throw new Error("DOCX parser dependency is missing. Please run npm install.");
     const out = await mammoth.extractRawText({ buffer });
     return out.value || "";
   }
 
   if (ext === ".pptx" || mime.includes("presentationml")) {
+    if (!JSZip) throw new Error("PPTX parser dependency is missing. Please run npm install.");
     return extractTextFromPptx(buffer);
   }
 
@@ -1516,19 +2308,156 @@ function isCloudinaryConfigured() {
   return Boolean(cloudinary && config.cloudinary.cloudName && config.cloudinary.apiKey && config.cloudinary.apiSecret);
 }
 
-async function indexRagNote({ studentId, title, text, source }) {
+async function indexRagNote({ studentId, title, text, source, packId = "" }) {
   if (!isFirebaseConfigured()) {
     throw new Error("Firebase is not configured.");
   }
   const docId = `${studentId}-${Date.now()}`;
   await getFirestore().collection(config.rag.collection).doc(docId).set({
     studentId,
+    packId: cleanText(packId, 120),
     title: String(title || "Untitled"),
     text: String(text || ""),
     source: String(source || "notes"),
     createdAt: new Date().toISOString()
   });
   return docId;
+}
+
+function isPdfFile(file) {
+  const ext = path.extname(String(file?.originalname || "")).toLowerCase();
+  const mime = String(file?.mimetype || "").toLowerCase();
+  return ext === ".pdf" || mime === "application/pdf" || mime.includes("pdf");
+}
+
+function summarizeStudyPack(pack) {
+  const safePack = pack && typeof pack === "object" ? pack : {};
+  const files = Array.isArray(safePack.files) ? safePack.files : [];
+  const success = files.filter((f) => f?.ok).length;
+  const failed = files.filter((f) => f && f.ok === false).length;
+  const synthesis = safePack.synthesis || null;
+  return {
+    id: cleanText(safePack.id, 120),
+    title: cleanText(safePack.title, 160) || "Study Pack",
+    createdAt: cleanText(safePack.createdAt, 40),
+    updatedAt: cleanText(safePack.updatedAt, 40),
+    status: cleanText(safePack.status, 40) || "ready",
+    totalFiles: files.length,
+    successFiles: success,
+    failedFiles: failed,
+    synthesis
+  };
+}
+
+function findStudyPack(state, packId) {
+  const packs = Array.isArray(state?.studyPacks) ? state.studyPacks : [];
+  return packs.find((p) => String(p?.id || "") === String(packId || "")) || null;
+}
+
+async function synthesizeStudyPackNotes(packTitle, combinedText) {
+  const text = cleanText(combinedText, 120000);
+  const fallback = buildStudyPackFallbackNotes(packTitle, text);
+  if (!isOpenAIConfigured() || !text) return fallback;
+  try {
+    const raw = await callOpenAIChat([
+      {
+        role: "system",
+        content: [
+          "You are an expert revision assistant.",
+          "Combine all uploaded study notes into one concise study set.",
+          "Return strict JSON with keys: overview, keyConcepts, examFocus, commonPitfalls, quickRevisionPlan.",
+          "keyConcepts/commonPitfalls/quickRevisionPlan must be arrays of short strings."
+        ].join(" ")
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          packTitle,
+          text
+        })
+      }
+    ], 0.2);
+    const parsed = safeParseJson(raw);
+    if (!parsed || typeof parsed !== "object") return fallback;
+    return {
+      overview: cleanText(parsed.overview, 1000) || fallback.overview,
+      keyConcepts: cleanList(parsed.keyConcepts, 10, 180).length ? cleanList(parsed.keyConcepts, 10, 180) : fallback.keyConcepts,
+      examFocus: cleanText(parsed.examFocus, 1000) || fallback.examFocus,
+      commonPitfalls: cleanList(parsed.commonPitfalls, 8, 180).length ? cleanList(parsed.commonPitfalls, 8, 180) : fallback.commonPitfalls,
+      quickRevisionPlan: cleanList(parsed.quickRevisionPlan, 6, 180).length ? cleanList(parsed.quickRevisionPlan, 6, 180) : fallback.quickRevisionPlan,
+      provider: "openai-api"
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function buildStudyPackFallbackNotes(packTitle, text) {
+  const lines = String(text || "")
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 80);
+  const keyConcepts = lines
+    .filter((l) => l.length > 30)
+    .slice(0, 6)
+    .map((l) => snippet(l, 140));
+  return {
+    overview: `Combined notes generated for ${packTitle || "your study pack"}. Review key themes first, then test application with timed questions.`,
+    keyConcepts: keyConcepts.length ? keyConcepts : ["Upload richer PDFs with selectable text for stronger summary output."],
+    examFocus: "Prioritize high-yield definitions, method steps, and common worked-example patterns.",
+    commonPitfalls: [
+      "Memorizing formulas without linking to when to use them.",
+      "Skipping error-analysis after practice attempts.",
+      "Not revisiting weak topics within 24-48 hours."
+    ],
+    quickRevisionPlan: [
+      "Do a 20-minute concept review from this combined note set.",
+      "Attempt 5 mixed questions without notes.",
+      "Review mistakes and patch gaps with targeted recap."
+    ],
+    provider: "fallback"
+  };
+}
+
+function buildPackContextChunks(question, combinedText, maxChunks = 6, chunkSize = 1400) {
+  const text = String(combinedText || "").trim();
+  if (!text) return [];
+  const normalizedQuestion = String(question || "").toLowerCase();
+  const tokens = normalizedQuestion.split(/\s+/).filter((t) => t.length > 2).slice(0, 12);
+  const chunks = [];
+
+  for (let start = 0; start < text.length; start += Math.max(500, chunkSize - 180)) {
+    const piece = text.slice(start, start + chunkSize).trim();
+    if (!piece) continue;
+    let score = 0;
+    const lower = piece.toLowerCase();
+    tokens.forEach((token) => {
+      if (lower.includes(token)) score += 2;
+    });
+    if (score > 0) {
+      chunks.push({ text: piece, score });
+    }
+  }
+
+  if (!chunks.length) {
+    return text.length <= chunkSize ? [text] : [text.slice(0, chunkSize), text.slice(chunkSize, chunkSize * 2)].filter(Boolean);
+  }
+
+  return chunks
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, Math.min(10, maxChunks)))
+    .map((item) => item.text);
+}
+
+function dedupePackEvidence(items) {
+  const seen = new Set();
+  return (items || []).filter((item) => {
+    const key = `${String(item?.title || "")}|${String(item?.snippet || "").slice(0, 180)}`.toLowerCase();
+    if (!item?.snippet || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function isTemperatureUnsupported(message) {

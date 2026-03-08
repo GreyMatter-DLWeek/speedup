@@ -12,8 +12,47 @@
   </div>
 
   <div class="content">
+    <div class="card mb-16" id="studyNotesWizard">
+      <div class="card-title">Study Pack Builder (PDF only)</div>
+
+      <div id="studyNotesStep1" data-step="1">
+        <div class="form-group">
+          <label class="form-label">Study Pack Name</label>
+          <input id="studyPackTitleInput" class="input" type="text" placeholder="e.g. Midterms Week 5 Pack" />
+        </div>
+        <div class="form-group" style="margin-bottom:8px;">
+          <label class="form-label">Upload PDF files (single or multiple)</label>
+          <input id="studyPdfInput" class="input" type="file" accept=".pdf,application/pdf" multiple />
+        </div>
+        <div style="font-size:12px;color:var(--text3);line-height:1.6;">Only PDF files are accepted. You can upload one file or many in one session.</div>
+        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+          <button id="studyNotesUploadBtn" class="btn btn-primary">Upload & Build Study Pack</button>
+        </div>
+      </div>
+
+      <div id="studyNotesStep2" data-step="2" style="display:none;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div style="font-size:13px;color:var(--text2);" id="studyNotesProgressLabel">Preparing upload...</div>
+          <button id="studyNotesBackBtn" class="btn btn-ghost" style="padding:6px 10px;">Back</button>
+        </div>
+        <div class="progress-bar" style="margin-top:8px;"><div id="studyNotesProgressFill" class="progress-fill fill-purple" style="width:0%"></div></div>
+        <div id="studyNotesProgressMeta" style="font-size:12px;color:var(--text3);margin-top:6px;">0%</div>
+        <div id="studyNotesProcessingList" style="margin-top:10px;display:flex;flex-direction:column;gap:6px;"></div>
+        <div id="studyNotesFinalStatus" style="font-size:12px;color:var(--text2);margin-top:10px;"></div>
+      </div>
+    </div>
+
     <div class="grid-2-1">
       <div>
+        <div class="card mb-16">
+          <div class="card-title">Current Study Pack</div>
+          <div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label">Choose Study Pack Session</label>
+            <select id="studyPackSelect" class="select"></select>
+          </div>
+          <div id="studyPackSummary" style="font-size:13px;color:var(--text2);line-height:1.8;">No study pack loaded yet.</div>
+        </div>
+
         <div class="section-head">
           <div class="section-title">Captured Highlights & AI Context</div>
           <div class="section-link" onclick="navigate('notes')">+ Add from Active Reading</div>

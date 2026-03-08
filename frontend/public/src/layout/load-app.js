@@ -1,5 +1,6 @@
 const pages = [
   "dashboard",
+  "study-hub",
   "notes",
   "study-notes",
   "timetable",

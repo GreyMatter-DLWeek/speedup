@@ -1574,6 +1574,474 @@
     transition: width 0.3s;
   }
 
+  /* ==================================================
+     STUDY HUB
+  ================================================== */
+  .studyhub-layout {
+    align-items: flex-start;
+  }
+
+  .studyhub-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 180px auto;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .studyhub-pack-grid {
+    display: grid;
+    gap: 14px;
+  }
+
+  .studyhub-pack-card {
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    background: linear-gradient(160deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+  }
+
+  .studyhub-pack-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .studyhub-pack-head h3 {
+    font-family: 'Syne', sans-serif;
+    font-size: 17px;
+    margin-bottom: 2px;
+  }
+
+  .studyhub-pack-head p {
+    color: var(--text3);
+    font-size: 12px;
+  }
+
+  .studyhub-pack-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .studyhub-pack-metrics > div {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    background: var(--surface2);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .studyhub-pack-metrics strong {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .studyhub-pack-metrics span {
+    font-size: 10px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .studyhub-preview-group {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .studyhub-topic-preview-row {
+    display: grid;
+    grid-template-columns: 170px 1fr;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .studyhub-mini-bar {
+    height: 7px;
+    border-radius: 5px;
+    background: var(--surface2);
+    overflow: hidden;
+  }
+
+  .studyhub-mini-bar > span {
+    display: block;
+    height: 100%;
+  }
+
+  .studyhub-pack-actions,
+  .studyhub-inline-actions,
+  .studyhub-topic-actions,
+  .studyhub-hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .studyhub-next-action {
+    color: var(--text2);
+    line-height: 1.7;
+    margin-bottom: 10px;
+  }
+
+  .studyhub-activity-list {
+    list-style: none;
+    display: grid;
+    gap: 8px;
+  }
+
+  .studyhub-activity-list li {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    color: var(--text2);
+    font-size: 12px;
+    background: var(--surface2);
+  }
+
+  .studyhub-empty {
+    border: 1px dashed var(--border2);
+    border-radius: 14px;
+    padding: 26px;
+    text-align: center;
+    background: var(--surface2);
+  }
+
+  .studyhub-empty h3 {
+    font-family: 'Syne', sans-serif;
+    margin-bottom: 8px;
+  }
+
+  .studyhub-empty p {
+    color: var(--text3);
+    margin-bottom: 12px;
+  }
+
+  .studyhub-dash {
+    display: grid;
+    gap: 14px;
+  }
+
+  .studyhub-hero {
+    display: grid;
+    gap: 12px;
+  }
+
+  .studyhub-hero h2 {
+    font-family: 'Syne', sans-serif;
+    font-size: 24px;
+  }
+
+  .studyhub-hero p {
+    color: var(--text3);
+  }
+
+  .studyhub-hero-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .studyhub-hero-metrics > div {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 9px;
+    background: var(--surface2);
+  }
+
+  .studyhub-hero-metrics span {
+    font-size: 11px;
+    color: var(--text3);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .studyhub-hero-metrics strong {
+    font-size: 17px;
+    font-family: 'Syne', sans-serif;
+  }
+
+  .studyhub-focus-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+  }
+
+  .studyhub-tab-nav {
+    position: sticky;
+    top: 72px;
+    z-index: 40;
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: rgba(19, 19, 26, 0.94);
+    backdrop-filter: blur(10px);
+  }
+
+  .studyhub-tab-nav button {
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text2);
+    border-radius: 9px;
+    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .studyhub-tab-nav button.active {
+    color: var(--text);
+    border-color: rgba(129,140,248,0.45);
+    background: rgba(129,140,248,0.16);
+  }
+
+  .studyhub-tab-content {
+    display: grid;
+    gap: 12px;
+  }
+
+  .studyhub-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 12px;
+  }
+
+  .studyhub-topic-card,
+  .studyhub-revise-card,
+  .studyhub-practice-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    background: var(--surface);
+  }
+
+  .studyhub-topic-head,
+  .studyhub-practice-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .studyhub-topic-head h4,
+  .studyhub-revise-card h4,
+  .studyhub-practice-card h4 {
+    font-size: 14px;
+    font-weight: 700;
+  }
+
+  .studyhub-topic-summary,
+  .studyhub-revise-card p {
+    color: var(--text2);
+    font-size: 13px;
+    line-height: 1.6;
+    margin-bottom: 8px;
+  }
+
+  .studyhub-status {
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 10px;
+    border: 1px solid;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .studyhub-status-weak,
+  .chip.studyhub-status-weak {
+    color: #fecaca;
+    border-color: rgba(248,113,113,0.35);
+    background: rgba(248,113,113,0.16);
+  }
+
+  .studyhub-status-review,
+  .chip.studyhub-status-review {
+    color: #fde68a;
+    border-color: rgba(251,191,36,0.35);
+    background: rgba(251,191,36,0.16);
+  }
+
+  .studyhub-status-confident,
+  .chip.studyhub-status-confident {
+    color: #bbf7d0;
+    border-color: rgba(110,231,183,0.35);
+    background: rgba(110,231,183,0.16);
+  }
+
+  .studyhub-split {
+    display: grid;
+    grid-template-columns: 290px 1fr;
+    gap: 12px;
+  }
+
+  .studyhub-topic-panel {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px;
+    background: var(--surface2);
+    height: fit-content;
+  }
+
+  .studyhub-topic-panel h4 {
+    margin-bottom: 8px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text3);
+  }
+
+  .studyhub-topic-nav {
+    width: 100%;
+    text-align: left;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--surface);
+    color: var(--text2);
+    padding: 8px;
+    margin-bottom: 7px;
+    cursor: pointer;
+    display: grid;
+    gap: 2px;
+  }
+
+  .studyhub-topic-nav.active {
+    color: var(--text);
+    border-color: rgba(129,140,248,0.45);
+    background: rgba(129,140,248,0.16);
+  }
+
+  .studyhub-topic-nav small {
+    color: var(--text3);
+    font-size: 11px;
+  }
+
+  .studyhub-reading-panel {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    background: var(--surface);
+  }
+
+  .studyhub-reading-panel p {
+    color: var(--text2);
+    line-height: 1.7;
+    margin-bottom: 10px;
+  }
+
+  .studyhub-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .studyhub-revise-grid,
+  .studyhub-practice-grid {
+    display: grid;
+    gap: 12px;
+  }
+
+  .studyhub-bullets {
+    margin-bottom: 8px;
+  }
+
+  .studyhub-bullets strong {
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .studyhub-bullets ul {
+    margin-left: 16px;
+    margin-top: 4px;
+    color: var(--text2);
+    font-size: 12px;
+    display: grid;
+    gap: 4px;
+  }
+
+  .studyhub-cheat {
+    border: 1px solid rgba(129,140,248,0.3);
+    border-radius: 9px;
+    background: rgba(129,140,248,0.1);
+    color: #dbe4ff;
+    font-size: 12px;
+    padding: 8px;
+    margin-bottom: 10px;
+  }
+
+  .studyhub-option {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 7px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 6px;
+    background: var(--surface2);
+    cursor: pointer;
+  }
+
+  .studyhub-option input {
+    margin-top: 2px;
+  }
+
+  .studyhub-feedback {
+    margin-top: 8px;
+    border-radius: 8px;
+    padding: 7px 8px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .studyhub-feedback.ok {
+    background: rgba(110,231,183,0.15);
+    color: #bbf7d0;
+  }
+
+  .studyhub-feedback.bad {
+    background: rgba(251,191,36,0.16);
+    color: #fde68a;
+  }
+
+  .studyhub-explanation {
+    margin-top: 8px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 8px;
+    color: var(--text2);
+    background: var(--surface2);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .studyhub-floating-tutor {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 850;
+    border: 1px solid rgba(129,140,248,0.42);
+    background: linear-gradient(135deg, rgba(110,231,183,0.12), rgba(129,140,248,0.22));
+    color: var(--text);
+    border-radius: 999px;
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 14px 30px rgba(0,0,0,0.4);
+  }
+
   /* ================================================
      RESPONSIVE ADJUSTMENTS
   ================================================ */
@@ -1611,6 +2079,19 @@
 
     .timetable-grid {
       min-width: 680px;
+    }
+
+    .studyhub-pack-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .studyhub-split {
+      grid-template-columns: 1fr;
+    }
+
+    .studyhub-topic-preview-row {
+      grid-template-columns: 1fr;
+      gap: 6px;
     }
   }
 
@@ -1679,5 +2160,28 @@
 
     .timetable-grid {
       min-width: 560px;
+    }
+
+    .studyhub-toolbar {
+      grid-template-columns: 1fr;
+    }
+
+    .studyhub-hero-metrics {
+      grid-template-columns: 1fr;
+    }
+
+    .studyhub-tab-nav {
+      top: 64px;
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    .studyhub-tab-nav button {
+      white-space: nowrap;
+    }
+
+    .studyhub-floating-tutor {
+      right: 10px;
+      bottom: 10px;
     }
   }
