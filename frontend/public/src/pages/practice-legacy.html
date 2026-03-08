@@ -1,4 +1,4 @@
-﻿<div id="page-practice" class="page practice-page">
+﻿<div id="page-practice-legacy" class="page practice-page">
   <style>
     .practice-hero {
       background: linear-gradient(135deg, rgba(110,231,183,0.12), rgba(129,140,248,0.1));
@@ -58,8 +58,6 @@
     .upload-card-title { font-size: 14px; font-weight: 700; color: var(--text); }
     .upload-card-meta { font-size: 12px; color: var(--text3); margin-top: 2px; }
     .upload-card.active { border-color: var(--accent); background: rgba(110,231,183,0.06); }
-    .upload-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
-    .upload-toolbar .hint { font-size:12px; color:var(--text3); margin-left:auto; }
     @media (max-width: 1100px) {
       .practice-grid { grid-template-columns: 1fr; }
       .practice-hero h2 { font-size: 24px; }
@@ -68,10 +66,11 @@
 
   <div class="topbar">
     <div>
-      <div class="topbar-title">Practice Studio</div>
+      <div class="topbar-title">Practice Legacy Studio</div>
       <div class="topbar-sub">Upload materials, then generate quiz and flashcards with selected source</div>
     </div>
     <div class="topbar-actions">
+      <button class="btn btn-secondary" onclick="openTutorPanel('practice-papers')">ðŸ¤– Ask Tutor</button>
     </div>
   </div>
 
@@ -89,37 +88,37 @@
 
           <div class="form-group">
             <label class="form-label">File</label>
-            <input id="practiceFileInput" class="input" type="file" accept=".pdf,.docx,.pptx,.txt,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation">
+            <input id="legacyPracticeFileInput" class="input" type="file" accept=".pdf,.docx,.pptx,.txt,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation">
           </div>
 
           <div class="form-group">
             <label class="form-label">Or Paste Text</label>
-            <textarea id="practicePastedText" class="input" style="min-height:140px;resize:vertical;" placeholder="Paste question text, notes, or model answers..."></textarea>
+            <textarea id="legacyPracticePastedText" class="input" style="min-height:140px;resize:vertical;" placeholder="Paste question text, notes, or model answers..."></textarea>
           </div>
 
           <div class="form-group">
             <label class="form-label">Topic Hint</label>
-            <input id="practiceTopicInput" class="input" type="text" placeholder="e.g. Algorithms, Thermodynamics">
+            <input id="legacyPracticeTopicInput" class="input" type="text" placeholder="e.g. Algorithms, Thermodynamics">
           </div>
 
           <div class="practice-actions">
-            <button id="practiceAnalyzeBtn" class="btn btn-primary">Analyze Practice Source</button>
+            <button id="legacyPracticeAnalyzeBtn" class="btn btn-primary">Analyze Practice Source</button>
           </div>
-          <div id="practiceStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
+          <div id="legacyPracticeStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
 
-          <div id="practiceAnalysis" class="practice-output">No analysis yet.</div>
+          <div id="legacyPracticeAnalysis" class="practice-output">No analysis yet.</div>
         </section>
 
         <section class="practice-panel">
           <h3>2) Generate Quiz</h3>
           <div class="form-group context-select">
             <label class="form-label">Choose Uploaded Source</label>
-            <select id="quizSourceSelect" class="select"></select>
+            <select id="legacyQuizSourceSelect" class="select"></select>
           </div>
           <div class="grid-3" style="gap:10px;">
             <div class="form-group" style="margin-bottom:0;">
               <label class="form-label">Difficulty</label>
-              <select id="quizDifficulty" class="select">
+              <select id="legacyQuizDifficulty" class="select">
                 <option value="easy">Easy</option>
                 <option value="medium" selected>Medium</option>
                 <option value="hard">Hard</option>
@@ -127,11 +126,11 @@
             </div>
             <div class="form-group" style="margin-bottom:0;">
               <label class="form-label"># Questions</label>
-              <input id="quizCount" class="input" type="number" min="1" max="20" value="5">
+              <input id="legacyQuizCount" class="input" type="number" min="1" max="20" value="5">
             </div>
             <div class="form-group" style="margin-bottom:0;">
               <label class="form-label">Type</label>
-              <select id="quizType" class="select">
+              <select id="legacyQuizType" class="select">
                 <option value="mcq" selected>MCQ</option>
                 <option value="short-answer">Short Answer</option>
                 <option value="mixed">Mixed</option>
@@ -139,10 +138,10 @@
             </div>
           </div>
           <div class="practice-actions">
-            <button id="generateQuizBtn" class="btn btn-secondary">Generate Quiz</button>
+            <button id="legacyGenerateQuizBtn" class="btn btn-secondary">Generate Quiz</button>
           </div>
-          <div id="quizStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
-          <div id="quizOutput" class="practice-output">No quiz generated yet.</div>
+          <div id="legacyQuizStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
+          <div id="legacyQuizOutput" class="practice-output">No quiz generated yet.</div>
         </section>
       </div>
 
@@ -151,35 +150,28 @@
           <h3>3) Generate Flashcards</h3>
           <div class="form-group context-select">
             <label class="form-label">Choose Uploaded Source</label>
-            <select id="flashcardSourceSelect" class="select"></select>
+            <select id="legacyFlashcardSourceSelect" class="select"></select>
           </div>
           <div class="grid-2" style="gap:10px;">
             <div class="form-group" style="margin-bottom:0;">
               <label class="form-label"># Flashcards</label>
-              <input id="flashcardCount" class="input" type="number" min="1" max="30" value="8">
+              <input id="legacyFlashcardCount" class="input" type="number" min="1" max="30" value="8">
             </div>
           </div>
           <div class="practice-actions">
-            <button id="generateFlashcardsBtn" class="btn btn-secondary">Generate Flashcards</button>
+            <button id="legacyGenerateFlashcardsBtn" class="btn btn-secondary">Generate Flashcards</button>
           </div>
-          <div id="flashcardStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
-          <div id="flashcardOutput" class="practice-output">No flashcards generated yet.</div>
+          <div id="legacyFlashcardStatus" style="margin-top:10px;font-size:13px;color:var(--text3);"></div>
+          <div id="legacyFlashcardOutput" class="practice-output">No flashcards generated yet.</div>
         </section>
 
         <section class="practice-panel">
           <h3>Uploaded Sources</h3>
           <p class="sub">Select any uploaded file as generation context</p>
-          <div class="upload-toolbar">
-            <button id="selectAllUploadsBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Select All</button>
-            <button id="clearUploadSelectionBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;">Clear</button>
-            <button id="deleteSelectedUploadsBtn" class="btn btn-ghost" style="padding:6px 10px;font-size:12px;color:var(--danger);border-color:rgba(248,113,113,0.35);">Delete Selected</button>
-            <span id="uploadSelectionCount" class="hint">0 selected</span>
-          </div>
-          <div id="uploadedPapersList"></div>
-          <div id="practiceInsights" class="practice-output" style="min-height:100px;max-height:160px;">Upload and analyze a paper to generate learning signals.</div>
+          <div id="legacyUploadedPapersList"></div>
+          <div id="legacyPracticeInsights" class="practice-output" style="min-height:100px;max-height:160px;">Upload and analyze a paper to generate learning signals.</div>
         </section>
       </div>
     </div>
   </div>
-</div><!-- END PRACTICE -->
-
+</div><!-- END PRACTICE LEGACY -->

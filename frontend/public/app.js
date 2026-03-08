@@ -5,7 +5,9 @@ import { initFeature4 } from "./src/feature-modules/feature4.js";
 import { initFeature5 } from "./src/feature-modules/feature5.js";
 import { initFeature6 } from "./src/feature-modules/feature6.js";
 import { initFeature7 } from "./src/feature-modules/feature7.js";
+import { initFeature7Legacy } from "./src/feature-modules/feature7-legacy.js";
 import { initFeature8 } from "./src/feature-modules/feature8.js";
+import { initFeature9 } from "./src/feature-modules/feature9.js";
 
 const STORAGE_KEY_PREFIX = "speedup_dashboard_reference_v1";
 const STUDENT_ID = "";
@@ -28,9 +30,17 @@ const API = {
   practiceGenerateFlashcards: "/api/practice/generate-flashcards",
   explain: "/api/explain",
   tutorQuery: "/api/tutor/query",
+  studyPackUploadPdf: "/api/study-pack/upload-pdf",
+  studyPackCheckpointQuiz: "/api/study-pack/checkpoint-quiz",
+  studyPackCheatsheet: "/api/study-pack/cheatsheet",
+  studyPackTeachMode: "/api/study-pack/teach-mode",
   highlightAnalyze: "/api/highlight/analyze",
   ragQuery: "/api/rag/query",
   ragIndexNote: "/api/rag/index-note",
+  studyNotesPacks: "/api/study-notes/packs",
+  studyNotesUpload: "/api/study-notes/upload",
+  studyNotesSynthesize: (packId) => `/api/study-notes/pack/${encodeURIComponent(packId)}/synthesize`,
+  studyNotesPackQuery: (packId) => `/api/study-notes/pack/${encodeURIComponent(packId)}/query`,
   recommendations: "/api/recommendations",
   timeManagementState: (studentId, weekStart) => {
     const base = `/api/time-management/${encodeURIComponent(studentId)}`;
@@ -68,21 +78,25 @@ const defaultState = {
   tutorDrafts: {
     "active-reading": "",
     "study-notes": "",
-    "practice-papers": ""
+    "practice-papers": "",
+    "study-hub": ""
   },
   tutorRevisitQueue: [],
   practiceErrorLog: [],
   notes: {},
+  studyPacks: [],
+  activeStudyPackId: "",
   highlights: [],
   practiceUploads: [],
   focusSessions: [],
   dashboardFeedback: {},
   examHistory: [],
   responsibleControls: {
-    explainability: true,
+    conceptMasteryDetection: true,
     personalization: true,
     decayModeling: true,
     errorTypeDetection: true,
+    weeklyEmailReports: true,
     externalStudyCredit: false
   },
   auditLog: []
@@ -150,7 +164,9 @@ const feature4 = initFeature4(ctx);
 const feature5 = initFeature5(ctx);
 const feature6 = initFeature6(ctx);
 const feature7 = initFeature7(ctx);
+const feature7Legacy = initFeature7Legacy(ctx);
 const feature8 = initFeature8(ctx);
+const feature9 = initFeature9(ctx);
 const appPath = (p) => (window.toAppPath ? window.toAppPath(p) : p);
 const apiUrl = (p) => (window.toApiUrl ? window.toApiUrl(p) : p);
 
@@ -180,6 +196,8 @@ async function init() {
   await feature6.refreshFeature6();
   feature8.hydrateFeedbackSelections();
   feature7.initPracticeFeature();
+  feature7Legacy.initPracticeFeature();
+  feature5.initStudyNotesFeature();
 
   renderTutorPanel();
   feature4.initTimeManagement();
@@ -663,8 +681,17 @@ function initResponsibleAiPage() {
   const page = document.getElementById("page-responsible");
   if (!page) return;
 
+  // Backward compatibility: map older "explainability" setting into concept mastery detection.
+  const existingControls = runtime.state.responsibleControls || {};
+  if (
+    typeof existingControls.conceptMasteryDetection !== "boolean"
+    && typeof existingControls.explainability === "boolean"
+  ) {
+    existingControls.conceptMasteryDetection = Boolean(existingControls.explainability);
+  }
+
   const defaultControls = structuredClone(defaultState.responsibleControls || {});
-  runtime.state.responsibleControls = mergeDeep(defaultControls, runtime.state.responsibleControls || {});
+  runtime.state.responsibleControls = mergeDeep(defaultControls, existingControls);
   renderResponsibleControls();
 
   if (!page.dataset.responsibleBound) {
@@ -691,22 +718,16 @@ function initResponsibleAiPage() {
     });
   }
 
-  const downloadBtn = document.getElementById("downloadDataBtn");
-  if (downloadBtn && !downloadBtn.dataset.bound) {
-    downloadBtn.dataset.bound = "1";
-    downloadBtn.addEventListener("click", downloadResponsibleData);
-  }
-
   const resetBtn = document.getElementById("resetAiProfileBtn");
   if (resetBtn && !resetBtn.dataset.bound) {
     resetBtn.dataset.bound = "1";
     resetBtn.addEventListener("click", resetAiProfile);
   }
 
-  const deleteBtn = document.getElementById("deleteAllDataBtn");
+  const deleteBtn = document.getElementById("deleteAccountBtn");
   if (deleteBtn && !deleteBtn.dataset.bound) {
     deleteBtn.dataset.bound = "1";
-    deleteBtn.addEventListener("click", deleteAllUserData);
+    deleteBtn.addEventListener("click", deleteAccount);
   }
 }
 
@@ -731,33 +752,6 @@ function setResponsibleControl(key, enabled) {
   apiPost(API.userControls, { controls: { [key]: Boolean(enabled) } }).catch(() => {});
 }
 
-async function downloadResponsibleData() {
-  let payload = runtime.state;
-  try {
-    const remote = await apiGet(API.userState);
-    payload = remote?.state || payload;
-  } catch {
-    // Keep local payload fallback.
-  }
-
-  const exported = {
-    exportedAt: new Date().toISOString(),
-    studentId: runtime.authUser?.uid || runtime.state.student?.id || "",
-    state: payload
-  };
-  const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `speedup-data-${new Date().toISOString().slice(0, 10)}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-  logAudit("User exported data copy.");
-  scheduleSave();
-}
-
 function resetAiProfile() {
   const ok = window.confirm("Reset AI profile now? This will clear learned mastery and recommendation signals.");
   if (!ok) return;
@@ -776,8 +770,8 @@ function resetAiProfile() {
   scheduleSave();
 }
 
-function deleteAllUserData() {
-  const ok = window.confirm("Delete all saved learning data? This action cannot be undone.");
+async function deleteAccount() {
+  const ok = window.confirm("Confirm delete your account. This will delete all your data.");
   if (!ok) return;
 
   runtime.state = structuredClone(defaultState);
@@ -785,10 +779,16 @@ function deleteAllUserData() {
   if (!runtime.state.student.name && runtime.authUser?.email) {
     runtime.state.student.name = runtime.authUser.email.split("@")[0];
   }
-  logAudit("All user data deleted by user.");
+  logAudit("User requested account deletion and data wipe.");
   renderResponsibleControls();
   feature8.hydrateFeedbackSelections();
   scheduleSave();
+
+  try {
+    await window.firebaseAuthClient?.signOutUser?.();
+  } finally {
+    window.location.replace(appPath("/login.html"));
+  }
 }
 
 function renderCloudStatus() {
@@ -815,11 +815,18 @@ function navigate(page) {
   if (page === "timetable") {
     feature4.refreshTimeManagement();
   }
-  if (page === "dashboard" || page === "progress") {
-    feature6.refreshFeature6().then(() => {
-      feature8.hydrateFeedbackSelections();
-    });
+
+  if (page === "study-notes") {
+    feature5.loadStudyPacks();
   }
+
+  if (page === "study-hub") {
+    feature9.mountStudyHubPage();
+  }
+}
+
+function openPracticeLegacyFromStudyHub() {
+  navigate("practice-legacy");
 }
 
 function inferCurrentPage() {
@@ -828,8 +835,10 @@ function inferCurrentPage() {
 }
 
 function mapPageToTutorContext(page) {
+  if (page === "study-hub") return "study-notes";
   if (page === "study-notes") return "study-notes";
   if (page === "practice") return "practice-papers";
+  if (page === "practice-legacy") return "practice-papers";
   return "active-reading";
 }
 
@@ -1031,12 +1040,14 @@ function buildTutorContext(type) {
   const highlights = Array.isArray(runtime.state.highlights) ? runtime.state.highlights.slice(0, 4) : [];
 
   if (resolvedType === "study-notes") {
-    const packName = runtime.state.student?.focus ? `${runtime.state.student.focus} Study Pack` : "Study Notes Pack";
+    const activePack = feature5.activeStudyPack();
+    const packName = activePack?.title || (runtime.state.student?.focus ? `${runtime.state.student.focus} Study Pack` : "Study Notes Pack");
     const section = document.querySelector("#page-study-notes .section-title")?.textContent?.trim() || "Captured Highlights";
     return {
       contextType: "study-notes",
       details: { packName, section },
       context: {
+        packId: activePack?.id || "",
         packName,
         section,
         selection: highlights[0]?.summary || highlights[0]?.text || "",
@@ -1139,7 +1150,7 @@ function renderTutorMessages() {
       ? `<div class="tutor-actions">${actions.map((a, i) => `<button class="tutor-action-btn" onclick="runTutorAction(${rows.indexOf(m)}, ${i})">${escapeHtml(a.label || "Action")}</button>`).join("")}</div>`
       : "";
 
-    return `<div class="tutor-msg"><div class="tutor-msg-head">Tutor · ${escapeHtml(m.provider || "local")}</div><div class="tutor-msg-body">${escapeHtml(m.answer || "")}</div>${citationsHtml}${actionsHtml}</div>`;
+    return `<div class="tutor-msg"><div class="tutor-msg-head">Tutor · ${escapeHtml(m.provider || "local")}</div><div class="tutor-msg-body">${escapeHtml(m.answer || "")}</div><div class="tutor-msg-disclaimer">AI-generated response. Verify against your notes and marking rubric.</div>${citationsHtml}${actionsHtml}</div>`;
   }).join("");
 
   wrap.scrollTop = wrap.scrollHeight;
@@ -1230,19 +1241,45 @@ async function sendTutorMessage() {
   if (input) input.value = "";
   renderTutorPanel();
 
-  try {
-    const out = await apiPost(API.tutorQuery, {
-      contextType: built.contextType,
+  if (isGreetingMessage(text)) {
+    pushTutorMsg("assistant", {
+      answer: "Hi. Ask one topic or question and I will explain with short steps plus one example.",
+      provider: "system",
+      citations: [],
+      actions: [],
       question: text,
-      context: built.context,
-      studentId: runtime.state.student.id
+      attempt: 0
     });
+    renderTutorPanel();
+    return;
+  }
+
+  try {
+    const out = built.contextType === "study-notes" && String(built.context?.packId || "")
+      ? await apiPost(API.studyNotesPackQuery(built.context.packId), {
+        question: text,
+        chatHistory: (runtime.state.tutorHistory || [])
+          .slice(-10)
+          .map((msg) => ({
+            role: msg.role === "assistant" ? "assistant" : "user",
+            text: msg.answer || msg.text || ""
+          }))
+          .filter((msg) => msg.text)
+      })
+      : await apiPost(API.tutorQuery, {
+        contextType: built.contextType,
+        question: text,
+        context: built.context,
+        studentId: runtime.state.student.id
+      });
 
     pushTutorMsg("assistant", {
       answer: out.answer,
       provider: out.provider,
       citations: Array.isArray(out.citations) ? out.citations : [],
-      actions: Array.isArray(out.actions) ? out.actions : []
+      actions: Array.isArray(out.actions) ? out.actions : [],
+      question: text,
+      attempt: 0
     });
 
     if (built.contextType === "practice-papers") {
@@ -1269,7 +1306,9 @@ async function sendTutorMessage() {
       answer: `Tutor unavailable: ${error.message || "unknown error"}`,
       provider: "fallback",
       citations: [],
-      actions: []
+      actions: [],
+      question: text,
+      attempt: 0
     });
   }
 
@@ -1284,6 +1323,11 @@ function addDaysIso(days) {
 
 function jumpTutorSource(jumpRef) {
   if (!jumpRef) return;
+  if (jumpRef.startsWith("study-pack-section-")) {
+    navigate("study-notes");
+    feature9.focusSectionByAnchor(jumpRef);
+    return;
+  }
   if (jumpRef === "study-notes") {
     navigate("study-notes");
     closeTutorPanel();
@@ -1314,7 +1358,7 @@ function runTutorAction(msgIndex, actionIndex) {
   const action = row?.actions?.[actionIndex];
   if (!action) return;
 
-  if (action.type === "jump") {
+  if (action.type === "jump" || action.type === "jump-section") {
     jumpTutorSource(action.jumpRef);
     return;
   }
@@ -1325,15 +1369,30 @@ function runTutorAction(msgIndex, actionIndex) {
     return;
   }
 
-  if (action.type === "add-note") {
+  if (action.type === "add-note" || action.type === "add-to-notes") {
+    const noteText = action.text || row.answer || "";
+    if (runtime.tutorContextType === "study-notes") {
+      feature9.addTutorNote(noteText, {
+        source: "tutor-action",
+        sectionLabel: runtime.tutorScopeMeta?.[1] || "Study Pack"
+      });
+      logAudit("Tutor answer added to Study Pack notes.");
+      return;
+    }
+
     const key = `tutor-${Date.now()}`;
     runtime.state.notes[key] = {
-      text: action.text || row.answer || "",
+      text: noteText,
       status: "saved",
       attempt: 0
     };
     logAudit("Tutor answer added to notes.");
     scheduleSave();
+    return;
+  }
+
+  if (action.type === "simplify") {
+    requestTutorSimplification(row);
     return;
   }
 
@@ -1347,6 +1406,54 @@ function runTutorAction(msgIndex, actionIndex) {
     logAudit("Tutor answer converted to flashcard.");
     scheduleSave();
   }
+}
+
+async function requestTutorSimplification(row) {
+  const question = cleanText(row?.question || "", 900);
+  if (!question) return;
+
+  const nextAttempt = Math.max(1, Number(row?.attempt || 0) + 1);
+  const built = buildTutorContext(row?.contextType || runtime.tutorContextType);
+  const clarityHint = nextAttempt === 1
+    ? "simplify level 1: shorter wording and one concrete example"
+    : nextAttempt === 2
+      ? "simplify level 2: include analogy and 3 short steps"
+      : "simplify level 3: beginner-level explanation with no jargon";
+
+  try {
+    const out = await apiPost(API.tutorQuery, {
+      contextType: built.contextType,
+      question,
+      context: built.context,
+      studentId: runtime.state.student.id,
+      clarityHint
+    });
+
+    pushTutorMsg("assistant", {
+      answer: out.answer,
+      provider: out.provider,
+      citations: Array.isArray(out.citations) ? out.citations : [],
+      actions: Array.isArray(out.actions) ? out.actions : [],
+      question,
+      attempt: nextAttempt
+    });
+  } catch (error) {
+    pushTutorMsg("assistant", {
+      answer: `Tutor unavailable: ${error.message || "unknown error"}`,
+      provider: "fallback",
+      citations: [],
+      actions: [],
+      question,
+      attempt: nextAttempt
+    });
+  }
+
+  renderTutorPanel();
+}
+
+function isGreetingMessage(text) {
+  const normalized = String(text || "").trim().toLowerCase();
+  return /^(hi|hello|hey|yo|sup|good morning|good afternoon|good evening)$/.test(normalized);
 }
 
 async function loadCloudHealth() {
@@ -1573,6 +1680,10 @@ async function requestJson(method, url, body = undefined, isForm = false) {
   if (!res.ok && res.status === 401 && /invalid firebase token/i.test(String(payload?.error || ""))) {
     ({ res, payload } = await attempt(true));
   }
+  if (!res.ok && method === "GET" && res.status >= 500 && res.status < 600) {
+    await sleep(250);
+    ({ res, payload } = await attempt(false));
+  }
   if (!res.ok) throw new Error(extractErrorMessage(payload, `${method} ${url} failed`));
   return payload;
 }
@@ -1593,7 +1704,19 @@ async function parseMaybeJson(res) {
 
 function extractErrorMessage(payload, fallback) {
   if (!payload || typeof payload !== "object") return fallback;
-  return payload.error || payload.details || payload.message || fallback;
+  const base = payload.error || payload.details || payload.message || fallback;
+  const code = String(payload.code || "").trim();
+  const hint = String(payload.hint || "").trim();
+  const requestId = String(payload.requestId || "").trim();
+  const extras = [code && `code=${code}`, requestId && `requestId=${requestId}`].filter(Boolean).join(", ");
+  if (hint && extras) return `${base} (${extras}). ${hint}`;
+  if (hint) return `${base}. ${hint}`;
+  if (extras) return `${base} (${extras})`;
+  return base;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function bootstrapApp() {
@@ -1629,6 +1752,9 @@ export function bootstrapApp() {
   window.initHeatmap = feature6.initHeatmap;
   window.runRagQuery = feature5.runRagQuery;
   window.indexLatestHighlight = feature5.indexLatestHighlight;
+  window.openStudyTopicPractice = feature5.openStudyTopicPractice;
+  window.askTutorAboutTopic = feature5.askTutorAboutTopic;
+  window.focusStudyTopic = feature5.focusStudyTopic;
   window.openTutorPanel = openTutorPanel;
   window.closeTutorPanel = closeTutorPanel;
   window.dockTutorPanel = dockTutorPanel;
@@ -1637,8 +1763,10 @@ export function bootstrapApp() {
   window.askTutorQuick = askTutorQuick;
   window.jumpTutorSource = jumpTutorSource;
   window.runTutorAction = runTutorAction;
+  window.openLatestStudyPack = feature9.openLatestPack;
   window.openSettingsModal = openSettingsModal;
   window.saveSettingsProfile = saveSettingsProfile;
   window.resetSidebarOrder = resetSidebarOrder;
+  window.openPracticeLegacyFromStudyHub = openPracticeLegacyFromStudyHub;
   init();
 }
