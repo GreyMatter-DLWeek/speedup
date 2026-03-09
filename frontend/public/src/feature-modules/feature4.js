@@ -7,6 +7,7 @@ const DAY_LABELS = {
   FRI: "Fri"
 };
 const HOURS = Array.from({ length: 24 }, (_v, hour) => `${String(hour).padStart(2, "0")}:00`);
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const SUBJECT_STYLES = {
   math: "tt-math",
@@ -48,6 +49,26 @@ function addDays(dateString, delta) {
 function formatDateHuman(dateString) {
   const date = new Date(`${dateString}T00:00:00`);
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function parseDateOnly(dateString) {
+  const value = String(dateString || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function dayDiff(fromDate, toDate) {
+  const from = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
+  const to = new Date(toDate.getFullYear(), toDate.getMonth(), toDate.getDate());
+  return Math.floor((to.getTime() - from.getTime()) / DAY_MS);
+}
+
+function formatDateWithYear(dateString) {
+  const date = parseDateOnly(dateString);
+  if (!date) return "";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
 }
 
 function parseList(input) {
@@ -104,6 +125,98 @@ export function initFeature4(ctx) {
 
   let timetableState = null;
   let activeWeekStart = getCurrentWeekStart();
+  let termPromptMode = "optional";
+
+  function getAcademicTerm() {
+    const raw = runtime.state?.timeManagementTerm;
+    if (!raw || typeof raw !== "object") return null;
+    const startDate = String(raw.startDate || "").trim().slice(0, 10);
+    const endDate = String(raw.endDate || "").trim().slice(0, 10);
+    const start = parseDateOnly(startDate);
+    const end = parseDateOnly(endDate);
+    if (!start || !end || start.getTime() > end.getTime()) return null;
+    return { startDate: formatDateOnly(start), endDate: formatDateOnly(end) };
+  }
+
+  function setAcademicTerm(startDate, endDate) {
+    const start = parseDateOnly(startDate);
+    const end = parseDateOnly(endDate);
+    if (!start || !end || start.getTime() > end.getTime()) {
+      throw new Error("Term start date must be on or before term end date.");
+    }
+
+    runtime.state.timeManagementTerm = {
+      startDate: formatDateOnly(start),
+      endDate: formatDateOnly(end),
+      updatedAt: new Date().toISOString()
+    };
+    scheduleSave();
+  }
+
+  function getAcademicWeekInfo(referenceDate = new Date()) {
+    const term = getAcademicTerm();
+    const today = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+    if (!term) {
+      return {
+        configured: false,
+        needsPrompt: true,
+        ended: false,
+        beforeStart: false,
+        reason: "missing",
+        weekNumber: 1,
+        totalWeeks: 0,
+        startDate: "",
+        endDate: ""
+      };
+    }
+
+    const start = parseDateOnly(term.startDate);
+    const end = parseDateOnly(term.endDate);
+    if (!start || !end || start.getTime() > end.getTime()) {
+      return {
+        configured: false,
+        needsPrompt: true,
+        ended: false,
+        beforeStart: false,
+        reason: "invalid",
+        weekNumber: 1,
+        totalWeeks: 0,
+        startDate: "",
+        endDate: ""
+      };
+    }
+
+    const totalWeeks = Math.max(1, Math.ceil((dayDiff(start, end) + 1) / 7));
+    const beforeStart = today.getTime() < start.getTime();
+    const ended = today.getTime() > end.getTime();
+
+    if (ended) {
+      return {
+        configured: true,
+        needsPrompt: true,
+        ended: true,
+        beforeStart: false,
+        reason: "ended",
+        weekNumber: totalWeeks,
+        totalWeeks,
+        startDate: term.startDate,
+        endDate: term.endDate
+      };
+    }
+
+    const weekNumber = beforeStart ? 1 : Math.floor(dayDiff(start, today) / 7) + 1;
+    return {
+      configured: true,
+      needsPrompt: false,
+      ended: false,
+      beforeStart,
+      reason: "",
+      weekNumber: Math.min(Math.max(1, weekNumber), totalWeeks),
+      totalWeeks,
+      startDate: term.startDate,
+      endDate: term.endDate
+    };
+  }
 
   function getStudentId() {
     const authUid = String(runtime.authUser?.uid || "").trim();
@@ -473,7 +586,49 @@ export function initFeature4(ctx) {
     if (!el) return;
     const weekStart = state.weekStart || activeWeekStart;
     const weekEnd = addDays(weekStart, 4);
-    el.textContent = `Week of ${formatDateHuman(weekStart)} – ${new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(weekEnd)}`;
+    const weekEndHuman = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(weekEnd);
+    const academic = getAcademicWeekInfo();
+    if (academic.configured && !academic.ended) {
+      el.textContent = `Academic Week ${academic.weekNumber} - ${formatDateHuman(weekStart)} to ${weekEndHuman}`;
+      return;
+    }
+    el.textContent = `Week of ${formatDateHuman(weekStart)} to ${weekEndHuman}`;
+  }
+
+  function renderAcademicTermSummary() {
+    const host = document.getElementById("tm-term-sub");
+    if (!host) return;
+
+    const info = getAcademicWeekInfo();
+    if (!info.configured) {
+      host.textContent = "Set your school term start and end dates to track Week 1, Week 2, and so on.";
+      return;
+    }
+
+    if (info.ended) {
+      host.textContent = `Previous term ended on ${formatDateWithYear(info.endDate)}. Please set your next term dates.`;
+      return;
+    }
+
+    if (info.beforeStart) {
+      host.textContent = `Next term starts ${formatDateWithYear(info.startDate)} and will run until ${formatDateWithYear(info.endDate)}.`;
+      return;
+    }
+
+    host.textContent = `Term: ${formatDateWithYear(info.startDate)} to ${formatDateWithYear(info.endDate)} (Week ${info.weekNumber} of ${info.totalWeeks}).`;
+  }
+
+  function maybePromptForAcademicTerm() {
+    const info = getAcademicWeekInfo();
+    if (!info.needsPrompt) return;
+    const overlayOpen = document.getElementById("modal-overlay")?.classList.contains("open");
+    if (overlayOpen) return;
+    openAcademicTermPrompt({
+      required: true,
+      reason: info.reason === "ended"
+        ? `Your previous term ended on ${formatDateWithYear(info.endDate)}. Please enter your next term dates.`
+        : "Please enter your school term start and end dates to begin academic week tracking from Week 1."
+    });
   }
 
   function renderAll() {
@@ -489,6 +644,7 @@ export function initFeature4(ctx) {
     renderAgenda(state);
     renderWeeklyProgress(state);
     renderSmartSuggestions(state);
+    renderAcademicTermSummary();
   }
 
   async function loadTimeManagement() {
@@ -503,6 +659,7 @@ export function initFeature4(ctx) {
       if (!response.profile?.configured) {
         openTimeManagementOnboarding();
       }
+      maybePromptForAcademicTerm();
     } catch (error) {
       logAudit(`Time management load failed: ${error.message || "unknown"}`);
       const summary = document.getElementById("tm-peak-sub");
@@ -513,6 +670,7 @@ export function initFeature4(ctx) {
         activeWeekStart = cached.weekStart || activeWeekStart;
       }
       renderAll();
+      maybePromptForAcademicTerm();
     }
   }
 
@@ -557,6 +715,56 @@ export function initFeature4(ctx) {
 
     select.addEventListener("change", render);
     render();
+  }
+
+  function openAcademicTermPrompt(options = {}) {
+    const term = getAcademicTerm();
+    const today = new Date();
+    const fallbackStart = formatDateOnly(today);
+    const fallbackEndDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    fallbackEndDate.setDate(fallbackEndDate.getDate() + 84);
+    const fallbackEnd = formatDateOnly(fallbackEndDate);
+
+    termPromptMode = options.required ? "required" : "optional";
+    const reasonText = String(options.reason || "Set your school term start and end dates. The first week becomes Week 1.").trim();
+
+    const html = `
+      <div class="modal-title">School Term Dates</div>
+      <div class="modal-sub">${escapeHtml(reasonText)}</div>
+
+      <div class="form-group">
+        <label class="form-label">Term start date</label>
+        <input class="input" id="tm-term-start" type="date" value="${escapeHtml(term?.startDate || fallbackStart)}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Term end date</label>
+        <input class="input" id="tm-term-end" type="date" value="${escapeHtml(term?.endDate || fallbackEnd)}">
+      </div>
+
+      <div id="tm-term-error" style="color:var(--danger);font-size:12px;min-height:18px;"></div>
+      <div class="modal-actions">
+        ${termPromptMode === "required" ? "" : "<button class='btn btn-ghost' onclick='closeModal()'>Cancel</button>"}
+        <button class="btn btn-primary" onclick="saveAcademicTermPrompt()">Save term dates</button>
+      </div>
+    `;
+
+    showModal(html);
+  }
+
+  function saveAcademicTermPrompt() {
+    const startDate = String(document.getElementById("tm-term-start")?.value || "").trim();
+    const endDate = String(document.getElementById("tm-term-end")?.value || "").trim();
+    const errorHost = document.getElementById("tm-term-error");
+
+    try {
+      setAcademicTerm(startDate, endDate);
+      hideModal();
+      logAudit(`Academic term updated: ${startDate} to ${endDate}.`);
+      renderAll();
+    } catch (error) {
+      if (errorHost) errorHost.textContent = error.message || "Failed to save term dates.";
+    }
   }
 
   async function saveTimeManagementOnboarding() {
@@ -944,6 +1152,8 @@ export function initFeature4(ctx) {
     toggleVoice,
     initTimeManagement,
     refreshTimeManagement,
+    openAcademicTermPrompt,
+    saveAcademicTermPrompt,
     openTimeManagementOnboarding,
     saveTimeManagementOnboarding,
     generateTimeManagementPlan,

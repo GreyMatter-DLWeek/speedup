@@ -1734,6 +1734,8 @@ export function bootstrapApp() {
   window.handleChatKey = feature3.handleChatKey;
   window.startVoice = feature4.startVoice;
   window.toggleVoice = feature4.toggleVoice;
+  window.openAcademicTermPrompt = feature4.openAcademicTermPrompt;
+  window.saveAcademicTermPrompt = feature4.saveAcademicTermPrompt;
   window.openTimeManagementOnboarding = feature4.openTimeManagementOnboarding;
   window.saveTimeManagementOnboarding = feature4.saveTimeManagementOnboarding;
   window.generateTimeManagementPlan = feature4.generateTimeManagementPlan;

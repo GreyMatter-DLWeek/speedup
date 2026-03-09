@@ -23,8 +23,12 @@
     <div class="card mb-20">
       <div class="card-title">
         <span id="tm-week-label">Week of --</span>
-        <div id="tm-legend" style="display:flex;gap:8px;text-transform:none;font-weight:400;font-size:12px;"></div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;" onclick="openAcademicTermPrompt()">Set Term Dates</button>
+          <div id="tm-legend" style="display:flex;gap:8px;text-transform:none;font-weight:400;font-size:12px;"></div>
+        </div>
       </div>
+      <div id="tm-term-sub" style="font-size:12px;color:var(--text3);margin:4px 0 10px;">Set your school term dates to start Academic Week tracking.</div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;">
         <div style="font-size:12px;color:var(--text3);">Drag tasks into time slots. Double-click a slot to clear assignment.</div>

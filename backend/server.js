@@ -33,6 +33,15 @@ const FRONTEND_PUBLIC_DIR = path.resolve(__dirname, "../frontend/public");
 const PROJECT_ROOT_DIR = path.resolve(__dirname, "..");
 const STUDY_HUB_PDF_MAX_CHARS = 60_000;
 const SERVER_BOOT_ID = `boot_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+const FIREBASE_DIAGNOSTIC_TIMEOUT_MS = 4000;
+const HEALTH_DIAGNOSTIC_TTL_MS = 60 * 1000;
+const firebaseDiagnosticsCache = {
+  read: false,
+  write: false,
+  error: "",
+  checkedAt: 0,
+  inFlight: false
+};
 
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "http://localhost:3000")
   .split(",")
