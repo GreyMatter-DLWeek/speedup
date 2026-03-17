@@ -97,6 +97,11 @@ export function initFeature8(ctx) {
 
     logAudit(`Dashboard insight feedback updated: ${key}=${next || "cleared"}.`);
     scheduleSave();
+    Promise.resolve(window.refreshFeature6?.(true))
+      .catch(() => {})
+      .finally(() => {
+        hydrateFeedbackSelections();
+      });
   }
 
   function getFocusModeMeta(mode) {
